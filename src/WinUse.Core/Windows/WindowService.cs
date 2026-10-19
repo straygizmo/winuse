@@ -39,7 +39,9 @@ public sealed class WindowService(AutomationDispatcher d)
     private static bool TryActivate(nint hwnd)
     {
         if (NativeMethods.IsIconic(hwnd)) NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
-        if (NativeMethods.SetForegroundWindow(hwnd)) return true;
+        // SetForegroundWindow can report success without the window actually taking the foreground
+        // (foreground lock); only trust it when the foreground really changed.
+        if (NativeMethods.SetForegroundWindow(hwnd) && NativeMethods.GetForegroundWindow() == hwnd) return true;
 
         var current = NativeMethods.GetCurrentThreadId();
         var targetThread = NativeMethods.GetWindowThreadProcessId(hwnd, out _);

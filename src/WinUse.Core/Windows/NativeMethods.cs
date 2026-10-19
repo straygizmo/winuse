@@ -83,4 +83,36 @@ internal static partial class NativeMethods
 
     [LibraryImport("user32.dll")]
     public static partial int GetSystemMetrics(int index);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public nuint dwExtraInfo; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KEYBDINPUT { public ushort wVk, wScan; public uint dwFlags, time; public nuint dwExtraInfo; }
+
+    [StructLayout(LayoutKind.Explicit)]
+    public struct INPUTUNION
+    {
+        [FieldOffset(0)] public MOUSEINPUT mi;
+        [FieldOffset(0)] public KEYBDINPUT ki;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct INPUT { public uint type; public INPUTUNION u; }
+
+    public const uint INPUT_MOUSE = 0, INPUT_KEYBOARD = 1;
+    public const uint KEYEVENTF_EXTENDEDKEY = 0x1, KEYEVENTF_KEYUP = 0x2, KEYEVENTF_UNICODE = 0x4;
+    public const uint MOUSEEVENTF_MOVE = 0x1, MOUSEEVENTF_LEFTDOWN = 0x2, MOUSEEVENTF_LEFTUP = 0x4,
+        MOUSEEVENTF_RIGHTDOWN = 0x8, MOUSEEVENTF_RIGHTUP = 0x10, MOUSEEVENTF_MIDDLEDOWN = 0x20,
+        MOUSEEVENTF_MIDDLEUP = 0x40, MOUSEEVENTF_WHEEL = 0x800, MOUSEEVENTF_VIRTUALDESK = 0x4000,
+        MOUSEEVENTF_ABSOLUTE = 0x8000;
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    public static partial uint SendInput(uint count, [In] INPUT[] inputs, int cbSize);
+
+    [LibraryImport("user32.dll")]
+    public static partial nint GetMessageExtraInfo();
+
+    [LibraryImport("user32.dll", EntryPoint = "MapVirtualKeyW")]
+    public static partial uint MapVirtualKeyW(uint code, uint mapType);
 }

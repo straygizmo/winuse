@@ -5,6 +5,7 @@ using WinUse.Core.Windows;
 
 namespace WinUse.Core.Tests.Windows;
 
+[Collection("Desktop")]
 public class WindowServiceTests
 {
     [Fact, Trait("Category", "Integration")]
