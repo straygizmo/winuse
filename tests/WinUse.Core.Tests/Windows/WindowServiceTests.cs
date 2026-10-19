@@ -12,6 +12,7 @@ public class WindowServiceTests
     {
         using var d = new AutomationDispatcher();
         var svc = new WindowService(d);
+        var preexisting = Process.GetProcessesByName("notepad").Select(x => { var id = x.Id; x.Dispose(); return id; }).ToHashSet();
         using var p = Process.Start("notepad.exe");
         var loc = new WindowLocator(".", "notepad", null);
         try
@@ -28,7 +29,7 @@ public class WindowServiceTests
         {
             foreach (var n in Process.GetProcessesByName("notepad"))
             {
-                try { n.Kill(); } catch { }
+                try { if (!preexisting.Contains(n.Id)) n.Kill(); } catch { }
                 n.Dispose();
             }
         }
