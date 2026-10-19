@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
 using Microsoft.Playwright;
+using InputButton = WinUse.Core.Input.MouseButton;
 using WinUse.Core.Refs;
 using WinUse.Core.Windows;
 
@@ -140,6 +141,79 @@ public sealed class WebService(RefRegistry refs) : IAsyncDisposable
     {
         var (page, sel) = Target(refId);
         await page.Locator(sel).ClickAsync(new LocatorClickOptions { Timeout = ActionTimeoutMs });
+    }
+
+    /// <summary>Clicks with a specific button/count; the offset is relative to the element centre.</summary>
+    public async Task ClickAsync(string refId, InputButton button, int clickCount, int offsetX = 0, int offsetY = 0)
+    {
+        var (page, sel) = Target(refId);
+        var loc = page.Locator(sel);
+        var opts = new LocatorClickOptions
+        {
+            Timeout = ActionTimeoutMs,
+            ClickCount = clickCount,
+            Button = button switch
+            {
+                InputButton.Right => Microsoft.Playwright.MouseButton.Right,
+                InputButton.Middle => Microsoft.Playwright.MouseButton.Middle,
+                _ => Microsoft.Playwright.MouseButton.Left,
+            },
+        };
+        if (offsetX != 0 || offsetY != 0)
+        {
+            var box = await loc.BoundingBoxAsync(new LocatorBoundingBoxOptions { Timeout = ActionTimeoutMs })
+                ?? throw new InvalidOperationException($"DOM ref {refId} is not visible");
+            opts.Position = new Position { X = box.Width / 2 + offsetX, Y = box.Height / 2 + offsetY };
+        }
+        await loc.ClickAsync(opts);
+    }
+
+    public async Task HoverAsync(string refId)
+    {
+        var (page, sel) = Target(refId);
+        await page.Locator(sel).HoverAsync(new LocatorHoverOptions { Timeout = ActionTimeoutMs });
+    }
+
+    public async Task DragToAsync(string fromRefId, string toRefId)
+    {
+        var (page, from) = Target(fromRefId);
+        var (_, to) = Target(toRefId);
+        await page.Locator(from).DragToAsync(page.Locator(to), new LocatorDragToOptions { Timeout = ActionTimeoutMs });
+    }
+
+    /// <summary>Moves the mouse over the element and scrolls the wheel by the given CSS pixel deltas.</summary>
+    public async Task ScrollAsync(string refId, float deltaX, float deltaY)
+    {
+        var (page, sel) = Target(refId);
+        var loc = page.Locator(sel);
+        await loc.ScrollIntoViewIfNeededAsync(new LocatorScrollIntoViewIfNeededOptions { Timeout = ActionTimeoutMs });
+        await loc.HoverAsync(new LocatorHoverOptions { Timeout = ActionTimeoutMs });
+        await page.Mouse.WheelAsync(deltaX, deltaY);
+    }
+
+    public async Task SetCheckedAsync(string refId, bool on)
+    {
+        var (page, sel) = Target(refId);
+        await page.Locator(sel).SetCheckedAsync(on, new LocatorSetCheckedOptions { Timeout = ActionTimeoutMs });
+    }
+
+    public async Task FocusAsync(string refId)
+    {
+        var (page, sel) = Target(refId);
+        await page.Locator(sel).FocusAsync(new LocatorFocusOptions { Timeout = ActionTimeoutMs });
+    }
+
+    public async Task<bool> IsEnabledAsync(string refId)
+    {
+        var (page, sel) = Target(refId);
+        return await page.Locator(sel).IsEnabledAsync(new LocatorIsEnabledOptions { Timeout = ActionTimeoutMs });
+    }
+
+    /// <summary>PNG screenshot of a single DOM element (CSS pixels of the page).</summary>
+    public async Task<byte[]> ScreenshotAsync(string refId)
+    {
+        var (page, sel) = Target(refId);
+        return await page.Locator(sel).ScreenshotAsync(new LocatorScreenshotOptions { Timeout = ActionTimeoutMs });
     }
 
     public async Task FillAsync(string refId, string text)
