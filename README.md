@@ -19,12 +19,12 @@ Create a `.env` next to `winuse.exe` or in the working directory (never commit i
 JEV_API_KEY=your-key
 ```
 
-Optional: `JEV_BASE_URL`, `JEV_MODEL`, `WINUSE_ALLOWED_ROOTS` (`;`-separated), `WINUSE_KILLABLE_PROCESSES` (`;`-separated). Environment variables override `.env`.
+Optional: `JEV_BASE_URL`, `JEV_MODEL`, `WINUSE_ALLOWED_ROOTS` (`;`-separated), `WINUSE_KILLABLE_PROCESSES` (`;`-separated), `WINUSE_SETTLE_MS` (wait before `act` verifies its result, default 400). Environment variables override `.env`.
 
 ## Register with Claude Code
 
 ```powershell
-claude mcp add winuse -- C:\Users\mtmar\source\repos\winuse\out\winuse.exe --mcp
+claude mcp add winuse -- <repo>\out\winuse.exe --mcp
 ```
 
 ## CLI
@@ -45,7 +45,7 @@ Replay never calls Jev for `act`: each `act` step replays on its recorded `resol
 
 ## Tools
 
-- Observe: `screenshot`, `list_windows`, `get_ui_tree`, `get_dom`, `get_element`, `get_text`, `get_table`, `get_list_items`
+- Observe: `screenshot` (returns `origin {x, y}`: map an image pixel to `click(x, y)` with `screen_x = origin.x + pixel_x / scale`), `list_windows`, `get_ui_tree`, `get_dom`, `get_element`, `get_text`, `get_table`, `get_list_items`
 - Intent: `act`, `find`, `check`
 - Input: `click`, `hover`, `drag`, `scroll`, `type_text`, `press_keys`
 - Element: `set_text`, `select_item`, `set_checked`, `focus`, `invoke`

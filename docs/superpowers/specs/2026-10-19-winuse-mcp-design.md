@@ -120,13 +120,14 @@ AI とサーバーの間で要素を指す共通の短い ID を **ref** と呼�
 
 名前は英語の snake_case。各ツールの説明文は AI 向けに英語で書く（私の判断）。
 戻り値は原則 JSON テキスト。スクリーンショットは MCP の image content で返す。
+以下の引数名は MCP の実際のワイヤ名（snake_case）である。シナリオ再生ではツールが受け取らない引数名を `unknown argument: <name>` のエラーにする（`resolved_refs` を除く）。
 
 ### 6.1 観察（Observe）
 | ツール | 引数 | 戻り |
 |---|---|---|
-| `screenshot` | `target`: screen / window(ref or title) / element(ref), `scale`(0.25–1) | PNG image + 実寸と縮尺 |
-| `list_windows` | `filter`(title regex, process) | ウィンドウ一覧（ref, title, class, process, rect, state） |
-| `get_ui_tree` | `window`(ref/title), `scope`(ref), `max_depth`, `interactive_only`(既定 true), `include_offscreen`(既定 false) | 圧縮した UIA ツリー（ref, type, name, automationId, value, state, rect） |
+| `screenshot` | `target`: screen / window / element（省略時、`window` か `title` があれば window、なければ screen）, `window`(ref or title regex。他ツールの `window` と同じ解決), `ref`(window ref または要素 ref), `title`(title regex), `scale`(0.25–1) | PNG image + `{ width, height, scale, origin: {x, y} }`。`origin` は画像の画素 (0,0) の仮想スクリーン座標（物理ピクセル。マルチモニタでは負もあり得る。screen は `SM_XVIRTUALSCREEN/SM_YVIRTUALSCREEN`、window / element はその矩形の左上）。画像上の点をクリック座標に直すには `screen_x = origin.x + pixel_x / scale`（y も同様）。DOM 要素のキャプチャでは `origin` は null |
+| `list_windows` | `title_regex`(任意), `process`(任意) | ウィンドウ一覧（ref, title, class, process, pid, rect, state） |
+| `get_ui_tree` | `window`(ref/title), `scope`(ref), `max_depth`, `interactive_only`(既定 true), `include_offscreen`(既定 false) | 圧縮した UIA ツリー（ref, type, name, automationId, value, state, rect）。`scope` なしでルートに子がない場合は 300 ms 待って 1 回だけ取り直す（Chromium / Office の初回取得対策） |
 | `get_dom` | `page`(任意), `interactive_only`(既定 true) | WebView2 のアクセシビリティ / インタラクティブ要素一覧（ref, role, name, tag, value, state, rect, selector） |
 | `get_element` | `ref` | 単一要素の詳細（UIA 全プロパティ or DOM 属性） |
 | `get_text` | `ref` | テキスト（UIA Value / Text パターン、DOM innerText） |
@@ -140,17 +141,19 @@ AI とサーバーの間で要素を指す共通の短い ID を **ref** と呼�
 | `find` | `intent`, `window`, `top_k` | 実行せず上位候補（ref, label, probability）を返す |
 | `check` | `question`(yes/no の自然文), `window` | 現在の観察を state にして Jev noul → 確率を返す |
 
-`act` の確信度が `min_confidence`（既定 0.55、`confidence` 0.35）未満なら実行せず、上位候補とスクリーンショットを返して AI に委ねる。
+`act` の確信度が `min_confidence`（既定 0.55、`confidence` 0.35）未満なら実行せず、上位候補とスクリーンショット（対象ウィンドウ、縮尺 0.5 の image content）を返して AI に委ねる。
 Jev 未設定時は `act` は常に候補返却モードになる。
+`act` の結果には `executed` が付き、ジャーナルにも記録する。`scenario_save` は `executed=false` の `act` ステップを保存しない（再生できないため。明確なエラーを返す）。
 
 ### 6.3 低レベル操作（Act）
-- マウス: `click(ref | x,y; button=left/right/middle; count=1/2; offset)`, `hover`, `drag(from, to)`, `scroll(ref|x,y; direction; amount)`
-- キーボード: `type_text(text; per_char_delay)`, `press_keys("ctrl+s")`（修飾キー + 特殊キー名の組合せ）
-- 要素: `set_text(ref, text)`, `select_item(ref, item)`, `set_checked(ref, bool)`, `focus(ref)`, `invoke(ref)`（UIA Invoke / DOM click）
-- ウィンドウ: `window_activate`, `window_close`, `window_set_state(min/max/normal)`, `window_move(x,y,w,h)`, `window_exists`
-- 待機: `wait_for(condition, timeout)` — condition は `window(title)`, `element(ref|selector)`, `text(ref, expected)`, `window_closed(title)`, `enabled(ref)` のいずれか
-- プロセス: `process_run(path, args, cwd, env, webview_debug=bool, wait_window=title, require_fresh=bool)`, `process_kill(name|pid)`, `process_exists(name)`
-- ファイル: `file_exists`, `read_text`, `write_text`, `append_text`, `copy`, `move`, `delete`, `list_dir`, `zip`, `unzip` — すべて設定の許可ルート配下に限定
+- マウス: `click(ref | x,y; button=left/right/middle; count=1/2; offset_x, offset_y)`, `hover(ref | x,y)`, `drag(from_ref | from_x,from_y; to_ref | to_x,to_y)`, `scroll(ref | x,y; direction; amount)`。`x,y` は仮想スクリーンの物理ピクセル（`screenshot` の `origin` から換算できる）
+- キーボード: `type_text(text; per_char_delay_ms)`, `press_keys(keys="ctrl+s")`（修飾キー + 特殊キー名の組合せ）
+- 要素: `set_text(ref, text)`, `select_item(ref, item)`, `set_checked(ref, checked)`, `focus(ref)`, `invoke(ref)`（UIA Invoke / DOM click）
+- ウィンドウ: `window_activate(ref | title)`, `window_close(ref | title)`, `window_set_state(ref | title; state=minimized/maximized/normal)`, `window_move(x, y, width, height; ref | title)`, `window_exists(title; process)`
+- 待機: `wait_for(condition, timeout_ms=10000, title, ref, selector, expected)` — condition は `window(title)`, `element(ref|selector)`, `text(ref, expected)`, `window_closed(title)`, `enabled(ref)` のいずれか
+- プロセス: `process_run(path, args, cwd, env, webview_debug=bool, wait_window=title regex, require_fresh=bool)`, `process_kill(name_or_pid)`, `process_exists(name)`
+  - `wait_window` は起動したプロセス（同じ pid、または同じプロセス名）のウィンドウを優先して最大 30 秒待つ。現れなければタイトル一致だけのウィンドウにフォールバックし、結果の `window.matched_by` を `"title-only"` にする（通常は `"pid"` / `"process"`）。
+- ファイル: `file_exists(path)`, `read_text(path)`, `write_text(path, text)`, `append_text(path, text)`, `copy(src, dst, overwrite)`, `move(src, dst)`, `delete(path)`, `list_dir(path)`, `zip(dir, zip_path)`, `unzip(zip_path, dir)` — すべて設定の許可ルート配下に限定。ディレクトリを自分自身の配下へ `copy` することは拒否する
 - 画像（フェーズ 2）: `image_find(template_path, region, threshold)`, `image_wait`（OpenCvSharp のテンプレートマッチ）
 - OCR（フェーズ 2）: `ocr_read(region)`（Windows.Media.Ocr）
 
@@ -160,14 +163,14 @@ Jev 未設定時は `act` は常に候補返却モードになる。
 - `assert_text(ref, expected, mode=equals/contains/regex)`
 - `assert_exists(ref|selector, expected=true)`
 - `assert_window(title, expected=true)`
-- `assert_file(path, exists / contains)`
+- `assert_file(path, exists=true, contains)`
 - `assert_screenshot(baseline_path, region, tolerance)`（フェーズ 2、OpenCvSharp）
 - `check`（Jev）は **soft** 判定として記録可能（後述）
 
 ### 6.5 シナリオ（Scenario）
 - 各ツール呼び出しの結果には `step_id` が付く。サーバーはセッション中の呼び出し（ツール名、引数、解決済みロケータ、所要時間）を**ジャーナル**に保持する。
 - `scenario_save(name, step_ids[], path, description)` : 指定した step だけを順に並べてシナリオファイルを保存する（**明示保存**。自動記録は行わない）。
-- `scenario_list(dir)`, `scenario_run(path, heal=false)` : MCP からも再生できる。
+- `scenario_list(dir)`, `scenario_run(path, heal=false, report_dir)` : MCP からも再生できる。
 - シナリオの編集機能は持たない。編集は AI がファイルを直接書き換える（JSON なので可能）。
 
 ## 7. シナリオファイル形式
@@ -193,12 +196,13 @@ JSON。ツール名と引数をそのまま並べる。意図とロケータの�
 
 **再生の規則**
 1. `resolved` があるステップはロケータで決定的に解決する。Jev は呼ばない。
-2. ロケータ解決に失敗したとき、`--heal` 指定時のみ `intent` から Jev で再解決し、成功したら `resolved` を更新した「修復済みシナリオ」を別名で書き出す。未指定なら失敗。
+   - 再生ランナーはツール呼び出しに `IsReplay=true` を付ける（`ToolInvocation.IsReplay`、既定 false）。`IsReplay` のとき、`resolved` のない `act` ステップは Jev を呼ばずに FAIL（`act step has no resolved locator`）にする。`--heal` 指定時だけ `intent` から Jev で解決する。対話中の MCP の `act`（`IsReplay=false`）はこの規則の影響を受けない。
+2. ロケータ解決に失敗したとき、`--heal` 指定時のみ `intent` から Jev で再解決し、成功したら `resolved` を更新した「修復済みシナリオ」を別名（`<名前>.healed.json`。例: `scenarios/mdium-smoke.json` → `scenarios/mdium-smoke.healed.json`。CLI と `scenario_run` で共通）で書き出す。未指定なら FAIL（`locator not found: <引数名>`、終了コード 1）。
 3. `soft: true` のステップ（Jev の `check`）は失敗しても全体を FAIL にせず WARN として報告する。
    - `JEV_API_KEY` が未設定、または Jev が 429 / 529 / タイムアウトで応答しない場合も、そのステップは WARN（skipped）として扱い、再生全体の合否には影響させない（私の判断。再生が Jev に依存しないというアンチゴールを守るため）。
    - `--heal` による再解決も同様で、Jev が使えなければ単にロケータ失敗として FAIL にする。
-4. 各ステップの前後でスクリーンショットを撮り、レポートディレクトリに保存する（HTML レポートはフェーズ 2）。
-5. 終了コード: 0 = PASS、1 = FAIL、2 = 実行エラー（対象が起動しない等）。
+4. 各ステップの前後でスクリーンショットを撮り、レポートディレクトリに保存する（HTML レポートはフェーズ 2）。撮影に失敗しても再生は止めず、そのステップのメッセージに `screenshot failed: <理由>` を付ける。
+5. 終了コード: 0 = PASS、1 = FAIL（判定の失敗、ロケータが見つからない、`act` が実行されない）、2 = 実行エラー（対象が起動しない、シナリオの形式不正、未知の引数等）。
 
 ## 8. Grounding（候補生成）と Jev 連携
 
@@ -207,7 +211,8 @@ JSON。ツール名と引数をそのまま並べる。意図とロケータの�
 
 1. 対象ウィンドウを決める（引数 > 直前に操作したウィンドウ > 前面ウィンドウ）。
 2. UIA から、可視・有効・操作可能な ControlType（Button, Edit, ComboBox, CheckBox, RadioButton, MenuItem, TabItem, ListItem, TreeItem, Hyperlink, Document。Text はラベル参照用）を収集。
-3. そのウィンドウに WebView2 が含まれ、CDP 接続があれば、Playwright のアクセシビリティスナップショットからインタラクティブ要素を収集。
+3. そのウィンドウに WebView2 が含まれ、CDP 接続があれば、Playwright のアクセシビリティスナップショットからインタラクティブ要素を収集。「含まれる」とは、ウィンドウ配下に `Chrome_RenderWidgetHostHWND` の矩形があり、**かつ** CDP 接続が自分のものであること（ウィンドウの pid が `process_run` で起動した pid と一致する、またはレンダーホスト HWND の所有プロセス名が CDP 所有プロセス名と一致する）。Chromium 系のウィンドウはどれもレンダーホストを持つため、矩形だけでは判定しない。
+   - UIA の初回取得でルートしか返らない（子が 0）場合は 300 ms 待って 1 回だけ取り直す。
 4. 両方を 1 つの候補リストに統合し、各要素を次に圧縮する:
    `{ id, role, label, value, enabled, focused, editable, checked, region }`
    - `region` は "top-left" など 9 分割の粗い位置。座標とハンドルは渡さない。
@@ -220,7 +225,7 @@ JSON。ツール名と引数をそのまま並べる。意図とロケータの�
 
 - `target`: choice。選択肢は候補 id + `none`。instructions に意図（`goal`）を含める。
 - `kind`: choice（`kind=auto` のときだけ）。click / type / select / toggle / none。
-- `satisfied`: noul。実行後の新しいスナップショットに対して「意図は達成されたか」。
+- `satisfied`: noul。実行後、`SettleMs`（`WinUseConfig.SettleMs`、既定 400 ms、環境変数 `WINUSE_SETTLE_MS`）待ってから取り直したスナップショットに対して「Given `goal`, `executed_action` and the current `elements`, is the goal now accomplished?」と問う。state には `executed_action: { kind, target_label, text }` を加え、`recent_actions` にも今実行した操作を含める（ジャーナルへの記録はツール終了後のため）。
 - `check` ツールは noul 1 問のみ。
 
 閾値（私の判断、設定で変更可）: 通常操作 probability ≥ 0.55 かつ confidence ≥ 0.35。達成確認 noul ≥ 0.7 で `verified:true`、未満は `verified:false` を返すがエラーにはしない（AI が判断する）。
