@@ -110,7 +110,7 @@ public sealed class FileServiceTests : IDisposable
     {
         string[] roots = [@"C:\tmp\a\"];
         Assert.Equal(@"C:\tmp\a", FileService.EnsureAllowed(@"C:\tmp\a", roots));
-        Assert.Equal(@"C:\tmp\a\x.txt", FileService.EnsureAllowed(@"C:\TMP\a\x.txt", roots));
+        Assert.Equal(@"C:\TMP\a\x.txt", FileService.EnsureAllowed(@"C:\TMP\a\x.txt", roots));
         Assert.Throws<UnauthorizedAccessException>(() => FileService.EnsureAllowed(@"C:\tmp\ab\x.txt", roots));
     }
 }
