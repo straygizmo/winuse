@@ -60,7 +60,7 @@ Exit codes: `0` PASS, `1` FAIL (an assertion failed), `2` error (bad scenario, t
 {
   "name": "notepad-smoke",
   "version": 1,
-  "env": { "FILE": "C:\Temp\a.txt" },
+  "env": { "FILE": "C:\\Temp\\a.txt" },
   "steps": [
     { "tool": "write_text", "args": { "path": "${FILE}", "text": "hello" } },
     { "tool": "read_text", "args": { "path": "${FILE}" } },
