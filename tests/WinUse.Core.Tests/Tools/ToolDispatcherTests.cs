@@ -165,6 +165,7 @@ public sealed class ToolDispatcherTests : IDisposable
     public async Task ScenarioSave_RefusesActThatWasNotExecuted()
     {
         using var c = GroundingContext(new FakeJev(choice: ("u1", 0.2, 0.1), noul: 0.9), new FakeExecutor());
+        c.ActScreenshot = () => Task.FromResult<WinUse.Core.Screen.Capture?>(null);
         var d = new ToolDispatcher(c);
         var act = await d.InvokeAsync(new("act", Args(("intent", "save")), null), default);
         var stepId = act.Result["step_id"]!.GetValue<string>();
@@ -294,6 +295,35 @@ public sealed class ToolDispatcherTests : IDisposable
         Assert.True(o.Ok, o.Error);
         Assert.Equal(ActKind.Type, exec.LastKind);
         Assert.Equal("type", Assert.Single(c.Journal.Entries).Args["kind"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task Act_LowConfidence_AttachesWindowScreenshot()
+    {
+        using var c = GroundingContext(new FakeJev(choice: ("u1", 0.2, 0.1), noul: 0.9), new FakeExecutor());
+        var png = new byte[] { 0x89, 0x50, 0x4E, 0x47, 1, 2, 3 };
+        c.ActScreenshot = () => Task.FromResult<WinUse.Core.Screen.Capture?>(new(png, 10, 10, 0.5));
+
+        var r = await IntentTools.Act(c, "click save");
+
+        Assert.NotEqual(true, r.IsError);
+        Assert.Equal(2, r.Content.Count);
+        var img = Assert.Single(r.Content.OfType<ModelContextProtocol.Protocol.ImageContentBlock>());
+        Assert.Equal("image/png", img.MimeType);
+        var json = JsonNode.Parse(r.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Single().Text)!;
+        Assert.False(json["executed"]!.GetValue<bool>());
+        Assert.Equal("low confidence", json["reason"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task Act_Executed_HasNoScreenshot()
+    {
+        using var c = GroundingContext(new FakeJev(choice: ("u1", 0.9, 0.9), noul: 0.9), new FakeExecutor());
+        var called = false;
+        c.ActScreenshot = () => { called = true; return Task.FromResult<WinUse.Core.Screen.Capture?>(null); };
+        var r = await IntentTools.Act(c, "click save", kind: "click");
+        Assert.Single(r.Content);
+        Assert.False(called);
     }
 
     [Fact]

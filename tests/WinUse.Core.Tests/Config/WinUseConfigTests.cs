@@ -24,5 +24,14 @@ public class WinUseConfigTests
         var dir = Directory.CreateTempSubdirectory();
         var cfg = WinUseConfig.Load(dir.FullName, dir.FullName, new Dictionary<string, string?>());
         Assert.Null(cfg.JevApiKey);
+        Assert.Equal(400, cfg.SettleMs);
+    }
+
+    [Fact]
+    public void Load_SettleMs_FromEnvironment()
+    {
+        var dir = Directory.CreateTempSubdirectory();
+        var cfg = WinUseConfig.Load(dir.FullName, dir.FullName, new Dictionary<string, string?> { ["WINUSE_SETTLE_MS"] = "150" });
+        Assert.Equal(150, cfg.SettleMs);
     }
 }

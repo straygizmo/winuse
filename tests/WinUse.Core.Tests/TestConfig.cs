@@ -8,7 +8,8 @@ static class TestConfig
         null, "https://api.typesafe.ai", "jev-latest", 0.55, 0.35, 0.7,
         [Environment.CurrentDirectory, Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)],
         [],
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "winuse", "logs"));
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "winuse", "logs"),
+        SettleMs: 0); // keep fake act tests fast; the settle wait has its own test
 
     public static WinUseConfig WithRoots(params string[] roots) => Default with { AllowedRoots = roots };
 

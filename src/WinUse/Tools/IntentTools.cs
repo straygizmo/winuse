@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using WinUse.Core.Grounding;
@@ -10,7 +11,7 @@ namespace WinUse.Tools;
 public sealed class IntentTools
 {
     [McpServerTool(Name = "act")]
-    [Description("Perform a natural-language intent on the window: build candidates, let Jev pick the target (and action kind when kind=auto), execute it when confident, then verify. When not confident (or Jev is unavailable) nothing is executed and the top candidates are returned so you can act with click/set_text yourself.")]
+    [Description("Perform a natural-language intent on the window: build candidates, let Jev pick the target (and action kind when kind=auto), execute it when confident, then verify. When not confident (or Jev is unavailable) nothing is executed and the top candidates are returned (plus a window screenshot when not confident) so you can act with click/set_text yourself.")]
     public static Task<CallToolResult> Act(
         ToolContext ctx,
         [Description("What to do, e.g. \"Click the Save button\".")] string intent,
@@ -27,6 +28,18 @@ public sealed class IntentTools
             // Journal the kind actually executed so a replay does not have to guess it.
             if (r.Executed && executedKind.Value is { } ek) step.Args["kind"] = KindName(ek);
             if (r.Executed && r.Target is not null && ctx.Refs.TryGet(r.Target.Id, out var er)) step.Resolved = er.Locator;
+            // Not confident: return a screenshot with the candidates so the caller can pick the target itself.
+            if (!r.Executed && r.Reason == "low confidence")
+            {
+                try
+                {
+                    if (await ctx.ActScreenshot() is { } cap) step.Extra.Add(ImageContentBlock.FromBytes(cap.Png, "image/png"));
+                }
+                catch (Exception ex)
+                {
+                    ctx.Log.LogWarning(ex, "act: screenshot for the low-confidence result failed");
+                }
+            }
             return new
             {
                 executed = r.Executed,

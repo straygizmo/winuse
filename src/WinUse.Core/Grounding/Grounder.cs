@@ -61,8 +61,11 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
         bool? verified = null;
         try
         {
+            // Give the UI time to react before re-observing, otherwise the verification sees the old state.
+            if (cfg.SettleMs > 0) await Task.Delay(cfg.SettleMs).ConfigureAwait(false);
             var after = await obs.ObserveAsync(window).ConfigureAwait(false);
-            var p = await AskSatisfiedAsync(intent, after).ConfigureAwait(false);
+            var action = new ExecutedAction(resolved.Value.ToString().ToLowerInvariant(), target.Label, text);
+            var p = await AskSatisfiedAsync(intent, after, action).ConfigureAwait(false);
             verified = p >= cfg.SatisfiedThreshold;
         }
         catch (JevUnavailableException)
@@ -100,24 +103,36 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
         _ => null,
     };
 
-    static object BuildState(string goal, Observation o, IReadOnlyList<Candidate> elements) => new
+    /// <summary>The action <c>act</c> just performed; it is not journaled yet when the result is verified.</summary>
+    sealed record ExecutedAction(string Kind, string TargetLabel, string? Text)
     {
-        goal,
-        window = new { title = o.Window.Title, process = o.Window.ProcessName },
-        elements = elements.Select(c => new
+        public string Summary => Text is null ? $"act {Kind} '{TargetLabel}'" : $"act {Kind} '{TargetLabel}' text={Text}";
+    }
+
+    static Dictionary<string, object?> BuildState(string goal, Observation o, IReadOnlyList<Candidate> elements, ExecutedAction? executed = null)
+    {
+        var state = new Dictionary<string, object?>
         {
-            id = c.Id,
-            role = c.Role,
-            label = c.Label,
-            value = c.Value,
-            enabled = c.Enabled,
-            focused = c.Focused,
-            editable = c.Editable,
-            @checked = c.Checked,
-            region = c.Region,
-        }).ToList(),
-        recent_actions = o.RecentActions,
-    };
+            ["goal"] = goal,
+            ["window"] = new { title = o.Window.Title, process = o.Window.ProcessName },
+            ["elements"] = elements.Select(c => new
+            {
+                id = c.Id,
+                role = c.Role,
+                label = c.Label,
+                value = c.Value,
+                enabled = c.Enabled,
+                focused = c.Focused,
+                editable = c.Editable,
+                @checked = c.Checked,
+                region = c.Region,
+            }).ToList(),
+            ["recent_actions"] = executed is null ? o.RecentActions : [.. o.RecentActions, executed.Summary],
+        };
+        if (executed is not null)
+            state["executed_action"] = new { kind = executed.Kind, target_label = executed.TargetLabel, text = executed.Text };
+        return state;
+    }
 
     static ChoiceQuestion TargetQuestion(IReadOnlyList<Candidate> cands)
     {
@@ -131,13 +146,15 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
         "Which kind of action does `goal` require on the chosen element?",
         new Dictionary<string, string?> { ["click"] = null, ["type"] = null, ["select"] = null, ["toggle"] = null, [None] = null });
 
-    async Task<double> AskSatisfiedAsync(string goal, Observation o)
+    async Task<double> AskSatisfiedAsync(string goal, Observation o, ExecutedAction? executed = null)
     {
         var qs = new Dictionary<string, JevQuestion>
         {
-            ["satisfied"] = new NoulQuestion("Given `goal` and the current `elements`, has the goal been accomplished?"),
+            ["satisfied"] = new NoulQuestion(executed is null
+                ? "Given `goal` and the current `elements`, has the goal been accomplished?"
+                : "Given `goal`, `executed_action` and the current `elements`, is the goal now accomplished?"),
         };
-        var r = await jev.AskAsync(BuildState(goal, o, o.Candidates), qs).ConfigureAwait(false);
+        var r = await jev.AskAsync(BuildState(goal, o, o.Candidates, executed), qs).ConfigureAwait(false);
         return ((NoulAnswer)r.Answers["satisfied"]).Probability;
     }
 

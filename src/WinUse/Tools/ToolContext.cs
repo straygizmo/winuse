@@ -67,6 +67,9 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
         Jev = jev ?? new JevClient(new HttpClient(), cfg, lf.CreateLogger<JevClient>());
         Grounder = new Grounder(Jev, observation ?? this, new KindCapturingExecutor(executor ?? this, this), cfg);
         Journal = new Journal();
+        ActScreenshot = async () => LastWindow is { } h
+            ? await Screen.CaptureWindowAsync(h, ActScreenshotScale).ConfigureAwait(false)
+            : null;
     }
 
     public static ToolContext Create(WinUseConfig cfg, ILoggerFactory? loggerFactory = null) =>
@@ -97,6 +100,15 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
 
     /// <summary>Pid of the process whose WebView2 the <see cref="Web"/> session is connected to (set by process_run).</summary>
     public int? WebOwnerPid { get; set; }
+
+    /// <summary>Scale of the window capture attached to an <c>act</c> result that executed nothing.</summary>
+    public const double ActScreenshotScale = 0.5;
+
+    /// <summary>
+    /// Captures the screenshot attached to a low-confidence <c>act</c> result (spec §6.2): the observed window at
+    /// <see cref="ActScreenshotScale"/>, or null when no window was observed. Replaceable for tests.
+    /// </summary>
+    public Func<Task<WinUse.Core.Screen.Capture?>> ActScreenshot { get; set; }
 
     // ---- step execution -------------------------------------------------------------------------
 

@@ -9,8 +9,12 @@ public sealed record WinUseConfig(
     double SatisfiedThreshold,
     IReadOnlyList<string> AllowedRoots,
     IReadOnlyList<string> KillableProcesses,
-    string LogDirectory)
+    string LogDirectory,
+    int SettleMs = WinUseConfig.DefaultSettleMs)
 {
+    /// <summary>Default wait (ms) after an <c>act</c> before re-observing to verify it (<c>WINUSE_SETTLE_MS</c>).</summary>
+    public const int DefaultSettleMs = 400;
+
     /// <summary>
     /// Precedence (low to high): .env in exeDirectory, .env in currentDirectory, environment.
     /// </summary>
@@ -38,7 +42,8 @@ public sealed record WinUseConfig(
             SatisfiedThreshold: 0.7,
             AllowedRoots: allowedRoots,
             KillableProcesses: SplitList(Get("WINUSE_KILLABLE_PROCESSES")),
-            LogDirectory: Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "winuse", "logs"));
+            LogDirectory: Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "winuse", "logs"),
+            SettleMs: int.TryParse(Get("WINUSE_SETTLE_MS"), out var settle) && settle >= 0 ? settle : DefaultSettleMs);
     }
 
     private static string[] SplitList(string? raw) =>

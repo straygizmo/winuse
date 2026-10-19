@@ -129,4 +129,28 @@ public class GrounderTests
         var r = await g.CheckAsync("done?", null);
         Assert.True(r.Available); Assert.Equal(0.8, r.Probability);
     }
+
+    [Fact]
+    public async Task ActAsync_Verification_SeesTheExecutedAction_AfterSettling()
+    {
+        var jev = new FakeJev(choice: ("u2", 0.9, 0.8), noul: 0.95);
+        var cfg = TestConfig.WithJev("k") with { SettleMs = 150 };
+        var g = new Grounder(jev, new FakeObservation(Cand("u1", "Cancel"), Cand("u2", "Save")), new FakeExecutor(), cfg);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var r = await g.ActAsync("click save", null, ActKind.Click, null, null);
+        sw.Stop();
+
+        Assert.True(r.Executed);
+        Assert.True(sw.ElapsedMilliseconds >= 120, $"settle wait skipped ({sw.ElapsedMilliseconds} ms)");
+        // The last Jev call is the "satisfied" verification.
+        var q = Assert.IsType<NoulQuestion>(jev.Calls[^1]["satisfied"]);
+        Assert.Contains("executed_action", q.Instructions);
+        var state = System.Text.Json.JsonSerializer.SerializeToNode(jev.LastState)!;
+        Assert.Equal("click", state["executed_action"]!["kind"]!.GetValue<string>());
+        Assert.Equal("Save", state["executed_action"]!["target_label"]!.GetValue<string>());
+        var recent = state["recent_actions"]!.AsArray().Select(x => x!.GetValue<string>()).ToList();
+        Assert.Contains("did something", recent);
+        Assert.Contains(recent, a => a.Contains("click") && a.Contains("Save"));
+    }
 }
