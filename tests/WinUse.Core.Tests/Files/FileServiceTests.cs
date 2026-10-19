@@ -22,6 +22,32 @@ public sealed class FileServiceTests : IDisposable
         Assert.Equal("hi!", svc.ReadText(f));
     }
 
+    [Theory]
+    [InlineData("src")]
+    [InlineData(@"src\sub")]
+    [InlineData(@"src\sub\deeper\")]
+    public void Copy_DirectoryIntoItself_Throws(string dst)
+    {
+        var svc = Svc;
+        var src = Path.Combine(_root, "src");
+        Directory.CreateDirectory(Path.Combine(src, "sub"));
+        File.WriteAllText(Path.Combine(src, "a.txt"), "a");
+        var ex = Assert.Throws<ArgumentException>(() => svc.Copy(src, Path.Combine(_root, dst), true));
+        Assert.StartsWith("Cannot copy a directory into itself", ex.Message);
+        Assert.False(Directory.Exists(Path.Combine(src, "sub", "src")));
+    }
+
+    [Fact]
+    public void Copy_DirectoryToSiblingWithSamePrefix_Works()
+    {
+        var svc = Svc;
+        var src = Path.Combine(_root, "src");
+        Directory.CreateDirectory(src);
+        File.WriteAllText(Path.Combine(src, "a.txt"), "a");
+        svc.Copy(src, Path.Combine(_root, "src2"), false);
+        Assert.Equal("a", File.ReadAllText(Path.Combine(_root, "src2", "a.txt")));
+    }
+
     [Fact]
     public void Delete_OutsideAllowedRoot_Throws()
     {

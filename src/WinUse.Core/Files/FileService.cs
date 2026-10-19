@@ -63,7 +63,16 @@ public sealed class FileService(WinUseConfig cfg)
     {
         var s = G(src);
         var d = G(dst);
-        if (Directory.Exists(s)) CopyDir(s, d, overwrite);
+        if (Directory.Exists(s))
+        {
+            // Copying a directory into its own subtree would recurse into the copy without bound.
+            var sr = Path.TrimEndingDirectorySeparator(s);
+            var dr = Path.TrimEndingDirectorySeparator(d);
+            if (dr.Equals(sr, StringComparison.OrdinalIgnoreCase)
+                || dr.StartsWith(sr + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("Cannot copy a directory into itself", nameof(dst));
+            CopyDir(s, d, overwrite);
+        }
         else
         {
             EnsureParent(d);

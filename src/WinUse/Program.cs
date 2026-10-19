@@ -2,6 +2,7 @@ using System.Collections;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Console;
 using WinUse.Cli;
 using WinUse.Core.Config;
 using WinUse.Logging;
@@ -21,8 +22,12 @@ public static class Program
             case "run":
                 return await RunAsync(args);
             case "doctor":
-                using (var ctx = ToolContext.Create(LoadConfig()))
-                    return await DoctorCommand.ExecuteAsync(ctx, Console.Out);
+            {
+                var cfg = LoadConfig();
+                using var loggerFactory = CreateCliLoggerFactory(cfg);
+                using var ctx = ToolContext.Create(cfg, loggerFactory);
+                return await DoctorCommand.ExecuteAsync(ctx, Console.Out);
+            }
             default:
                 return Usage();
         }
@@ -43,9 +48,23 @@ public static class Program
             }
         }
         if (path is null) return Usage();
-        using var ctx = ToolContext.Create(LoadConfig());
+        var cfg = LoadConfig();
+        using var loggerFactory = CreateCliLoggerFactory(cfg);
+        using var ctx = ToolContext.Create(cfg, loggerFactory);
         return await RunCommand.ExecuteAsync(path, heal, report, ctx);
     }
+
+    /// <summary>
+    /// Logging for <c>run</c> / <c>doctor</c>: everything (Information and up) to the log file like <c>--mcp</c>, and
+    /// warnings / errors to stderr, where the per-step <c>run</c> lines would otherwise drown in step logs.
+    /// </summary>
+    public static ILoggerFactory CreateCliLoggerFactory(WinUseConfig cfg) => LoggerFactory.Create(b =>
+    {
+        b.SetMinimumLevel(LogLevel.Information);
+        b.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
+        b.AddFilter<ConsoleLoggerProvider>(null, LogLevel.Warning);
+        b.AddProvider(new FileLoggerProvider(cfg.LogDirectory));
+    });
 
     private static int Usage()
     {
