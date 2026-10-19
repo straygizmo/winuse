@@ -40,7 +40,12 @@ public sealed class ToolDispatcher(ToolContext ctx) : IToolDispatcher
             var args = (JsonObject)inv.Args.DeepClone();
             var recordedRefs = args[ToolContext.ResolvedRefsKey] as JsonObject;
             args.Remove(ToolContext.ResolvedRefsKey);
-            var paramNames = method.GetParameters().Select(p => p.Name!).ToHashSet(StringComparer.Ordinal);
+            var paramNames = method.GetParameters()
+                .Where(p => p.ParameterType != typeof(ToolContext) && p.ParameterType != typeof(CancellationToken))
+                .Select(p => p.Name!).ToHashSet(StringComparer.Ordinal);
+            // A misspelt argument would otherwise be silently dropped and the tool would run with its default.
+            if (args.Select(kv => kv.Key).FirstOrDefault(k => !paramNames.Contains(k)) is { } unknown)
+                return Fail($"unknown argument: {unknown}", inv.Resolved);
             var injected = new HashSet<string>(StringComparer.Ordinal);
             var isAct = inv.Tool == "act";
             string? actTarget = null;

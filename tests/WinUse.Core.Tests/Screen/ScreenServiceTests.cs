@@ -18,6 +18,17 @@ public class ScreenServiceTests
         Assert.Equal(vw, cap.Width);
         Assert.Equal(vh, cap.Height);
         Assert.Equal(1.0, cap.Scale);
+        Assert.Equal(NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN), cap.OriginX);
+        Assert.Equal(NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN), cap.OriginY);
+    }
+
+    [Fact, Trait("Category", "Integration")]
+    public async Task CaptureRect_HasRectOrigin()
+    {
+        using var d = new AutomationDispatcher();
+        var cap = await new ScreenService(d).CaptureRectAsync(new Rect(100, 50, 200, 120), 0.5);
+        Assert.Equal((100, 50), (cap.OriginX, cap.OriginY));
+        Assert.Equal((100, 60), (cap.Width, cap.Height));
     }
 
     [Fact, Trait("Category", "Integration")]

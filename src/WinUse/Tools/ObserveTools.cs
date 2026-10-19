@@ -3,6 +3,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using WinUse.Core.Refs;
+using WinUse.Core.Screen;
 using WinUse.Core.Uia;
 using WinUse.Core.Windows;
 
@@ -12,32 +13,28 @@ namespace WinUse.Tools;
 public sealed class ObserveTools
 {
     [McpServerTool(Name = "screenshot", ReadOnly = true)]
-    [Description("Capture a PNG of the whole screen, a window, or a single element. Returns the image plus its pixel size and scale.")]
+    [Description("Capture a PNG of the whole screen, a window, or a single element. Returns the image plus width/height (image pixels), scale and origin {x, y}: the virtual-screen physical pixel of image pixel (0,0). Map an image pixel to click(x, y) with screen_x = origin.x + pixel_x / scale, screen_y = origin.y + pixel_y / scale (origin is null for a DOM element capture).")]
     public static Task<CallToolResult> Screenshot(
         ToolContext ctx,
-        [Description("What to capture: \"screen\", \"window\" (ref or title, default: last observed / foreground window) or \"element\" (ref).")] string target = "screen",
+        [Description("What to capture: \"screen\", \"window\" (window, ref or title; default: last observed / foreground window) or \"element\" (ref). Default: \"window\" when window or title is given, else \"screen\".")] string? target = null,
         [Description("Window ref (win{n}) for target=window, or element ref (u{n} / w{n}) for target=element.")] string? @ref = null,
         [Description("Window title regex for target=window.")] string? title = null,
-        [Description("Downscale factor between 0.25 and 1.0.")] double scale = 1.0) =>
-        ctx.RunStepAsync("screenshot", ToolContext.Args(("target", target), ("ref", @ref), ("title", title), ("scale", scale)), async step =>
+        [Description("Downscale factor between 0.25 and 1.0.")] double scale = 1.0,
+        [Description("Window ref (win{n}) or title regex to capture, like the window argument of the other tools.")] string? window = null) =>
+        ctx.RunStepAsync("screenshot", ToolContext.Args(("target", target), ("ref", @ref), ("title", title), ("scale", scale), ("window", window)), async step =>
         {
-            byte[] png;
-            int width, height;
-            double usedScale;
-            switch (target.ToLowerInvariant())
+            var (kind, windowRef, windowTitle) = NormalizeScreenshotArgs(target, @ref, title, window);
+            Capture c;
+            switch (kind)
             {
                 case "screen":
-                {
-                    var c = await ctx.Screen.CaptureScreenAsync(scale);
-                    (png, width, height, usedScale) = (c.Png, c.Width, c.Height, c.Scale);
+                    c = await ctx.Screen.CaptureScreenAsync(scale);
                     break;
-                }
                 case "window":
                 {
-                    var w = await ctx.ResolveWindowAsync(@ref, title, fallback: true);
-                    if (@ref is not null) step.Resolved = ctx.GetRef(@ref).Locator;
-                    var c = await ctx.Screen.CaptureWindowAsync(w.Hwnd, scale);
-                    (png, width, height, usedScale) = (c.Png, c.Width, c.Height, c.Scale);
+                    var w = await ctx.ResolveWindowAsync(windowRef, windowTitle, fallback: true);
+                    if (windowRef is not null) step.Resolved = ctx.GetRef(windowRef).Locator;
+                    c = await ctx.Screen.CaptureWindowAsync(w.Hwnd, scale);
                     break;
                 }
                 case "element":
@@ -47,26 +44,41 @@ public sealed class ObserveTools
                     step.Resolved = r.Locator;
                     if (r.Kind == RefKind.Dom)
                     {
-                        png = await ctx.Web.ScreenshotAsync(r.Id);
-                        (width, height) = PngSize(png);
-                        usedScale = 1.0;
+                        // Playwright captures the element from the page: its screen position is not known.
+                        var png = await ctx.Web.ScreenshotAsync(r.Id);
+                        var (width, height) = PngSize(png);
+                        step.Extra.Add(ImageContentBlock.FromBytes(png, "image/png"));
+                        return new { width, height, scale = 1.0, origin = (object?)null };
                     }
-                    else
-                    {
-                        var rect = r.Kind == RefKind.Uia
-                            ? await ctx.Uia.GetRectAsync(r.Id)
-                            : (await ctx.ResolveWindowAsync(r.Id, null, false)).Rect;
-                        var c = await ctx.Screen.CaptureRectAsync(rect, scale);
-                        (png, width, height, usedScale) = (c.Png, c.Width, c.Height, c.Scale);
-                    }
+                    var rect = r.Kind == RefKind.Uia
+                        ? await ctx.Uia.GetRectAsync(r.Id)
+                        : (await ctx.ResolveWindowAsync(r.Id, null, false)).Rect;
+                    c = await ctx.Screen.CaptureRectAsync(rect, scale);
                     break;
                 }
                 default:
                     throw new ArgumentException($"Unknown target '{target}'. Use screen, window or element.");
             }
-            step.Extra.Add(ImageContentBlock.FromBytes(png, "image/png"));
-            return new { width, height, scale = usedScale };
+            step.Extra.Add(ImageContentBlock.FromBytes(c.Png, "image/png"));
+            return ScreenshotPayload(c);
         });
+
+    /// <summary>Result of a screen/window/rect capture: size, scale and the virtual-screen origin of pixel (0,0).</summary>
+    public static object ScreenshotPayload(Capture c) =>
+        new { width = c.Width, height = c.Height, scale = c.Scale, origin = (object?)new { x = c.OriginX, y = c.OriginY } };
+
+    /// <summary>
+    /// Effective screenshot target and window arguments. <paramref name="window"/> (a ref or title regex, like every
+    /// other tool's window argument) wins over ref/title and makes "window" the default target; so does a title.
+    /// </summary>
+    public static (string Target, string? WindowRef, string? WindowTitle) NormalizeScreenshotArgs(string? target, string? @ref, string? title, string? window)
+    {
+        var t = string.IsNullOrEmpty(target)
+            ? (!string.IsNullOrEmpty(window) || !string.IsNullOrEmpty(title) ? "window" : "screen")
+            : target.ToLowerInvariant();
+        if (!string.IsNullOrEmpty(window)) return (t, null, window); // ResolveWindowAsync accepts a win{n} ref in the title slot
+        return (t, t == "window" ? @ref : null, title);
+    }
 
     private static (int Width, int Height) PngSize(byte[] png) =>
         png.Length >= 24

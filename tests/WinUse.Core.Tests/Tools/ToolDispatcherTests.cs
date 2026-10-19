@@ -327,6 +327,38 @@ public sealed class ToolDispatcherTests : IDisposable
     }
 
     [Fact]
+    public async Task Dispatcher_UnknownArgument_IsRejected_AndNotJournaled()
+    {
+        var o = await new ToolDispatcher(ctx).InvokeAsync(
+            new("read_text", Args(("path", Path.Combine(tmp, "a.txt")), ("pth", "x")), null), default);
+        Assert.False(o.Ok);
+        Assert.Equal("unknown argument: pth", o.Error);
+        Assert.Empty(ctx.Journal.Entries);
+    }
+
+    [Fact]
+    public async Task Dispatcher_ResolvedRefsArgument_IsNotUnknown()
+    {
+        var f = Path.Combine(tmp, "b.txt");
+        var args = Args(("path", f), ("text", "x"));
+        args[ToolContext.ResolvedRefsKey] = new JsonObject();
+        var o = await new ToolDispatcher(ctx).InvokeAsync(new("write_text", args, null), default);
+        Assert.True(o.Ok, o.Error);
+    }
+
+    [Fact]
+    public async Task Screenshot_WindowArgument_ResolvesLikeOtherTools()
+    {
+        // The window argument is used (not silently dropped in favour of a screen capture): an unknown title fails
+        // with the same message as every other tool's window resolution.
+        var title = "^no-such-window-" + Guid.NewGuid().ToString("N") + "$";
+        var o = await new ToolDispatcher(ctx).InvokeAsync(new("screenshot", Args(("window", title)), null), default);
+        Assert.False(o.Ok);
+        Assert.Equal($"No window matches '{title}'.", o.Error);
+        Assert.Equal(title, ctx.Journal.Entries.Single().Args["window"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task Dispatcher_MissingRequiredArgument_ReturnsNotOk()
     {
         var o = await new ToolDispatcher(ctx).InvokeAsync(new("read_text", new JsonObject(), null), default);
