@@ -38,31 +38,57 @@ public sealed class ToolDispatcher(ToolContext ctx) : IToolDispatcher
         try
         {
             var args = (JsonObject)inv.Args.DeepClone();
-            Task<CallToolResult> call;
+            var recordedRefs = args[ToolContext.ResolvedRefsKey] as JsonObject;
+            args.Remove(ToolContext.ResolvedRefsKey);
+            var paramNames = method.GetParameters().Select(p => p.Name!).ToHashSet(StringComparer.Ordinal);
+            var injected = new HashSet<string>(StringComparer.Ordinal);
+            var isAct = inv.Tool == "act";
+            string? actTarget = null;
+            var regroundAct = false;
+
+            // 1. The primary locator (the element the step acted on).
             if (inv.Resolved is not null)
             {
                 var refId = await ResolveAsync(inv.Tool, inv.Resolved).ConfigureAwait(false);
                 if (refId is null)
                 {
-                    if (!(Heal && inv.Tool == "act")) return Fail("locator not found", inv.Resolved);
-                    call = Call(method, args, ct); // re-ground the intent with Jev
+                    if (!(Heal && isAct)) return Fail("locator not found", inv.Resolved);
+                    regroundAct = true; // re-ground the intent with Jev
                 }
-                else if (inv.Tool == "act")
+                else if (isAct)
                 {
-                    call = IntentTools.ActOnRefAsync(ctx, Str(args, "intent") ?? "", Str(args, "window"), Str(args, "kind") ?? "auto",
-                        Str(args, "text"), args["min_confidence"]?.GetValue<double>(), ctx.GetRef(refId));
+                    actTarget = refId;
                 }
-                else
+                else if (new[] { "ref", "from_ref" }.FirstOrDefault(paramNames.Contains) is { } primary)
                 {
-                    var refParam = method.GetParameters().Select(p => p.Name).FirstOrDefault(n => n is "ref" or "from_ref");
-                    if (refParam is not null) args[refParam] = refId;
-                    call = Call(method, args, ct);
+                    args[primary] = refId;
+                    injected.Add(primary);
                 }
             }
-            else
+
+            // 2. Every other ref argument recorded with its locator (to_ref, window, scope, ...).
+            if (recordedRefs is not null)
             {
-                call = Call(method, args, ct);
+                foreach (var (name, node) in recordedRefs.ToList())
+                {
+                    if (injected.Contains(name) || !paramNames.Contains(name) || node is null) continue;
+                    var loc = node.Deserialize<Locator>() ?? throw new JsonException($"Invalid locator for '{name}'.");
+                    var id = await ResolveAsync(inv.Tool, loc).ConfigureAwait(false);
+                    if (id is null) return Fail($"locator not found: {name}", inv.Resolved);
+                    args[name] = id;
+                    injected.Add(name);
+                }
             }
+
+            // 3. Never pass a recorded ref id without its locator: in this session it may name a different element.
+            foreach (var name in ToolContext.RefArgNames)
+                if (!injected.Contains(name) && args[name] is JsonValue v && v.TryGetValue<string>(out var s) && ToolContext.LooksLikeRef(s))
+                    return Fail($"stale ref: {name}", inv.Resolved);
+
+            var call = isAct && !regroundAct && actTarget is not null
+                ? IntentTools.ActOnRefAsync(ctx, Str(args, "intent") ?? "", Str(args, "window"), Str(args, "kind") ?? "auto",
+                    Str(args, "text"), args["min_confidence"]?.GetValue<double>(), ctx.GetRef(actTarget))
+                : Call(method, args, ct);
             return ToOutcome(inv.Tool, await call.ConfigureAwait(false));
         }
         catch (Exception ex)
@@ -91,8 +117,10 @@ public sealed class ToolDispatcher(ToolContext ctx) : IToolDispatcher
             }
             case WindowLocator w:
             {
-                var info = await ctx.Windows.FindAsync(w).ConfigureAwait(false);
-                return info is null && !lazy ? null : ctx.Refs.Register(RefKind.Window, w, info?.Hwnd).Id;
+                // Titles change (e.g. an unsaved marker): fall back to the single window of the same process/class.
+                var info = await ctx.Windows.FindWithFallbackAsync(w).ConfigureAwait(false);
+                if (info is null) return lazy ? ctx.Refs.Register(RefKind.Window, w, null).Id : null;
+                return ctx.Refs.Register(RefKind.Window, ToolContext.LocatorOf(info), info.Hwnd).Id;
             }
             default:
                 return null;

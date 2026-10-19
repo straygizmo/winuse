@@ -6,6 +6,7 @@ public sealed record RunSpec(
     string? Cwd,
     IReadOnlyDictionary<string, string>? Env,
     bool WebViewDebug,
-    bool RequireFresh);
+    bool RequireFresh,
+    bool DetachStdio = false);
 
 public sealed record RunResult(int Pid, int? CdpPort, string ProcessName);

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -23,8 +24,10 @@ using WinUse.Core.Windows;
 namespace WinUse.Tools;
 
 /// <summary>Mutable per-step state a tool body fills in for the journal.</summary>
-public sealed class ToolStep
+public sealed class ToolStep(JsonObject args)
 {
+    /// <summary>The journaled arguments; a tool may refine them (e.g. act records the executed kind).</summary>
+    public JsonObject Args { get; } = args;
     public Locator? Resolved { get; set; }
     public bool? Passed { get; set; }
     public List<ContentBlock> Extra { get; } = [];
@@ -35,9 +38,18 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
 {
     private static readonly Regex WebRefPattern = new(@"^w\d+$", RegexOptions.CultureInvariant);
     private static readonly Regex UiaRefPattern = new(@"^u\d+$", RegexOptions.CultureInvariant);
+    private static readonly Regex AnyRefPattern = new(@"^(u|w|win)\d+$", RegexOptions.CultureInvariant);
+
+    /// <summary>Arguments that may carry a ref; their locators are journaled under <see cref="ResolvedRefsKey"/>.</summary>
+    public static readonly string[] RefArgNames = ["ref", "from_ref", "to_ref", "window", "scope", "title"];
+
+    /// <summary>Journaled-args key holding <c>{ argName: Locator }</c> for every ref argument of a call.</summary>
+    public const string ResolvedRefsKey = "resolved_refs";
+
+    private readonly AsyncLocal<StrongBox<ActKind?>?> _kindCapture = new();
     private int _disposed;
 
-    private ToolContext(WinUseConfig cfg, ILoggerFactory lf)
+    private ToolContext(WinUseConfig cfg, ILoggerFactory lf, IJevClient? jev, IObservationSource? observation, IActionExecutor? executor)
     {
         Config = cfg;
         Log = lf.CreateLogger("WinUse.Tools");
@@ -50,13 +62,18 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
         Files = new FileService(cfg);
         Uia = new UiaService(Dispatcher, Refs, Windows);
         Web = new WebService(Refs);
-        Jev = new JevClient(new HttpClient(), cfg, lf.CreateLogger<JevClient>());
-        Grounder = new Grounder(Jev, this, this, cfg);
+        Jev = jev ?? new JevClient(new HttpClient(), cfg, lf.CreateLogger<JevClient>());
+        Grounder = new Grounder(Jev, observation ?? this, new KindCapturingExecutor(executor ?? this, this), cfg);
         Journal = new Journal();
     }
 
     public static ToolContext Create(WinUseConfig cfg, ILoggerFactory? loggerFactory = null) =>
-        new(cfg, loggerFactory ?? NullLoggerFactory.Instance);
+        new(cfg, loggerFactory ?? NullLoggerFactory.Instance, null, null, null);
+
+    /// <summary>Overload with replaceable grounding collaborators (Jev, observation, execution), mainly for tests.</summary>
+    public static ToolContext Create(WinUseConfig cfg, ILoggerFactory? loggerFactory, IJevClient? jev,
+        IObservationSource? observation = null, IActionExecutor? executor = null) =>
+        new(cfg, loggerFactory ?? NullLoggerFactory.Instance, jev, observation, executor);
 
     public WinUseConfig Config { get; }
     public ILogger Log { get; }
@@ -76,33 +93,54 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
     /// <summary>The window most recently observed or operated on; the default target for observation.</summary>
     public nint? LastWindow { get; set; }
 
+    /// <summary>Pid of the process whose WebView2 the <see cref="Web"/> session is connected to (set by process_run).</summary>
+    public int? WebOwnerPid { get; set; }
+
     // ---- step execution -------------------------------------------------------------------------
 
     /// <summary>Allocates a step id, runs <paramref name="body"/>, journals the call and converts the outcome to a tool result.</summary>
     public async Task<CallToolResult> RunStepAsync(string tool, JsonObject args, Func<ToolStep, Task<object>> body)
     {
         var stepId = Journal.NextId();
-        var step = new ToolStep();
         var sw = Stopwatch.StartNew();
+        AttachRefLocators(args);
+        var step = new ToolStep(args);
+        string? json = null;
+        Exception? error = null;
         try
         {
             var payload = await body(step).ConfigureAwait(false);
-            sw.Stop();
-            Journal.Record(new JournalEntry(stepId, tool, args, step.Resolved, step.Passed, sw.Elapsed, DateTimeOffset.Now));
-            var json = ToolResult.Ok(payload, stepId);
-            Log.LogInformation("{StepId} {Tool} {Args} -> ok in {Elapsed} ms: {Result}",
-                stepId, tool, args.ToJsonString(ToolResult.Json), sw.ElapsedMilliseconds, Truncate(json, 2000));
-            return ToolResult.Text(json, step.Extra);
+            json = ToolResult.Ok(payload, stepId);
         }
         catch (Exception ex)
         {
-            sw.Stop();
-            Journal.Record(new JournalEntry(stepId, tool, args, step.Resolved, step.Passed, sw.Elapsed, DateTimeOffset.Now));
-            Log.LogWarning(ex, "{StepId} {Tool} {Args} -> error in {Elapsed} ms",
-                stepId, tool, args.ToJsonString(ToolResult.Json), sw.ElapsedMilliseconds);
-            return ToolResult.Error(ex.Message, stepId);
+            error = ex;
         }
+        sw.Stop();
+        // Exactly one journal entry per step, whether the body or the serialization failed.
+        Journal.Record(new JournalEntry(stepId, tool, args, step.Resolved, step.Passed, sw.Elapsed, DateTimeOffset.Now));
+        if (error is not null || json is null)
+        {
+            Log.LogWarning(error, "{StepId} {Tool} {Args} -> error in {Elapsed} ms",
+                stepId, tool, args.ToJsonString(ToolResult.Json), sw.ElapsedMilliseconds);
+            return ToolResult.Error(error?.Message ?? "no result", stepId);
+        }
+        Log.LogInformation("{StepId} {Tool} {Args} -> ok in {Elapsed} ms: {Result}",
+            stepId, tool, args.ToJsonString(ToolResult.Json), sw.ElapsedMilliseconds, Truncate(json, 2000));
+        return ToolResult.Text(json, step.Extra);
     }
+
+    /// <summary>Journals the locator of every ref argument known at call time, so replay can re-resolve all of them.</summary>
+    private void AttachRefLocators(JsonObject args)
+    {
+        JsonObject? map = null;
+        foreach (var name in RefArgNames)
+            if (args[name] is JsonValue v && v.TryGetValue<string>(out var id) && Refs.TryGet(id, out var r))
+                (map ??= new JsonObject())[name] = JsonSerializer.SerializeToNode(r.Locator, typeof(Locator));
+        if (map is not null) args[ResolvedRefsKey] = map;
+    }
+
+    public static bool LooksLikeRef(string s) => AnyRefPattern.IsMatch(s);
 
     /// <summary>Builds the journaled argument object, skipping null values.</summary>
     public static JsonObject Args(params (string Key, object? Value)[] values)
@@ -153,7 +191,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
             _ => null,
         };
         if (loc is null) return;
-        var w = await Windows.FindAsync(loc).ConfigureAwait(false);
+        var w = await Windows.FindWithFallbackAsync(loc).ConfigureAwait(false);
         if (w is null) return;
         await Windows.ActivateAsync(w.Hwnd).ConfigureAwait(false);
         LastWindow = w.Hwnd;
@@ -172,7 +210,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
             DomLocator d => d.Window,
             _ => throw new ArgumentException($"Ref '{r.Id}' does not identify a window."),
         };
-        return all.FirstOrDefault(w => WindowService.Matches(w, loc))
+        return WindowService.PickWithFallback(all, loc)
                ?? throw new InvalidOperationException($"Window for ref '{r.Id}' not found.");
     }
 
@@ -209,14 +247,34 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
         if (Web.IsConnected)
         {
             webViewRect = await FindWebViewRectAsync(tree.Ref).ConfigureAwait(false);
-            Web.Window = LocatorOf(w);
-            dom = await Web.GetDomAsync().ConfigureAwait(false);
+            // Only use the DOM when the connected WebView belongs to this window; otherwise another app's
+            // elements would be mixed into the candidates.
+            if (webViewRect is not null || (WebOwnerPid is { } pid && pid == w.Pid))
+            {
+                try
+                {
+                    Web.Window = LocatorOf(w);
+                    dom = await Web.GetDomAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    Log.LogWarning(ex, "DOM collection failed; observing with UIA only");
+                    dom = [];
+                }
+            }
         }
         var candidates = CandidateBuilder.Build(tree, dom, w.Rect, webViewRect);
         var recent = Journal.Entries.TakeLast(5)
-            .Select(e => Truncate($"{e.Tool} {e.Args.ToJsonString(ToolResult.Json)}", 200))
+            .Select(e => Truncate($"{e.Tool} {Summary(e.Args)}", 200))
             .ToList();
         return new Observation(w, candidates, recent);
+    }
+
+    private static string Summary(JsonObject args)
+    {
+        var copy = (JsonObject)args.DeepClone();
+        copy.Remove(ResolvedRefsKey);
+        return copy.ToJsonString(ToolResult.Json);
     }
 
     /// <summary>Screen rectangle of the WebView2 render host under the tree root, or null when there is none.</summary>
@@ -270,6 +328,23 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
         else
         {
             throw new ArgumentException($"Ref '{target.Id}' cannot be acted on.");
+        }
+    }
+
+    /// <summary>Starts recording the kind of the next grounded action executed in this async flow.</summary>
+    public StrongBox<ActKind?> BeginKindCapture()
+    {
+        var box = new StrongBox<ActKind?>();
+        _kindCapture.Value = box;
+        return box;
+    }
+
+    private sealed class KindCapturingExecutor(IActionExecutor inner, ToolContext owner) : IActionExecutor
+    {
+        public async Task ExecuteAsync(Candidate target, ActKind kind, string? text)
+        {
+            await inner.ExecuteAsync(target, kind, text).ConfigureAwait(false);
+            if (owner._kindCapture.Value is { } box) box.Value = kind;
         }
     }
 

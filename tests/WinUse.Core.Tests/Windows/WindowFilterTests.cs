@@ -34,4 +34,33 @@ public class WindowFilterTests
         var w = new WindowInfo(1, "t", actual, "p", 1, new Rect(0, 0, 1, 1), WindowState.Normal);
         Assert.Equal(expected, WindowService.Matches(w, new WindowLocator(".", null, wanted)));
     }
+
+    private static WindowInfo Win(string title, string process, string cls = "C", nint hwnd = 1) =>
+        new(hwnd, title, cls, process, 1, new Rect(0, 0, 10, 10), WindowState.Normal);
+
+    [Fact]
+    public void PickWithFallback_PrefersExactTitle()
+    {
+        var a = Win("Doc - App", "app", hwnd: 1);
+        var b = Win("*Doc - App", "app", hwnd: 2);
+        Assert.Same(a, WindowService.PickWithFallback([b, a], new WindowLocator("^Doc - App$", "app", "C")));
+    }
+
+    [Fact]
+    public void PickWithFallback_UsesSingleWindowOfSameProcessAndClass_WhenTitleChanged()
+    {
+        var changed = Win("*Doc - App", "App", hwnd: 2);
+        var other = Win("Other", "notepad", hwnd: 3);
+        Assert.Same(changed, WindowService.PickWithFallback([other, changed], new WindowLocator("^Doc - App$", "app.exe", "c")));
+    }
+
+    [Fact]
+    public void PickWithFallback_ReturnsNull_WhenAmbiguousOrNoProcessRecorded()
+    {
+        var w1 = Win("A", "app", hwnd: 1);
+        var w2 = Win("B", "app", hwnd: 2);
+        Assert.Null(WindowService.PickWithFallback([w1, w2], new WindowLocator("^Gone$", "app", "C")));
+        Assert.Null(WindowService.PickWithFallback([w1], new WindowLocator("^Gone$", null, null)));
+        Assert.Null(WindowService.PickWithFallback([w1], new WindowLocator("^Gone$", "app", "OtherClass")));
+    }
 }

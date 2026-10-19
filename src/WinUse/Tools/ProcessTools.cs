@@ -27,7 +27,7 @@ public sealed class ProcessTools
         ctx.RunStepAsync("process_run", ToolContext.Args(("path", path), ("args", args), ("cwd", cwd), ("env", env),
             ("webview_debug", webview_debug), ("wait_window", wait_window), ("require_fresh", require_fresh)), async _ =>
         {
-            var run = ctx.Processes.Run(new RunSpec(path, args, cwd, env, webview_debug, require_fresh));
+            var run = ctx.Processes.Run(new RunSpec(path, args, cwd, env, webview_debug, require_fresh, DetachStdio: true));
             object? window = null;
             if (!string.IsNullOrEmpty(wait_window))
             {
@@ -45,6 +45,7 @@ public sealed class ProcessTools
                 {
                     await ctx.Web.ConnectAsync(port, CdpConnectTimeout);
                     cdpConnected = true;
+                    ctx.WebOwnerPid = run.Pid;
                 }
                 catch (Exception ex)
                 {

@@ -21,7 +21,10 @@ public sealed class IntentTools
         ctx.RunStepAsync("act", ToolContext.Args(("intent", intent), ("window", window), ("kind", kind), ("text", text),
             ("min_confidence", min_confidence)), async step =>
         {
+            var executedKind = ctx.BeginKindCapture();
             var r = await ctx.Grounder.ActAsync(intent, window, ParseKind(kind), text, min_confidence);
+            // Journal the kind actually executed so a replay does not have to guess it.
+            if (r.Executed && executedKind.Value is { } ek) step.Args["kind"] = KindName(ek);
             if (r.Executed && r.Target is not null && ctx.Refs.TryGet(r.Target.Id, out var er)) step.Resolved = er.Locator;
             return new
             {
@@ -47,6 +50,7 @@ public sealed class IntentTools
             step.Resolved = target.Locator;
             var k = ParseKind(kind);
             if (k == ActKind.Auto) k = text is null ? ActKind.Click : ActKind.Type;
+            step.Args["kind"] = KindName(k);
             var cand = new Candidate(target.Id, "", "", null, true, false, k == ActKind.Type, null, "", null);
             await ctx.ExecuteAsync(cand, k, text);
             return new
@@ -92,6 +96,8 @@ public sealed class IntentTools
         Enum.TryParse<ActKind>(kind, ignoreCase: true, out var k) && Enum.IsDefined(k)
             ? k
             : throw new ArgumentException($"Unknown kind '{kind}'. Use auto, click, type, select or toggle.");
+
+    internal static string KindName(ActKind k) => k.ToString().ToLowerInvariant();
 
     private static object CandidateJson(Candidate c, double probability) => new
     {

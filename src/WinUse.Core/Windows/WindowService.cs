@@ -102,6 +102,25 @@ public sealed class WindowService(AutomationDispatcher d)
         }
     }
 
+    /// <summary>
+    /// Finds the window for a locator; when no title matches (titles change, e.g. an unsaved marker) falls back
+    /// to the single window with the same process (and class, when recorded). Ambiguity yields null.
+    /// </summary>
+    public async Task<WindowInfo?> FindWithFallbackAsync(WindowLocator loc) =>
+        PickWithFallback(await ListAsync().ConfigureAwait(false), loc);
+
+    public static WindowInfo? PickWithFallback(IReadOnlyList<WindowInfo> windows, WindowLocator loc)
+    {
+        var exact = windows.FirstOrDefault(w => Matches(w, loc));
+        if (exact is not null || loc.ProcessName is null) return exact;
+        var same = windows
+            .Where(w => ProcessMatches(w.ProcessName, loc.ProcessName))
+            .Where(w => loc.ClassName is null || string.Equals(w.ClassName, loc.ClassName, StringComparison.OrdinalIgnoreCase))
+            .Take(2)
+            .ToList();
+        return same.Count == 1 ? same[0] : null;
+    }
+
     public static bool Matches(WindowInfo w, WindowLocator loc)
     {
         if (!BuildRegex(loc.TitleRegex).IsMatch(w.Title)) return false;

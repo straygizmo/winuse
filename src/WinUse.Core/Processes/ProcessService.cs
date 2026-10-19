@@ -41,9 +41,34 @@ public sealed class ProcessService(WinUseConfig cfg)
             psi.Environment[WebViewArgsVar] = string.IsNullOrWhiteSpace(existing) ? flags : existing + " " + flags;
         }
 
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"Failed to start: {spec.Path}");
-        lock (_lock) _started.Add(proc.Id);
-        return new RunResult(proc.Id, port, name);
+        if (spec.DetachStdio)
+        {
+            // Keep the child off our own stdin/stdout (the MCP JSON-RPC stream): give it pipes,
+            // close its stdin and discard whatever it prints.
+            psi.RedirectStandardInput = true;
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+        }
+
+        var proc = Process.Start(psi) ?? throw new InvalidOperationException($"Failed to start: {spec.Path}");
+        var pid = proc.Id;
+        lock (_lock) _started.Add(pid);
+        if (spec.DetachStdio)
+        {
+            try { proc.StandardInput.Close(); } catch (IOException) { }
+            var stdout = proc.StandardOutput.BaseStream;
+            var stderr = proc.StandardError.BaseStream;
+            _ = Task.Run(async () =>
+            {
+                try { await Task.WhenAll(DrainAsync(stdout), DrainAsync(stderr)).ConfigureAwait(false); }
+                finally { proc.Dispose(); }
+            });
+        }
+        else
+        {
+            proc.Dispose();
+        }
+        return new RunResult(pid, port, name);
     }
 
     public bool Exists(string processName)
@@ -85,6 +110,18 @@ public sealed class ProcessService(WinUseConfig cfg)
             }
         }
         return killed;
+    }
+
+    /// <summary>Reads a child's output pipe to the end so it never blocks; the data is discarded.</summary>
+    private static async Task DrainAsync(Stream s)
+    {
+        var buf = new byte[8192];
+        try
+        {
+            while (await s.ReadAsync(buf).ConfigureAwait(false) > 0) { }
+        }
+        catch (IOException) { }
+        catch (ObjectDisposedException) { }
     }
 
     private static string StripExe(string n) =>

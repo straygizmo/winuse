@@ -23,6 +23,31 @@ public class ProcessServiceTests
     }
 
     [Fact]
+    public void Run_WithDetachStdio_DrainsOutputAndKeepsOurStdoutClean()
+    {
+        var svc = new ProcessService(TestConfig.Default);
+        var original = Console.Out;
+        var captured = new StringWriter();
+        Console.SetOut(captured);
+        try
+        {
+            // ~30 KB of output: more than a pipe buffer, so the child only exits if the pipe is drained.
+            var r = svc.Run(new RunSpec("cmd.exe", "/c echo hi& for /l %i in (1,1,3000) do @echo line %i", null, null, false, false, DetachStdio: true));
+            using var p = Process.GetProcessById(r.Pid);
+            Assert.True(p.WaitForExit(15000), "child did not exit; its output was not drained");
+        }
+        catch (ArgumentException)
+        {
+            // already exited
+        }
+        finally
+        {
+            Console.SetOut(original);
+        }
+        Assert.Equal("", captured.ToString());
+    }
+
+    [Fact]
     public void Kill_RefusesProcessNotStartedByUs()
     {
         var svc = new ProcessService(TestConfig.Default);

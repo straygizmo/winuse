@@ -4,6 +4,7 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using WinUse.Core.Refs;
 using WinUse.Core.Uia;
+using WinUse.Core.Windows;
 
 namespace WinUse.Tools;
 
@@ -81,20 +82,20 @@ public sealed class ObserveTools
         ctx.RunStepAsync("list_windows", ToolContext.Args(("title_regex", title_regex), ("process", process)), async _ =>
         {
             var list = await ctx.Windows.ListAsync(title_regex, process);
-            return new
-            {
-                windows = list.Select(w => new
-                {
-                    @ref = ctx.RegisterWindow(w).Id,
-                    title = w.Title,
-                    class_name = w.ClassName,
-                    process = w.ProcessName,
-                    pid = w.Pid,
-                    rect = w.Rect,
-                    state = w.State.ToString().ToLowerInvariant(),
-                }).ToList(),
-            };
+            return new { windows = list.Select(w => WindowJson(ctx.RegisterWindow(w).Id, w)).ToList() };
         });
+
+    /// <summary>Serializable window projection (WindowInfo itself holds an nint handle, which System.Text.Json rejects).</summary>
+    internal static object WindowJson(string refId, WindowInfo w) => new
+    {
+        @ref = refId,
+        title = w.Title,
+        class_name = w.ClassName,
+        process = w.ProcessName,
+        pid = w.Pid,
+        rect = w.Rect,
+        state = w.State.ToString().ToLowerInvariant(),
+    };
 
     [McpServerTool(Name = "get_ui_tree", ReadOnly = true)]
     [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect). Use the refs with the other tools.")]
@@ -164,7 +165,7 @@ public sealed class ObserveTools
                 default:
                 {
                     var w = await ctx.ResolveWindowAsync(r.Id, null, false);
-                    return new { element = (object)w };
+                    return new { element = (object)WindowJson(r.Id, w) };
                 }
             }
         });
