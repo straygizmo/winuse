@@ -35,7 +35,7 @@ public sealed class ScreenService(AutomationDispatcher d)
             var rect = new Rect(wr.Left, wr.Top, wr.Right - wr.Left, wr.Bottom - wr.Top);
             if (!NativeMethods.IsIconic(hwnd) && rect.Width > 0 && rect.Height > 0)
             {
-                using var bmp = new Bitmap(rect.Width, rect.Height, PixelFormat.Format32bppArgb);
+                using var bmp = new Bitmap(rect.Width, rect.Height, PixelFormat.Format32bppRgb);
                 bool ok;
                 using (var g = Graphics.FromImage(bmp))
                 {
@@ -62,7 +62,7 @@ public sealed class ScreenService(AutomationDispatcher d)
     {
         if (r.Width <= 0 || r.Height <= 0)
             throw new ArgumentException("Capture area must have positive width and height.", nameof(r));
-        using var bmp = new Bitmap(r.Width, r.Height, PixelFormat.Format32bppArgb);
+        using var bmp = new Bitmap(r.Width, r.Height, PixelFormat.Format32bppRgb);
         using (var g = Graphics.FromImage(bmp))
             g.CopyFromScreen(r.X, r.Y, 0, 0, new Size(r.Width, r.Height), CopyPixelOperation.SourceCopy);
         return Encode(bmp, scale);
@@ -73,7 +73,7 @@ public sealed class ScreenService(AutomationDispatcher d)
         if (scale >= MaxScale) return ToCapture(src, scale);
         var w = Math.Max(1, (int)Math.Round(src.Width * scale));
         var h = Math.Max(1, (int)Math.Round(src.Height * scale));
-        using var dst = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+        using var dst = new Bitmap(w, h, PixelFormat.Format32bppRgb);
         using (var g = Graphics.FromImage(dst))
         {
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;

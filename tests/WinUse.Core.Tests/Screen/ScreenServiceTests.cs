@@ -43,5 +43,16 @@ public class ScreenServiceTests
         Assert.Equal(r.Right - r.Left, cap.Width);
         Assert.Equal(r.Bottom - r.Top, cap.Height);
         Assert.Equal(new byte[] { 0x89, 0x50, 0x4E, 0x47 }, cap.Png[..4]);
+
+        using var img = new System.Drawing.Bitmap(new MemoryStream(cap.Png));
+        var colors = new HashSet<int>();
+        for (var y = 0; y < img.Height; y += 16)
+            for (var x = 0; x < img.Width; x += 16)
+            {
+                var c = img.GetPixel(x, y);
+                Assert.Equal(255, c.A);
+                colors.Add(c.ToArgb());
+            }
+        Assert.True(colors.Count >= 2, "Window capture is blank (single colour).");
     }
 }
