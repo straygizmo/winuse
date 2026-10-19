@@ -101,6 +101,9 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
     /// <summary>Pid of the process whose WebView2 the <see cref="Web"/> session is connected to (set by process_run).</summary>
     public int? WebOwnerPid { get; set; }
 
+    /// <summary>Process name of <see cref="WebOwnerPid"/> (set by process_run; survives a launcher process exiting).</summary>
+    public string? WebOwnerProcessName { get; set; }
+
     /// <summary>Scale of the window capture attached to an <c>act</c> result that executed nothing.</summary>
     public const double ActScreenshotScale = 0.5;
 
@@ -255,16 +258,18 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
     {
         var w = await ResolveWindowAsync(null, window, fallback: true).ConfigureAwait(false);
         LastWindow = w.Hwnd;
-        var tree = await Uia.GetTreeAsync(w.Hwnd, new TreeOptions()).ConfigureAwait(false);
+        var tree = await UiaService.RetryIfChildlessAsync(() => Uia.GetTreeAsync(w.Hwnd, new TreeOptions()), UiaService.EmptyTreeRetryDelay)
+            .ConfigureAwait(false);
         IReadOnlyList<DomNode> dom = [];
         Rect? webViewRect = null;
         if (Web.IsConnected)
         {
-            webViewRect = await FindWebViewRectAsync(tree.Ref).ConfigureAwait(false);
+            var (hostRect, hostPid) = await FindWebViewHostAsync(tree.Ref).ConfigureAwait(false);
             // Only use the DOM when the connected WebView belongs to this window; otherwise another app's
             // elements would be mixed into the candidates.
-            if (webViewRect is not null || (WebOwnerPid is { } pid && pid == w.Pid))
+            if (DomBelongsToWindow(hostRect, w.Pid, hostPid is { } hp ? ProcessNameOf(hp) : null, WebOwnerPid, WebOwnerProcessName))
             {
+                webViewRect = hostRect;
                 try
                 {
                     Web.Window = LocatorOf(w);
@@ -291,24 +296,44 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
         return copy.ToJsonString(ToolResult.Json);
     }
 
-    /// <summary>Screen rectangle of the WebView2 render host under the tree root, or null when there is none.</summary>
-    private async Task<Rect?> FindWebViewRectAsync(string rootRef)
+    /// <summary>
+    /// The connected WebView's DOM belongs to a window only when the window hosts a Chromium render widget AND
+    /// that WebView is ours: the window is the process_run process, or the render host's process has the
+    /// CDP owner's process name (e.g. msedge.exe after its launcher exited). Any Chromium-based window has a host.
+    /// </summary>
+    public static bool DomBelongsToWindow(Rect? hostRect, int windowPid, string? hostProcessName, int? webOwnerPid, string? webOwnerProcessName)
     {
-        if (!Refs.TryGet(rootRef, out var root) || root.Handle is not AutomationElement el) return null;
+        if (hostRect is null || webOwnerPid is null) return false;
+        if (webOwnerPid == windowPid) return true;
+        return !string.IsNullOrEmpty(hostProcessName) && !string.IsNullOrEmpty(webOwnerProcessName)
+               && WindowService.ProcessMatches(hostProcessName, webOwnerProcessName);
+    }
+
+    private static string? ProcessNameOf(int pid)
+    {
+        try { using var p = Process.GetProcessById(pid); return p.ProcessName; }
+        catch { return null; }
+    }
+
+    /// <summary>Screen rectangle and owning pid of the WebView2 render host under the tree root, or nulls when there is none.</summary>
+    private async Task<(Rect? Rect, int? Pid)> FindWebViewHostAsync(string rootRef)
+    {
+        if (!Refs.TryGet(rootRef, out var root) || root.Handle is not AutomationElement el) return (null, null);
         try
         {
-            return await Dispatcher.RunAsync<Rect?>(() =>
+            return await Dispatcher.RunAsync<(Rect?, int?)>(() =>
             {
                 var host = el.FindFirstDescendant(cf => cf.ByClassName("Chrome_RenderWidgetHostHWND"));
-                if (host is null) return null;
+                if (host is null) return (null, null);
                 var r = host.Properties.BoundingRectangle.ValueOrDefault;
-                return r.Width > 0 && r.Height > 0 ? new Rect(r.X, r.Y, r.Width, r.Height) : null;
+                Rect? rect = r.Width > 0 && r.Height > 0 ? new Rect(r.X, r.Y, r.Width, r.Height) : null;
+                return (rect, WindowService.ProcessIdOf(host.Properties.NativeWindowHandle.ValueOrDefault));
             }).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             Log.LogDebug(ex, "WebView2 host lookup failed");
-            return null;
+            return (null, null);
         }
     }
 

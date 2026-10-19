@@ -109,6 +109,10 @@ public sealed class WindowService(AutomationDispatcher d)
     public async Task<WindowInfo?> FindWithFallbackAsync(WindowLocator loc) =>
         PickWithFallback(await ListAsync().ConfigureAwait(false), loc);
 
+    /// <summary>Pid of the process that owns <paramref name="hwnd"/> (any window, not only top-level), or null.</summary>
+    public static int? ProcessIdOf(nint hwnd) =>
+        hwnd != 0 && NativeMethods.GetWindowThreadProcessId(hwnd, out var pid) != 0 ? (int)pid : null;
+
     public static WindowInfo? PickWithFallback(IReadOnlyList<WindowInfo> windows, WindowLocator loc)
     {
         var exact = windows.FirstOrDefault(w => Matches(w, loc));
@@ -139,7 +143,8 @@ public sealed class WindowService(AutomationDispatcher d)
     private static string StripExe(string n) =>
         n.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? n[..^4] : n;
 
-    private static bool ProcessMatches(string actual, string wanted) =>
+    /// <summary>Process names compare case-insensitively, with or without <c>.exe</c>.</summary>
+    public static bool ProcessMatches(string actual, string wanted) =>
         string.Equals(StripExe(actual), StripExe(wanted), StringComparison.OrdinalIgnoreCase);
 
     private static List<WindowInfo> Enumerate()

@@ -19,6 +19,21 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
 
     // ---- tree -------------------------------------------------------------------------------
 
+    /// <summary>Wait before re-reading a window tree whose root came back without children.</summary>
+    public static readonly TimeSpan EmptyTreeRetryDelay = TimeSpan.FromMilliseconds(300);
+
+    /// <summary>
+    /// Runs <paramref name="get"/>; when the root has no children (the first UIA read of a Chromium / Office window
+    /// often returns only the root) waits <paramref name="delay"/> and reads exactly once more.
+    /// </summary>
+    public static async Task<UiNode> RetryIfChildlessAsync(Func<Task<UiNode>> get, TimeSpan delay)
+    {
+        var tree = await get().ConfigureAwait(false);
+        if (tree.Children.Count > 0) return tree;
+        await Task.Delay(delay).ConfigureAwait(false);
+        return await get().ConfigureAwait(false);
+    }
+
     public async Task<UiNode> GetTreeAsync(nint hwnd, TreeOptions opt)
     {
         opt ??= new TreeOptions();

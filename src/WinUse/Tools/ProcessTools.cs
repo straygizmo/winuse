@@ -1,9 +1,11 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using WinUse.Core.Processes;
 using WinUse.Core.Refs;
+using WinUse.Core.Windows;
 
 namespace WinUse.Tools;
 
@@ -12,9 +14,10 @@ public sealed class ProcessTools
 {
     private static readonly TimeSpan CdpConnectTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan WaitWindowTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan WaitWindowPoll = TimeSpan.FromMilliseconds(200);
 
     [McpServerTool(Name = "process_run")]
-    [Description("Start a program. With webview_debug=true a free CDP port is passed to WebView2 and get_dom/w{n} refs become available once connected. With wait_window, waits (30 s) for a window whose title matches.")]
+    [Description("Start a program. With webview_debug=true a free CDP port is passed to WebView2 and get_dom/w{n} refs become available once connected. With wait_window, waits (30 s) for a window of the started process (same pid or process name) whose title matches; if none appears, falls back to any window with a matching title and reports window.matched_by=\"title-only\".")]
     public static Task<CallToolResult> ProcessRun(
         ToolContext ctx,
         [Description("Executable path.")] string path,
@@ -31,11 +34,20 @@ public sealed class ProcessTools
             object? window = null;
             if (!string.IsNullOrEmpty(wait_window))
             {
-                var w = await ctx.Windows.WaitForAsync(new WindowLocator(wait_window, null, null), WaitWindowTimeout)
+                var sw = Stopwatch.StartNew();
+                (WindowInfo? Window, string? MatchedBy) pick;
+                while (true)
+                {
+                    var timedOut = sw.Elapsed >= WaitWindowTimeout;
+                    pick = PickStartedWindow(await ctx.Windows.ListAsync(), wait_window, run.Pid, run.ProcessName, allowTitleOnly: timedOut);
+                    if (pick.Window is not null || timedOut) break;
+                    await Task.Delay(WaitWindowPoll);
+                }
+                var w = pick.Window
                         ?? throw new TimeoutException($"Process {run.Pid} started but no window matching '{wait_window}' appeared within {WaitWindowTimeout.TotalSeconds:0} s.");
                 ctx.LastWindow = w.Hwnd;
                 ctx.Web.Window = ToolContext.LocatorOf(w);
-                window = new { @ref = ctx.RegisterWindow(w).Id, title = w.Title };
+                window = new { @ref = ctx.RegisterWindow(w).Id, title = w.Title, matched_by = pick.MatchedBy };
             }
             bool? cdpConnected = null;
             string? cdpError = null;
@@ -46,6 +58,7 @@ public sealed class ProcessTools
                     await ctx.Web.ConnectAsync(port, CdpConnectTimeout);
                     cdpConnected = true;
                     ctx.WebOwnerPid = run.Pid;
+                    ctx.WebOwnerProcessName = run.ProcessName;
                 }
                 catch (Exception ex)
                 {
@@ -64,6 +77,21 @@ public sealed class ProcessTools
                 window,
             };
         });
+
+    /// <summary>
+    /// Picks the window <c>process_run wait_window</c> waits for: a title match owned by the started pid, else by a
+    /// process with the started process name. Only with <paramref name="allowTitleOnly"/> (after the timeout) is any
+    /// title match accepted. <c>MatchedBy</c> is "pid", "process" or "title-only".
+    /// </summary>
+    public static (WindowInfo? Window, string? MatchedBy) PickStartedWindow(IReadOnlyList<WindowInfo> windows, string titleRegex,
+        int pid, string processName, bool allowTitleOnly)
+    {
+        var loc = new WindowLocator(titleRegex, null, null);
+        var titled = windows.Where(w => WindowService.Matches(w, loc)).ToList();
+        if (titled.FirstOrDefault(w => w.Pid == pid) is { } byPid) return (byPid, "pid");
+        if (titled.FirstOrDefault(w => WindowService.ProcessMatches(w.ProcessName, processName)) is { } byName) return (byName, "process");
+        return allowTitleOnly && titled.Count > 0 ? (titled[0], "title-only") : (null, null);
+    }
 
     [McpServerTool(Name = "process_kill", Destructive = true)]
     [Description("Kill a process started by winuse (by pid) or one listed in WINUSE_KILLABLE_PROCESSES (by name).")]

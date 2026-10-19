@@ -113,7 +113,10 @@ public sealed class ObserveTools
                 ? await ctx.ResolveWindowAsync(scope, null, false)
                 : await ctx.ResolveWindowAsync(null, window, fallback: true);
             ctx.LastWindow = w.Hwnd;
-            var tree = await ctx.Uia.GetTreeAsync(w.Hwnd, new TreeOptions(scope, max_depth, interactive_only, include_offscreen));
+            var opt = new TreeOptions(scope, max_depth, interactive_only, include_offscreen);
+            var tree = scope is null
+                ? await UiaService.RetryIfChildlessAsync(() => ctx.Uia.GetTreeAsync(w.Hwnd, opt), UiaService.EmptyTreeRetryDelay)
+                : await ctx.Uia.GetTreeAsync(w.Hwnd, opt);
             return new
             {
                 window = new { @ref = ctx.RegisterWindow(w).Id, title = w.Title, process = w.ProcessName },
