@@ -32,12 +32,28 @@
   };
 
   const nameOf = (el) => {
-    const aria = norm(el.getAttribute('aria-label'));
-    if (aria) return aria;
     const by = el.getAttribute('aria-labelledby');
     if (by) {
       const t = norm(by.split(/\s+/).map((id) => { const e = document.getElementById(id); return e ? e.textContent : ''; }).join(' '));
       if (t) return t;
+    }
+    const aria = norm(el.getAttribute('aria-label'));
+    if (aria) return aria;
+    const tag = el.tagName.toLowerCase();
+    const r = el.getAttribute('role');
+    const contentFirst = tag === 'button' || tag === 'a' || r === 'button' || r === 'link' || r === 'menuitem' || r === 'tab' || r === 'option';
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    if (tag === 'input' && (type === 'button' || type === 'submit' || type === 'reset') && norm(el.value)) return norm(el.value);
+    const content = () => {
+      const tc = norm(el.textContent);
+      return tc ? (tc.length > 80 ? tc.substring(0, 80) : tc) : '';
+    };
+    if (contentFirst) {
+      const c = content();
+      if (c) return c;
+      const title = norm(el.getAttribute('title'));
+      if (title) return title;
+      return norm(el.getAttribute('alt')) || null;
     }
     if (el.labels && el.labels.length) {
       const t = norm(Array.from(el.labels).map((l) => l.textContent).join(' '));
@@ -47,10 +63,32 @@
     if (ph) return ph;
     const title = norm(el.getAttribute('title'));
     if (title) return title;
-    const tc = norm(el.textContent);
-    if (tc) return tc.length > 80 ? tc.substring(0, 80) : tc;
-    const alt = norm(el.getAttribute('alt'));
-    return alt || null;
+    const c = content();
+    if (c) return c;
+    return norm(el.getAttribute('alt')) || null;
+  };
+
+  // Role that Playwright's role= engine computes identically; null when we cannot be sure.
+  const SAFE_EXPLICIT = new Set(['button', 'link', 'checkbox', 'radio', 'textbox', 'combobox', 'menuitem', 'tab', 'option', 'switch']);
+  const pwRole = (el) => {
+    const explicit = el.getAttribute('role');
+    if (explicit) {
+      const r = explicit.trim().split(/\s+/)[0];
+      return SAFE_EXPLICIT.has(r) ? r : null;
+    }
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'a') return el.hasAttribute('href') ? 'link' : null;
+    if (tag === 'button') return 'button';
+    if (tag === 'textarea') return 'textbox';
+    if (tag === 'select') return (el.multiple || el.size > 1) ? null : 'combobox';
+    if (tag === 'input') {
+      const t = (el.getAttribute('type') || 'text').toLowerCase();
+      if (t === 'checkbox') return 'checkbox';
+      if (t === 'radio') return 'radio';
+      if (t === 'button' || t === 'submit' || t === 'reset' || t === 'image') return 'button';
+      if (['text', 'email', 'tel', 'url'].includes(t) && !el.hasAttribute('list')) return 'textbox';
+    }
+    return null;
   };
 
   const directText = (el) => norm(Array.from(el.childNodes).filter((n) => n.nodeType === 3).map((n) => n.textContent).join(' '));
@@ -73,13 +111,16 @@
   // Candidates used to decide whether a role+name selector is unique (Playwright matches names as
   // case-insensitive substrings).
   const candidates = Array.from(document.querySelectorAll(INTERACTIVE)).filter(isVisible)
-    .map((el) => ({ el, role: roleOf(el), name: (nameOf(el) || '').toLowerCase() }));
+    .map((el) => ({ el, role: pwRole(el), name: (nameOf(el) || '').toLowerCase() }));
 
-  const selectorOf = (el, role, name, allowRole) => {
+  const unique = (sel) => { try { return document.querySelectorAll(sel).length === 1; } catch (e) { return false; } };
+
+  const selectorOf = (el, name, allowRole) => {
     const tid = el.getAttribute('data-testid');
-    if (tid) return '[data-testid=' + quote(tid) + ']';
-    if (el.id && /^[A-Za-z][\w-]*$/.test(el.id)) return '#' + el.id;
-    if (allowRole && name) {
+    if (tid) { const sel = '[data-testid=' + quote(tid) + ']'; if (unique(sel)) return sel; }
+    if (el.id && /^[A-Za-z][\w-]*$/.test(el.id)) { const sel = '#' + el.id; if (unique(sel)) return sel; }
+    const role = allowRole ? pwRole(el) : null;
+    if (role && name) {
       const lname = name.toLowerCase();
       const count = candidates.filter((c) => c.role === role && c.name.includes(lname)).length;
       if (count === 1) return 'role=' + role + '[name=' + quote(name) + ']';
@@ -102,7 +143,7 @@
   const dpr = window.devicePixelRatio || 1;
   // Screen physical pixels. WebView2 hosts may add a title/frame offset, so these can be skewed;
   // DOM actions go through Playwright and never use coordinates.
-  const sx = window.screenX, sy = window.screenY;
+  const sx = window.screenX, sy = window.screenY; // (screenX + x) * dpr: all terms are CSS px before scaling
 
   return all.map((el) => {
     const interactive = interactiveSet.has(el);
@@ -128,8 +169,9 @@
       enabled: !el.disabled && el.getAttribute('aria-disabled') !== 'true',
       focused: el === document.activeElement,
       checked,
-      rect: { x: sx + r.x * dpr, y: sy + r.y * dpr, w: r.width * dpr, h: r.height * dpr },
-      selector: selectorOf(el, role, name, interactive),
+      rect: { x: (sx + r.x) * dpr, y: (sy + r.y) * dpr, w: r.width * dpr, h: r.height * dpr },
+      selector: selectorOf(el, name, interactive),
+      cssPath: cssPath(el),
     };
   });
 }

@@ -51,10 +51,19 @@ public sealed class WebService(RefRegistry refs) : IAsyncDisposable
             await Task.Delay(250);
         }
 
-        _playwright = await Playwright.CreateAsync();
-        _browser = await _playwright.Chromium.ConnectOverCDPAsync(url);
-        foreach (var ctx in _browser.Contexts) Attach(ctx);
-        lock (_lock) _current = FirstPage();
+        await DisposeAsync(); // drop any previous session (and its driver process)
+        try
+        {
+            _playwright = await Playwright.CreateAsync();
+            _browser = await _playwright.Chromium.ConnectOverCDPAsync(url);
+            foreach (var ctx in _browser.Contexts) Attach(ctx);
+            lock (_lock) _current = FirstPage();
+        }
+        catch
+        {
+            await DisposeAsync();
+            throw;
+        }
     }
 
     public async Task<IReadOnlyList<PageInfo>> ListPagesAsync()
@@ -98,6 +107,9 @@ public sealed class WebService(RefRegistry refs) : IAsyncDisposable
         foreach (var e in arr.EnumerateArray())
         {
             var selector = e.GetProperty("selector").GetString()!;
+            var css = e.GetProperty("cssPath").GetString()!;
+            // A selector we hand out must find exactly one element in Playwright's engine; else use the CSS path.
+            if (selector != css && await page.Locator(selector).CountAsync() != 1) selector = css;
             var r = refs.Register(RefKind.Dom, new DomLocator(Window, selector), selector);
             var rect = e.GetProperty("rect");
             nodes.Add(new DomNode(
@@ -134,16 +146,15 @@ public sealed class WebService(RefRegistry refs) : IAsyncDisposable
     {
         var (page, sel) = Target(refId);
         var loc = page.Locator(sel);
-        var editable = await loc.EvaluateAsync<bool>("e => e.isContentEditable === true && !('value' in e)",
-            new LocatorEvaluateOptions { Timeout = ActionTimeoutMs });
-        if (editable)
-        {
-            await loc.ClickAsync(new LocatorClickOptions { Timeout = ActionTimeoutMs });
-            await page.Keyboard.TypeAsync(text);
-        }
-        else
+        try
         {
             await loc.FillAsync(text, new LocatorFillOptions { Timeout = ActionTimeoutMs });
+        }
+        catch (PlaywrightException)
+        {
+            await loc.ClickAsync(new LocatorClickOptions { Timeout = ActionTimeoutMs });
+            await page.Keyboard.PressAsync("Control+A");
+            await page.Keyboard.TypeAsync(text);
         }
     }
 

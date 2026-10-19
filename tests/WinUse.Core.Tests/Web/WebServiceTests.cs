@@ -97,5 +97,30 @@ public class WebServiceTests(EdgeCdpFixture fx) : IClassFixture<EdgeCdpFixture>
         l.Stop();
         await using var w = new WebService(new RefRegistry());
         await Assert.ThrowsAsync<TimeoutException>(() => w.ConnectAsync(port, TimeSpan.FromSeconds(1)));
+        Assert.False(w.IsConnected);
+        await w.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task EverySelectorReturnedByGetDom_Resolves()
+    {
+        await Set("<div tabindex='0'>Foo</div><input type='search'><button title='Save file'>Save</button>" +
+                  "<button data-testid='dup'>D1</button><button data-testid='dup'>D2</button>" +
+                  "<select multiple><option>a</option></select><input type='password'>");
+        var win = new WindowLocator(".", null, null);
+        var nodes = await Web.GetDomAsync();
+        Assert.True(nodes.Count >= 7);
+        foreach (var n in nodes)
+            Assert.True(await Web.ResolveAsync(new DomLocator(win, n.Selector)) is not null, "unresolved: " + n.Selector);
+        Assert.DoesNotContain(nodes, n => n.Selector.StartsWith("role=text") || n.Selector == "[data-testid=\"dup\"]");
+    }
+
+    [Fact]
+    public async Task Fill_ReplacesContentEditableText()
+    {
+        await Set("<div id='ce' contenteditable='true'>old</div>");
+        var ce = (await Web.GetDomAsync()).Single(n => n.Selector == "#ce");
+        await Web.FillAsync(ce.Ref, "new");
+        Assert.Equal("new", await Web.GetTextAsync(ce.Ref));
     }
 }
