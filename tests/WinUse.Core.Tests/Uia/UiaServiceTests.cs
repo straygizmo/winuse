@@ -31,13 +31,22 @@ public class UiaServiceTests
         var doc = Find(tree, n => n.ControlType is "Document" or "Edit");
         Assert.NotNull(doc);
 
-        await uia.SetTextAsync(doc!.Ref, "hello uia");
-        var text = await uia.GetTextAsync(doc.Ref);
-        Assert.Equal("hello uia", text.TrimEnd('\r', '\n'));
+        try
+        {
+            await uia.SetTextAsync(doc!.Ref, "hello uia");
+            var text = await uia.GetTextAsync(doc.Ref);
+            Assert.Equal("hello uia", text.TrimEnd('\r', '\n'));
 
-        Assert.True(refs.TryGet(doc.Ref, out var er));
-        var el = await uia.ResolveAsync((UiaLocator)er.Locator);
-        Assert.NotNull(el);
+            Assert.True(refs.TryGet(doc.Ref, out var er));
+            var el = await uia.ResolveAsync((UiaLocator)er.Locator);
+            Assert.NotNull(el);
+        }
+        finally
+        {
+            // Notepad restores unsaved tabs on next launch; leave it empty so later tests are unaffected.
+            await uia.SetTextAsync(doc!.Ref, "");
+            await Task.Delay(500);
+        }
     }
 
     [Fact]
