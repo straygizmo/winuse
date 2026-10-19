@@ -61,7 +61,7 @@ public static class RunCommand
                 _ => "ERROR",
             };
             var line = $"[{tag}] {s.Index + 1} {s.Tool} ({(long)s.Elapsed.TotalMilliseconds}ms)";
-            if (s.Status != StepStatus.Pass && s.Message is not null) line += $": {s.Message}";
+            if (s.Message is not null) line += s.Status == StepStatus.Pass ? $" {s.Message}" : $": {s.Message}";
             log.WriteLine(line);
         }
 

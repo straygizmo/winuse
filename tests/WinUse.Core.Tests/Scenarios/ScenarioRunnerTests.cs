@@ -19,6 +19,30 @@ public class ScenarioRunnerTests
     }
 
     [Fact]
+    public async Task RunAsync_SoftCheckBelowMinProbability_IsWarnWithProbabilityInMessage()
+    {
+        var result = new JsonObject { ["probability"] = 0.7, ["available"] = true };
+        var d = new FakeDispatcher(("check", new ToolOutcome(true, null, null, result, null)));
+        var s = new Scenario("t", 1, NoEnv, [new("check", Args(("question", "?")), Soft: true, MinProbability: 0.8)]);
+        var r = await new ScenarioRunner(d, null, null).RunAsync(s, false, default);
+        Assert.Equal(StepStatus.Warn, r.Steps[0].Status);
+        Assert.Equal(0, r.ExitCode);
+        Assert.Contains("p=0.7", r.Steps[0].Message);
+    }
+
+    [Fact]
+    public async Task RunAsync_SoftCheckAtOrAboveMinProbability_IsPassWithProbabilityInMessage()
+    {
+        var result = new JsonObject { ["probability"] = 0.85, ["available"] = true };
+        var d = new FakeDispatcher(("check", new ToolOutcome(true, null, null, result, null)));
+        var s = new Scenario("t", 1, NoEnv, [new("check", Args(("question", "?")), Soft: true, MinProbability: 0.8)]);
+        var r = await new ScenarioRunner(d, null, null).RunAsync(s, false, default);
+        Assert.Equal(StepStatus.Pass, r.Steps[0].Status);
+        Assert.Equal(0, r.ExitCode);
+        Assert.Equal("p=0.85", r.Steps[0].Message);
+    }
+
+    [Fact]
     public async Task RunAsync_FailedAssert_StopsWithExitOne()
     {
         var d = new FakeDispatcher(("assert_text", new ToolOutcome(true, false, null, new(), null)), ("click", new ToolOutcome(true, null, null, new(), null)));

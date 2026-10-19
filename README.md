@@ -35,7 +35,7 @@ winuse run <scenario.json> [--heal] [--report <dir>]  replay a scenario without 
 winuse doctor                                         check the environment
 ```
 
-`run` logs one line per step to stderr (`[PASS] 1 process_run (812ms)`), writes `report.json` and before/after screenshots to `--report <dir>`, and with `--heal` saves updated locators to `<scenario>.healed.json`. It needs an interactive desktop session.
+`run` logs one line per step to stderr (`[PASS] 1 process_run (812ms)`, with ` p=0.81` appended for steps whose result has a probability, e.g. `check`), writes `report.json` and before/after screenshots to `--report <dir>`, and with `--heal` saves updated locators to `<scenario>.healed.json`. It needs an interactive desktop session.
 
 Exit codes: `0` PASS, `1` FAIL (an assertion failed), `2` error (bad scenario, tool error, no desktop session).
 

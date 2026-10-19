@@ -78,6 +78,13 @@ public sealed class ScenarioRunner(IToolDispatcher dispatcher, Func<Task<byte[]>
             }
             else status = StepStatus.Pass;
 
+            // Surface the grounding probability of every step that reports one (check, find, act), whatever its status.
+            if (outcome.Result["probability"] is JsonValue probNode && probNode.TryGetValue<double>(out var prob))
+            {
+                var pText = $"p={prob.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+                message = message is null ? pText : $"{message}; {pText}";
+            }
+
             reports.Add(new StepReport(i, step.Tool, status, message, sw.Elapsed, before, after));
             if (stop) break;
         }

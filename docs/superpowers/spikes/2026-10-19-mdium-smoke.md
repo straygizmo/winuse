@@ -32,7 +32,7 @@ All `act` steps executed above the 0.35 threshold; no low-level `click`/`set_tex
 | Type the file name (Save As dialog) | UIA `Edit` AutomationId `1001` `ファイル名:` | 1.0, 0.98 |
 | Click the Save button (dialog) | UIA `保存(S)` (AutomationId `1`) | 0.80, 0.78, 0.75 (alt: MDium toolbar `保存` 0.19–0.21) |
 
-`check("Is the document saved?")` returned 0.72 and 0.69 interactively (below the default `min_probability` 0.8 → would be WARN); in both replays the step reported PASS (≥ 0.8). The question is vague for a UI with no visible "saved" marker; the tab name `winuse-mdium-smoke.md` and the status-bar path are the only cues. `assert_file(contains)` is the real oracle.
+`check("Is the document saved?")` returned 0.72 and 0.69 interactively (below the default `min_probability` 0.8 → would be WARN). The first two replays reported PASS but did not show the probability; after `winuse run` started printing it (`p=` on the log line and in the `report.json` step `message`), the replay into `out/report3` logged `[PASS] 13 check (746ms) p=0.81`: PASS, only just above the 0.8 threshold, so this step can be expected to WARN on some runs. The question is vague for a UI with no visible "saved" marker; the tab name `winuse-mdium-smoke.md` and the status-bar path are the only cues. `assert_file(contains)` is the real oracle.
 
 Observation: whether `act` picks a UIA or a DOM candidate for the same button depends on whether `get_dom` ran earlier in the session (DOM refs are only candidates once the DOM was observed). Both replay fine.
 
@@ -41,13 +41,13 @@ Observation: whether `act` picks a UIA or a DOM candidate for the same button de
 1. **Race at startup** — `wait_window="MDium"` matches the initial title before React renders the explorer; `act` then grounded the wrong button (0.60). Fix: `wait_for(condition=element, selector='role=button[name="新規ファイル"]')` before the first `act` (≈ 0.1–0.8 s).
 2. **Title changes** — the window title goes from `MDium` to `MDium : <last folder>` after start. Recorded locators carried `^MDium : C:\Users\...\<folder>$`; the dispatcher's process/class fallback would cope, but the title also leaked a personal folder path into the scenario. Hand-edited every MDium `TitleRegex` to `^MDium( : .*)?$`.
 3. **Save on an untitled tab opens the native Save As dialog** (`#32770`, title `名前を付けて保存`) whose initial directory is MDium's open folder (a user folder). Typing a full path into `ファイル名:` keeps the write inside `%TEMP%`. An existing target file would raise an overwrite confirmation, so the scenario deletes it first.
-4. **Literal args** — `scenario_save` records literal values. Hand-edited: exe → `${MDIUM_EXE}` (with `env.MDIUM_EXE`), file path → `${TEMP}\winuse-mdium-smoke.md` (expanded from the process environment).
+4. **Literal args** — `scenario_save` records literal values. Hand-edited: exe → `${MDIUM_EXE}` (with the repo-relative default `env.MDIUM_EXE = ..\mdium\src-tauri\target\release\mdium.exe`, resolved against the cwd, so run it from the repo root or override `MDIUM_EXE`), file path → `${TEMP}\winuse-mdium-smoke.md` (expanded from the process environment).
 5. **Pollution** — none observed: MDium reopens its last folder with an empty `無題` tab; the saved temp file is not reopened. Its recent-files list (MDium data dir) gains the temp path. The scenario deletes the file at the end.
 6. **Driver-side** — the shell used to write calls files collapsed `\` in JSON; the dialog received a broken file name and showed an error dialog (nothing was written). Calls files with Windows paths are now written as real JSON, not via shell heredocs.
 
 ## What the tools lack
 
-- `report.json` (and the `run` stderr lines) do not include step results, so the `check` probability or `assert_text` actual value of a passing replay step is not visible; `run` also does not write the daily log file.
+- `report.json` and the `run` stderr lines now include `p=<probability>` for steps that return one (fixed during this task), but other results, such as the `assert_text` actual value of a passing step, are still not visible. `run` also does not write the daily log file.
 - `scenario_save` cannot parameterize values (env placeholders) or normalize volatile window titles; both needed hand edits.
 - MDium has no `data-testid`/`aria-label` on the editor textarea, so its locator is an nth-child CSS path; any layout change breaks it (`--heal` only re-grounds `act` steps, not `assert_text`).
 - `get_ui_tree` on a fresh WebView2 window returns only the root on the first call; a retry (or a warm-up in `process_run`) would help.

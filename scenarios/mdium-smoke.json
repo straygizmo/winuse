@@ -2,7 +2,7 @@
   "name": "mdium-smoke",
   "version": 1,
   "env": {
-    "MDIUM_EXE": "C:/Users/mtmar/source/repos/mdium/src-tauri/target/release/mdium.exe"
+    "MDIUM_EXE": "..\\mdium\\src-tauri\\target\\release\\mdium.exe"
   },
   "description": "Phase 1 acceptance: start MDium with WebView2 debugging, create a new markdown file, type 'winuse smoke', save it via the Save As dialog to %TEMP%, verify editor text, file content and saved state, close MDium and clean up.",
   "steps": [
