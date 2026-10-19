@@ -40,6 +40,10 @@ public class UiaServiceTests
             Assert.True(refs.TryGet(doc.Ref, out var er));
             var el = await uia.ResolveAsync((UiaLocator)er.Locator);
             Assert.NotNull(el);
+            var orig = (FlaUI.Core.AutomationElements.AutomationElement)er.Handle!;
+            var (a, b) = await d.RunAsync(() => (orig.Properties.RuntimeId.ValueOrDefault, el!.Properties.RuntimeId.ValueOrDefault));
+            Assert.Equal(a, b);
+            Assert.NotNull(Find(tree, n => n.ControlType == "Pane" && n.Children.Count > 0));
         }
         finally
         {

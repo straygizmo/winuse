@@ -68,15 +68,11 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
             var counts = new Dictionary<(string, string?, string?), int>();
             foreach (var k in kids)
             {
-                string type; string? id, name; bool offscreen;
-                try
-                {
-                    type = UiaLocatorResolver.TypeOf(k);
-                    id = UiaLocatorResolver.Id(k);
-                    name = UiaLocatorResolver.NameOf(k);
-                    offscreen = k.Properties.IsOffscreen.ValueOrDefault;
-                }
-                catch { continue; }
+                // Never skip a sibling here: the resolver counts every child, so indexes must agree.
+                var type = UiaLocatorResolver.TypeOf(k);
+                var id = UiaLocatorResolver.Id(k);
+                var name = UiaLocatorResolver.NameOf(k);
+                var offscreen = Safe(() => k.Properties.IsOffscreen.ValueOrDefault, false);
 
                 var key = (type, id, name);
                 counts.TryGetValue(key, out var idx);
@@ -95,6 +91,16 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
                         ? new List<UiNode>()
                         : Children(k, path, realDepth + 1, outDepth + 1);
                     result.Add(MakeNode(r.Id, k, outDepth + 1, sub, withValue: false));
+                }
+                else if (type == "Pane")
+                {
+                    // A Pane is retained only when its subtree yields kept children.
+                    var sub = Children(k, path, realDepth + 1, outDepth + 1);
+                    if (sub.Count > 0)
+                    {
+                        var r = refs.Register(RefKind.Uia, new UiaLocator(wloc, path), k);
+                        result.Add(MakeNode(r.Id, k, outDepth + 1, sub, withValue: false));
+                    }
                 }
                 else
                 {
@@ -256,7 +262,8 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
         await d.RunAsync(() => el.Focus()).ConfigureAwait(false);
         await Task.Delay(100).ConfigureAwait(false);
         await _input.PressAsync(KeyChord.Parse("ctrl+a")).ConfigureAwait(false);
-        await _input.TypeTextAsync(text, 0).ConfigureAwait(false);
+        if (text.Length == 0) await _input.PressAsync(KeyChord.Parse("delete")).ConfigureAwait(false);
+        else await _input.TypeTextAsync(text, 0).ConfigureAwait(false);
     }
 
     public Task SelectItemAsync(string refId, string item) => WithAsync(refId, el =>
@@ -305,11 +312,14 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
     public async Task InvokeAsync(string refId)
     {
         var el = await LiveAsync(refId).ConfigureAwait(false);
+        // Fall through only when a pattern is unsupported; exceptions from a supported pattern propagate
+        // so the action is never performed twice.
         var rect = await d.RunAsync(() =>
         {
-            try { if (el.Patterns.Invoke.PatternOrDefault is { } inv) { inv.Invoke(); return (Rect?)null; } } catch { }
-            try { if (el.Patterns.Toggle.PatternOrDefault is { } tg) { tg.Toggle(); return null; } } catch { }
-            try { if (el.Patterns.SelectionItem.PatternOrDefault is { } si) { si.Select(); return null; } } catch { }
+            if (!IsAlive(el)) throw new InvalidOperationException($"Element for ref '{refId}' is gone.");
+            if (el.Patterns.Invoke.PatternOrDefault is { } inv) { inv.Invoke(); return (Rect?)null; }
+            if (el.Patterns.Toggle.PatternOrDefault is { } tg) { tg.Toggle(); return null; }
+            if (el.Patterns.SelectionItem.PatternOrDefault is { } si) { si.Select(); return null; }
             return RectOf(el);
         }).ConfigureAwait(false);
         if (rect is { } r)

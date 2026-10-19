@@ -23,27 +23,22 @@ internal static class UiaLocatorResolver
 
     private static AutomationElement? Pick(AutomationElement[] kids, UiaPathSegment seg)
     {
-        var typed = kids.Where(k => TypeOf(k) == seg.ControlType).ToList();
+        // Exact key, the same one the builder computed Index over (nulls included).
+        var group = kids.Where(k => TypeOf(k) == seg.ControlType && Id(k) == seg.AutomationId && NameOf(k) == seg.Name).ToList();
+        if (group.Count > 0) return seg.Index < group.Count ? group[seg.Index] : null;
 
-        // 1. Full key (the same key the index was computed over).
-        var full = typed.Where(k => (seg.AutomationId is null || Id(k) == seg.AutomationId)
-                                    && (seg.Name is null || NameOf(k) == seg.Name)).ToList();
-        if (full.Count > 0) return full[Math.Min(seg.Index, full.Count - 1)];
-
-        // 2. AutomationId alone.
+        // Looser fallbacks (element renamed, etc.) only when unambiguous.
         if (seg.AutomationId is not null)
         {
-            var byId = kids.FirstOrDefault(k => Id(k) == seg.AutomationId);
-            if (byId is not null) return byId;
+            var byId = kids.Where(k => TypeOf(k) == seg.ControlType && Id(k) == seg.AutomationId).ToList();
+            if (byId.Count == 1) return byId[0];
         }
-        // 3. ControlType + Name.
         if (seg.Name is not null)
         {
-            var byName = typed.FirstOrDefault(k => NameOf(k) == seg.Name);
-            if (byName is not null) return byName;
+            var byName = kids.Where(k => TypeOf(k) == seg.ControlType && NameOf(k) == seg.Name).ToList();
+            if (byName.Count == 1) return byName[0];
         }
-        // 4. ControlType + Index.
-        return seg.Index < typed.Count ? typed[seg.Index] : null;
+        return null;
     }
 
     internal static string TypeOf(AutomationElement e)
