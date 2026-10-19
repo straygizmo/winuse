@@ -54,25 +54,55 @@ public sealed class InputService(AutomationDispatcher d)
         });
     });
 
-    public async Task TypeTextAsync(string text, int perCharDelayMs = 0)
+    public Task TypeTextAsync(string text, int perCharDelayMs = 0)
     {
         ArgumentNullException.ThrowIfNull(text);
-        if (perCharDelayMs <= 0)
+        return d.RunAsync(() =>
         {
-            // One SendInput call per character: large batches of KEYEVENTF_UNICODE events get
-            // reordered/duplicated by some text controls (notably packaged Notepad with an IME active).
-            await d.RunAsync(() =>
+            // The IME is closed while typing and restored afterwards, so packets are not composed.
+            var restore = SuspendIme();
+            try
             {
-                foreach (var unit in SplitUnits(text)) Send(BuildTextInputs(unit).ToArray());
-            });
-            return;
-        }
-        // Keep surrogate pairs together so the receiver never sees half a character.
-        foreach (var piece in SplitUnits(text))
-        {
-            await d.RunAsync(() => Send(BuildTextInputs(piece).ToArray()));
-            await Task.Delay(perCharDelayMs);
-        }
+                // One SendInput per character (surrogate pairs kept together), then a round trip to the
+                // focused window. Queuing KEYEVENTF_UNICODE events faster than the target thread
+                // translates them delivered the latest character for all of them ("テスト" -> "トトト").
+                foreach (var unit in SplitUnits(text))
+                {
+                    Send(BuildTextInputs(unit).ToArray());
+                    WaitForTarget();
+                    if (perCharDelayMs > 0) Thread.Sleep(perCharDelayMs);
+                }
+            }
+            finally
+            {
+                restore?.Invoke();
+            }
+        });
+    }
+
+    private static nint FocusedWindow()
+    {
+        var fg = GetForegroundWindow();
+        if (fg == 0) return 0;
+        var gi = new GUITHREADINFO { cbSize = (uint)Marshal.SizeOf<GUITHREADINFO>() };
+        return GetGUIThreadInfo(GetWindowThreadProcessId(fg, out _), ref gi) && gi.hwndFocus != 0 ? gi.hwndFocus : fg;
+    }
+
+    private static void WaitForTarget()
+    {
+        var target = FocusedWindow();
+        if (target != 0) SendMessageTimeoutW(target, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 200, out _);
+    }
+
+    /// <summary>Closes the IME of the focused window if it is open; returns an action that reopens it.</summary>
+    private static Action? SuspendIme()
+    {
+        var ime = ImmGetDefaultIMEWnd(FocusedWindow());
+        if (ime == 0) return null;
+        if (SendMessageTimeoutW(ime, WM_IME_CONTROL, IMC_GETOPENSTATUS, 0, SMTO_ABORTIFHUNG, 200, out var open) == 0 || open == 0)
+            return null;
+        SendMessageTimeoutW(ime, WM_IME_CONTROL, IMC_SETOPENSTATUS, 0, SMTO_ABORTIFHUNG, 200, out _);
+        return () => SendMessageTimeoutW(ime, WM_IME_CONTROL, IMC_SETOPENSTATUS, 1, SMTO_ABORTIFHUNG, 200, out _);
     }
 
     public Task PressAsync(KeyChord chord) => d.RunAsync(() =>

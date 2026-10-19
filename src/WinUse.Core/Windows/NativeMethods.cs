@@ -125,4 +125,26 @@ internal static partial class NativeMethods
 
     [LibraryImport("user32.dll", EntryPoint = "MapVirtualKeyW")]
     public static partial uint MapVirtualKeyW(uint code, uint mapType);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct GUITHREADINFO
+    {
+        public uint cbSize, flags;
+        public nint hwndActive, hwndFocus, hwndCapture, hwndMenuOwner, hwndMoveSize, hwndCaret;
+        public RECT rcCaret;
+    }
+
+    public const uint WM_NULL = 0, SMTO_ABORTIFHUNG = 2;
+    public const uint WM_IME_CONTROL = 0x0283;
+    public const nint IMC_GETOPENSTATUS = 0x0005, IMC_SETOPENSTATUS = 0x0006;
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetGUIThreadInfo(uint threadId, ref GUITHREADINFO info);
+
+    [LibraryImport("imm32.dll")]
+    public static partial nint ImmGetDefaultIMEWnd(nint hwnd);
+
+    [LibraryImport("user32.dll", EntryPoint = "SendMessageTimeoutW")]
+    public static partial nint SendMessageTimeoutW(nint hwnd, uint msg, nint wParam, nint lParam, uint flags, uint timeoutMs, out nint result);
 }
