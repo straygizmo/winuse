@@ -79,9 +79,118 @@ public sealed class ToolDispatcherTests : IDisposable
     {
         var loc = new WinUse.Core.Refs.UiaLocator(new("^no-such-window-" + Guid.NewGuid().ToString("N") + "$", null, null), []);
         var o = await new ToolDispatcher(ctx).InvokeAsync(new("get_text", Args(("ref", "u1")), loc), default);
-        Assert.False(o.Ok);
-        Assert.Equal("locator not found", o.Error);
+        // A missing target is a FAIL (exit 1), not an execution error (exit 2).
+        Assert.True(o.Ok, o.Error);
+        Assert.False(o.Passed);
+        Assert.Equal("locator not found: ref", o.Error);
         Assert.Empty(ctx.Journal.Entries);
+    }
+
+    private static WinUse.Core.Refs.WindowLocator GoneWindow() =>
+        new("^no-such-window-" + Guid.NewGuid().ToString("N") + "$", null, null);
+
+    [Fact]
+    public async Task ScenarioReplay_StaleLocator_ExitsOneThroughRealDispatcher()
+    {
+        var s = new Scenario("t", 1, new Dictionary<string, string>(),
+            [new ScenarioStep("window_activate", Args(("ref", "win1")), GoneWindow())]);
+        var r = await new ScenarioRunner(new ToolDispatcher(ctx), null, null).RunAsync(s, false, default);
+        Assert.Equal(1, r.ExitCode);
+        Assert.Equal(StepStatus.Fail, Assert.Single(r.Steps).Status);
+        Assert.StartsWith("locator not found", r.Steps[0].Message);
+    }
+
+    private ToolContext GroundingContext(FakeJev jev, FakeExecutor exec) =>
+        ToolContext.Create(TestConfig.WithRoots(tmp), null, jev, new FakeObservation(G.Cand("u1", "Save")), exec);
+
+    [Fact]
+    public async Task Replay_ActWithoutResolved_FailsWithoutCallingJev()
+    {
+        var jev = new FakeJev(choice: ("u1", 0.9, 0.9), noul: 0.9);
+        var exec = new FakeExecutor();
+        using var c = GroundingContext(jev, exec);
+
+        var o = await new ToolDispatcher(c).InvokeAsync(new("act", Args(("intent", "save"), ("kind", "click")), null, IsReplay: true), default);
+
+        Assert.True(o.Ok, o.Error);
+        Assert.False(o.Passed);
+        Assert.Equal("act step has no resolved locator", o.Error);
+        Assert.Empty(jev.Calls);
+        Assert.Null(exec.Last);
+    }
+
+    [Fact]
+    public async Task Interactive_ActWithoutResolved_StillGrounds()
+    {
+        var jev = new FakeJev(choice: ("u1", 0.9, 0.9), noul: 0.9);
+        var exec = new FakeExecutor();
+        using var c = GroundingContext(jev, exec);
+        var o = await new ToolDispatcher(c).InvokeAsync(new("act", Args(("intent", "save"), ("kind", "click")), null), default);
+        Assert.True(o.Ok, o.Error);
+        Assert.Equal("u1", exec.Last!.Id);
+    }
+
+    [Fact]
+    public async Task Replay_ActLocatorGone_FailsUnlessHealIsOn()
+    {
+        var args = Args(("intent", "save"), ("kind", "click"));
+
+        var jev = new FakeJev(choice: ("u1", 0.9, 0.9), noul: 0.9);
+        var exec = new FakeExecutor();
+        using (var c = GroundingContext(jev, exec))
+        {
+            var o = await WinUse.Cli.RunCommand.CreateDispatcher(c, heal: false)
+                .InvokeAsync(new("act", args, GoneWindow(), IsReplay: true), default);
+            Assert.True(o.Ok, o.Error);
+            Assert.False(o.Passed);
+            Assert.Equal("locator not found: resolved", o.Error);
+            Assert.Null(exec.Last);
+            Assert.Empty(jev.Calls);
+        }
+
+        jev = new FakeJev(choice: ("u1", 0.9, 0.9), noul: 0.9);
+        exec = new FakeExecutor();
+        using (var c = GroundingContext(jev, exec))
+        {
+            var d = WinUse.Cli.RunCommand.CreateDispatcher(c, heal: true);
+            Assert.True(d.Heal);
+            var o = await d.InvokeAsync(new("act", args, GoneWindow(), IsReplay: true), default);
+            Assert.True(o.Ok, o.Error);
+            Assert.NotEqual(false, o.Passed);
+            Assert.Equal("u1", exec.Last!.Id); // re-grounded with Jev and executed
+        }
+    }
+
+    [Fact]
+    public async Task ScenarioSave_RefusesActThatWasNotExecuted()
+    {
+        using var c = GroundingContext(new FakeJev(choice: ("u1", 0.2, 0.1), noul: 0.9), new FakeExecutor());
+        var d = new ToolDispatcher(c);
+        var act = await d.InvokeAsync(new("act", Args(("intent", "save")), null), default);
+        var stepId = act.Result["step_id"]!.GetValue<string>();
+        Assert.False(c.Journal.Entries.Single(e => e.StepId == stepId).Executed);
+
+        var save = await d.InvokeAsync(new("scenario_save", Args(("name", "t"), ("step_ids", new JsonArray(stepId)),
+            ("path", Path.Combine(tmp, "t.json"))), null), default);
+
+        Assert.False(save.Ok);
+        Assert.Contains("not executed", save.Error);
+        Assert.False(File.Exists(Path.Combine(tmp, "t.json")));
+    }
+
+    [Fact]
+    public async Task Replay_HealWithJevUnavailable_IsFailNotError()
+    {
+        var exec = new FakeExecutor();
+        using var c = GroundingContext(new FakeJev(configured: false), exec);
+        var s = new Scenario("t", 1, new Dictionary<string, string>(),
+            [new ScenarioStep("act", Args(("intent", "save"), ("kind", "click")), GoneWindow())]);
+
+        var r = await new ScenarioRunner(new ToolDispatcher(c) { Heal = true }, null, null).RunAsync(s, true, default);
+
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains("heal failed", r.Steps[0].Message);
+        Assert.Null(exec.Last);
     }
 
     private sealed class Unserializable
@@ -167,7 +276,8 @@ public sealed class ToolDispatcherTests : IDisposable
             ["to_ref"] = System.Text.Json.JsonSerializer.SerializeToNode<WinUse.Core.Refs.Locator>(gone),
         };
         var o = await new ToolDispatcher(ctx).InvokeAsync(new("drag", args, null), default);
-        Assert.False(o.Ok);
+        Assert.True(o.Ok, o.Error);
+        Assert.False(o.Passed);
         Assert.Equal("locator not found: to_ref", o.Error);
     }
 

@@ -35,9 +35,11 @@ winuse run <scenario.json> [--heal] [--report <dir>]  replay a scenario without 
 winuse doctor                                         check the environment
 ```
 
-`run` logs one line per step to stderr (`[PASS] 1 process_run (812ms)`, with ` p=0.81` appended for steps whose result has a probability, e.g. `check`), writes `report.json` and before/after screenshots to `--report <dir>`, and with `--heal` saves updated locators to `<scenario>.healed.json`. It needs an interactive desktop session.
+`run` logs one line per step to stderr (`[PASS] 1 process_run (812ms)`, with ` p=0.81` appended for steps whose result has a probability, e.g. `check`), writes `report.json` and before/after screenshots to `--report <dir>`, and with `--heal` re-grounds `act` steps whose recorded element is gone with Jev and saves updated locators next to the scenario as `<name>.healed.json` (e.g. `scenarios/mdium-smoke.json` → `scenarios/mdium-smoke.healed.json`; `scenario_run heal=true` uses the same name). It needs an interactive desktop session.
 
-Exit codes: `0` PASS, `1` FAIL (an assertion failed), `2` error (bad scenario, tool error, no desktop session).
+Exit codes: `0` PASS, `1` FAIL (an assertion failed, or a recorded element / `act` target can no longer be found), `2` error (bad scenario, tool error, no desktop session).
+
+Replay never calls Jev for `act`: each `act` step replays on its recorded `resolved` locator, and an `act` step without one fails (unless `--heal`). `scenario_save` therefore refuses `act` steps that did not execute. Only `check` steps (soft) ask Jev during replay.
 
 `doctor` reports `.env` detection, Jev configuration and a live probe, UIA window count, WebView2 runtime version and the Playwright driver.
 

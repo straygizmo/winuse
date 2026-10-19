@@ -65,7 +65,23 @@ public class RunCommandTests : IDisposable
         var log = new StringWriter();
         var code = await RunCommand.ExecuteAsync(path, true, Path.Combine(_dir, "r"), d, null, log);
         Assert.Equal(0, code);
-        Assert.True(File.Exists(path + ".healed.json"));
-        Assert.Contains(".healed.json", log.ToString());
+        Assert.True(File.Exists(Path.Combine(_dir, "s.healed.json")));
+        Assert.False(File.Exists(path + ".healed.json"));
+        Assert.Contains("s.healed.json", log.ToString());
+    }
+
+    [Theory]
+    [InlineData(@"scenarios\mdium-smoke.json", @"scenarios\mdium-smoke.healed.json")]
+    [InlineData(@"C:\x\a.JSON", @"C:\x\a.healed.json")]
+    [InlineData(@"C:\x\noext", @"C:\x\noext.healed.json")]
+    public void HealedPath_ReplacesJsonExtension(string input, string expected) =>
+        Assert.Equal(expected, Scenario.HealedPath(input));
+
+    [Fact]
+    public void CreateDispatcher_HonoursHeal()
+    {
+        using var ctx = WinUse.Tools.ToolContext.Create(TestConfig.Default);
+        Assert.True(RunCommand.CreateDispatcher(ctx, true).Heal);
+        Assert.False(RunCommand.CreateDispatcher(ctx, false).Heal);
     }
 }

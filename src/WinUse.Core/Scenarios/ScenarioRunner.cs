@@ -38,9 +38,9 @@ public sealed class ScenarioRunner(IToolDispatcher dispatcher, Func<Task<byte[]>
                 break;
             }
 
-            var before = await CaptureAsync(i, "before");
-            var outcome = await dispatcher.InvokeAsync(new ToolInvocation(step.Tool, args, step.Resolved), ct);
-            var after = await CaptureAsync(i, "after");
+            var (before, beforeError) = await CaptureAsync(i, "before");
+            var outcome = await dispatcher.InvokeAsync(new ToolInvocation(step.Tool, args, step.Resolved, IsReplay: true), ct);
+            var (after, afterError) = await CaptureAsync(i, "after");
             sw.Stop();
 
             if (heal && outcome.Resolved is not null && step.Resolved is not null
@@ -84,6 +84,9 @@ public sealed class ScenarioRunner(IToolDispatcher dispatcher, Func<Task<byte[]>
                 var pText = $"p={prob.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
                 message = message is null ? pText : $"{message}; {pText}";
             }
+            // A failed report screenshot never changes the step result; it is only noted.
+            foreach (var err in new[] { beforeError, afterError })
+                if (err is not null) message = message is null ? err : $"{message}; {err}";
 
             reports.Add(new StepReport(i, step.Tool, status, message, sw.Elapsed, before, after));
             if (stop) break;
@@ -93,13 +96,20 @@ public sealed class ScenarioRunner(IToolDispatcher dispatcher, Func<Task<byte[]>
         return new RunReport(s.Name, reports, exit, healedScenario);
     }
 
-    private async Task<string?> CaptureAsync(int index, string phase)
+    private async Task<(string? Path, string? Error)> CaptureAsync(int index, string phase)
     {
-        if (screenshot is null || reportDir is null) return null;
-        Directory.CreateDirectory(reportDir);
-        var path = Path.Combine(reportDir, $"{index:D3}-{phase}.png");
-        await File.WriteAllBytesAsync(path, await screenshot());
-        return path;
+        if (screenshot is null || reportDir is null) return (null, null);
+        try
+        {
+            Directory.CreateDirectory(reportDir);
+            var path = Path.Combine(reportDir, $"{index:D3}-{phase}.png");
+            await File.WriteAllBytesAsync(path, await screenshot());
+            return (path, null);
+        }
+        catch (Exception ex)
+        {
+            return (null, $"screenshot failed: {ex.Message}");
+        }
     }
 
     private static JsonNode? Expand(JsonNode? node, IReadOnlyDictionary<string, string> env)

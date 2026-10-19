@@ -68,7 +68,7 @@ public sealed class ScenarioTools
             string? healedPath = null;
             if (report.HealedScenario is { } healed)
             {
-                healedPath = Path.ChangeExtension(path, null) + ".healed.json";
+                healedPath = Scenario.HealedPath(path);
                 ctx.Files.WriteText(healedPath, healed.ToJson());
             }
             step.Passed = report.ExitCode == 0;

@@ -23,6 +23,7 @@ public sealed class IntentTools
         {
             var executedKind = ctx.BeginKindCapture();
             var r = await ctx.Grounder.ActAsync(intent, window, ParseKind(kind), text, min_confidence);
+            step.Executed = r.Executed;
             // Journal the kind actually executed so a replay does not have to guess it.
             if (r.Executed && executedKind.Value is { } ek) step.Args["kind"] = KindName(ek);
             if (r.Executed && r.Target is not null && ctx.Refs.TryGet(r.Target.Id, out var er)) step.Resolved = er.Locator;
@@ -48,6 +49,7 @@ public sealed class IntentTools
             ("min_confidence", minConfidence)), async step =>
         {
             step.Resolved = target.Locator;
+            step.Executed = true;
             var k = ParseKind(kind);
             if (k == ActKind.Auto) k = text is null ? ActKind.Click : ActKind.Type;
             step.Args["kind"] = KindName(k);

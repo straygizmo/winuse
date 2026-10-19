@@ -30,6 +30,8 @@ public sealed class ToolStep(JsonObject args)
     public JsonObject Args { get; } = args;
     public Locator? Resolved { get; set; }
     public bool? Passed { get; set; }
+    /// <summary>Set by <c>act</c>: whether an action was actually performed.</summary>
+    public bool? Executed { get; set; }
     public List<ContentBlock> Extra { get; } = [];
 }
 
@@ -118,7 +120,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
         }
         sw.Stop();
         // Exactly one journal entry per step, whether the body or the serialization failed.
-        Journal.Record(new JournalEntry(stepId, tool, args, step.Resolved, step.Passed, sw.Elapsed, DateTimeOffset.Now));
+        Journal.Record(new JournalEntry(stepId, tool, args, step.Resolved, step.Passed, sw.Elapsed, DateTimeOffset.Now, step.Executed));
         if (error is not null || json is null)
         {
             Log.LogWarning(error, "{StepId} {Tool} {Args} -> error in {Elapsed} ms",

@@ -46,24 +46,36 @@ public sealed class ToolDispatcher(ToolContext ctx) : IToolDispatcher
             string? actTarget = null;
             var regroundAct = false;
 
+            string? primary = isAct ? null : new[] { "ref", "from_ref" }.FirstOrDefault(paramNames.Contains);
+            string? healCause = null;
+
             // 1. The primary locator (the element the step acted on).
             if (inv.Resolved is not null)
             {
                 var refId = await ResolveAsync(inv.Tool, inv.Resolved).ConfigureAwait(false);
                 if (refId is null)
                 {
-                    if (!(Heal && isAct)) return Fail("locator not found", inv.Resolved);
+                    healCause = $"locator not found: {primary ?? "resolved"}";
+                    // A target that is gone is a FAIL of the scenario, not an execution error.
+                    if (!(Heal && isAct)) return NotFound(healCause, inv.Resolved);
                     regroundAct = true; // re-ground the intent with Jev
                 }
                 else if (isAct)
                 {
                     actTarget = refId;
                 }
-                else if (new[] { "ref", "from_ref" }.FirstOrDefault(paramNames.Contains) is { } primary)
+                else if (primary is not null)
                 {
                     args[primary] = refId;
                     injected.Add(primary);
                 }
+            }
+            else if (isAct && inv.IsReplay)
+            {
+                // Replay must not depend on Jev: an act without a recorded locator is only re-grounded when healing.
+                healCause = "act step has no resolved locator";
+                if (!Heal) return NotFound(healCause, null);
+                regroundAct = true;
             }
 
             // 2. Every other ref argument recorded with its locator (to_ref, window, scope, ...).
@@ -74,7 +86,7 @@ public sealed class ToolDispatcher(ToolContext ctx) : IToolDispatcher
                     if (injected.Contains(name) || !paramNames.Contains(name) || node is null) continue;
                     var loc = node.Deserialize<Locator>() ?? throw new JsonException($"Invalid locator for '{name}'.");
                     var id = await ResolveAsync(inv.Tool, loc).ConfigureAwait(false);
-                    if (id is null) return Fail($"locator not found: {name}", inv.Resolved);
+                    if (id is null) return NotFound($"locator not found: {name}", inv.Resolved);
                     args[name] = id;
                     injected.Add(name);
                 }
@@ -89,7 +101,10 @@ public sealed class ToolDispatcher(ToolContext ctx) : IToolDispatcher
                 ? IntentTools.ActOnRefAsync(ctx, Str(args, "intent") ?? "", Str(args, "window"), Str(args, "kind") ?? "auto",
                     Str(args, "text"), args["min_confidence"]?.GetValue<double>(), ctx.GetRef(actTarget))
                 : Call(method, args, ct);
-            return ToOutcome(inv.Tool, await call.ConfigureAwait(false));
+            var outcome = ToOutcome(inv.Tool, await call.ConfigureAwait(false));
+            if (regroundAct && outcome.Passed == false)
+                outcome = outcome with { Error = $"{healCause}; heal failed: {outcome.Error}" };
+            return outcome;
         }
         catch (Exception ex)
         {
@@ -182,8 +197,9 @@ public sealed class ToolDispatcher(ToolContext ctx) : IToolDispatcher
             "act" => reason is "jev unavailable" or "jev not configured",
             _ => false,
         };
+        // Nothing to act on (low confidence / Jev unavailable) is a FAIL, not an execution error.
         if (tool == "act" && result["executed"] is JsonValue ev && ev.TryGetValue<bool>(out var executed) && !executed)
-            return new ToolOutcome(false, passed, resolved, result, $"act not executed: {reason ?? "unknown reason"}", jevUnavailable);
+            return new ToolOutcome(true, false, resolved, result, $"act not executed: {reason ?? "unknown reason"}", jevUnavailable);
         return new ToolOutcome(true, passed, resolved, result, null, jevUnavailable);
     }
 
@@ -192,4 +208,8 @@ public sealed class ToolDispatcher(ToolContext ctx) : IToolDispatcher
 
     private static ToolOutcome Fail(string error, Locator? resolved) =>
         new(false, null, resolved, new JsonObject(), error);
+
+    /// <summary>A replayed target that cannot be found: the step ran but failed (exit 1), see spec ﾂｧ7.</summary>
+    private static ToolOutcome NotFound(string error, Locator? resolved) =>
+        new(true, false, resolved, new JsonObject(), error);
 }

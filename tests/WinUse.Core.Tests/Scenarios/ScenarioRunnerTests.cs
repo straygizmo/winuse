@@ -43,6 +43,36 @@ public class ScenarioRunnerTests
     }
 
     [Fact]
+    public async Task RunAsync_MarksInvocationsAsReplay()
+    {
+        var d = new FakeDispatcher();
+        await new ScenarioRunner(d, null, null).RunAsync(new Scenario("t", 1, NoEnv, [new("click", Args())]), false, default);
+        Assert.True(d.Last!.IsReplay);
+    }
+
+    [Fact]
+    public async Task RunAsync_ThrowingScreenshot_DoesNotAbort_AndIsNoted()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "winuse-shot-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var d = new FakeDispatcher();
+            var s = new Scenario("t", 1, NoEnv, [new("click", Args()), new("click", Args())]);
+            var r = await new ScenarioRunner(d, () => throw new InvalidOperationException("no desktop"), dir).RunAsync(s, false, default);
+            Assert.Equal(0, r.ExitCode);
+            Assert.Equal(2, r.Steps.Count);
+            Assert.All(r.Steps, x =>
+            {
+                Assert.Equal(StepStatus.Pass, x.Status);
+                Assert.Null(x.ScreenshotBefore);
+                Assert.Null(x.ScreenshotAfter);
+                Assert.Contains("screenshot failed: no desktop", x.Message);
+            });
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    [Fact]
     public async Task RunAsync_FailedAssert_StopsWithExitOne()
     {
         var d = new FakeDispatcher(("assert_text", new ToolOutcome(true, false, null, new(), null)), ("click", new ToolOutcome(true, null, null, new(), null)));

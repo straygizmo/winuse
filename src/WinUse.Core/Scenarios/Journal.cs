@@ -3,7 +3,9 @@ using WinUse.Core.Refs;
 
 namespace WinUse.Core.Scenarios;
 
-public sealed record JournalEntry(string StepId, string Tool, JsonObject Args, Locator? Resolved, bool? Passed, TimeSpan Elapsed, DateTimeOffset At);
+/// <summary>A journaled tool call. <see cref="Executed"/> is set by <c>act</c> (false when nothing was executed).</summary>
+public sealed record JournalEntry(string StepId, string Tool, JsonObject Args, Locator? Resolved, bool? Passed, TimeSpan Elapsed, DateTimeOffset At,
+    bool? Executed = null);
 
 public sealed class Journal
 {

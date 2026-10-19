@@ -39,6 +39,16 @@ public class JournalTests
     }
 
     [Fact]
+    public void FromJournal_ActNotExecuted_Throws()
+    {
+        var j = new Journal();
+        j.Record(Entry(j.NextId(), "act", Args(("intent", "save"))) with { Executed = false });
+        var ex = Assert.Throws<ArgumentException>(() => Scenario.FromJournal("t", j, ["s1"], null));
+        Assert.Contains("s1", ex.Message);
+        Assert.Contains("not executed", ex.Message);
+    }
+
+    [Fact]
     public void ToJson_OmitsDefaults_AndUsesWireNames()
     {
         var j = new Journal();

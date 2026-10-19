@@ -37,6 +37,13 @@ public sealed record Scenario(string Name, int Version, IReadOnlyDictionary<stri
         foreach (var id in stepIds)
         {
             if (!j.TryGet(id, out var e)) throw new ArgumentException($"Unknown step id: {id}", nameof(stepIds));
+            // Replay never grounds live, so an act step is only replayable with the locator it actually acted on.
+            if (e.Tool == "act" && e.Executed == false)
+                throw new ArgumentException(
+                    $"Step {id} is an act that was not executed (nothing was clicked or typed), so it cannot be replayed. " +
+                    "Save the step that actually performed the action (a later act, or click/set_text on a ref) instead.", nameof(stepIds));
+            if (e.Tool == "act" && e.Resolved is null)
+                throw new ArgumentException($"Step {id} is an act without a resolved locator, so it cannot be replayed.", nameof(stepIds));
             var isCheck = e.Tool == "check";
             steps.Add(new ScenarioStep(e.Tool, (JsonObject)e.Args.DeepClone(), e.Resolved, isCheck, isCheck ? 0.8 : null));
         }
@@ -76,6 +83,10 @@ public sealed record Scenario(string Name, int Version, IReadOnlyDictionary<stri
     }
 
     public void Save(string path) => File.WriteAllText(path, ToJson());
+
+    /// <summary>Path of the healed copy of a scenario: <c>x.json</c> becomes <c>x.healed.json</c>.</summary>
+    public static string HealedPath(string scenarioPath) =>
+        (scenarioPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase) ? scenarioPath[..^5] : scenarioPath) + ".healed.json";
 
     public static Scenario Load(string path) => Parse(File.ReadAllText(path));
 

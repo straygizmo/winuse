@@ -22,9 +22,12 @@ public static class RunCommand
             Console.Error.WriteLine("winuse run requires an interactive desktop session");
             return 2;
         }
-        return await ExecuteAsync(scenarioPath, heal, reportDir, new ToolDispatcher(ctx),
+        return await ExecuteAsync(scenarioPath, heal, reportDir, CreateDispatcher(ctx, heal),
             async () => (await ctx.Screen.CaptureScreenAsync(0.5).ConfigureAwait(false)).Png, Console.Error).ConfigureAwait(false);
     }
+
+    /// <summary>The dispatcher <c>winuse run</c> replays with; <paramref name="heal"/> lets act steps re-ground with Jev.</summary>
+    public static ToolDispatcher CreateDispatcher(ToolContext ctx, bool heal) => new(ctx) { Heal = heal };
 
     public static async Task<int> ExecuteAsync(string scenarioPath, bool heal, string? reportDir,
         IToolDispatcher dispatcher, Func<Task<byte[]>>? screenshot, TextWriter log)
@@ -82,7 +85,7 @@ public static class RunCommand
 
         if (heal && report.HealedScenario is { } healed)
         {
-            var healedPath = scenarioPath + ".healed.json";
+            var healedPath = Scenario.HealedPath(scenarioPath);
             healed.Save(healedPath);
             log.WriteLine($"healed scenario saved: {healedPath}");
         }
