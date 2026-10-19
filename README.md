@@ -13,13 +13,15 @@ dotnet publish src/WinUse -c Release -o out
 
 ## Configuration
 
-Create a `.env` next to `winuse.exe` or in the working directory (never commit it):
+`JEV_API_KEY` is read from the environment. Register it once as a user environment variable so that both Claude Code (which launches `winuse --mcp`) and `winuse run` see it:
 
-```
-JEV_API_KEY=your-key
+```powershell
+[Environment]::SetEnvironmentVariable('JEV_API_KEY', 'your-key', 'User')
 ```
 
-Optional: `JEV_BASE_URL`, `JEV_MODEL`, `WINUSE_ALLOWED_ROOTS` (`;`-separated), `WINUSE_KILLABLE_PROCESSES` (`;`-separated), `WINUSE_SETTLE_MS` (wait before `act` verifies its result, default 400). Environment variables override `.env`.
+Restart the terminal / Claude Code afterwards. As a development fallback, a `.env` file next to `winuse.exe` or in the working directory is also read (`KEY=VALUE` lines, never commit it); environment variables take precedence over `.env`.
+
+Optional: `JEV_BASE_URL`, `JEV_MODEL`, `WINUSE_ALLOWED_ROOTS` (`;`-separated), `WINUSE_KILLABLE_PROCESSES` (`;`-separated), `WINUSE_SETTLE_MS` (wait before `act` verifies its result, default 400).
 
 ## Register with Claude Code
 
@@ -41,7 +43,7 @@ Exit codes: `0` PASS, `1` FAIL (an assertion failed, or a recorded element / `ac
 
 Replay never calls Jev for `act`: each `act` step replays on its recorded `resolved` locator, and an `act` step without one fails (unless `--heal`). `scenario_save` therefore refuses `act` steps that did not execute. Only `check` steps (soft) ask Jev during replay.
 
-`doctor` reports `.env` detection, Jev configuration and a live probe, UIA window count, WebView2 runtime version and the Playwright driver.
+`doctor` reports where `JEV_API_KEY` came from (environment or `.env`), Jev configuration and a live probe, UIA window count, WebView2 runtime version and the Playwright driver.
 
 ## Tools
 

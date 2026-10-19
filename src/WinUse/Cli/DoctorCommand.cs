@@ -15,7 +15,10 @@ public static class DoctorCommand
         var cwdEnv = Path.Combine(Environment.CurrentDirectory, ".env");
         output.WriteLine($".env (exe dir): {exeEnv} [{(File.Exists(exeEnv) ? "found" : "missing")}]");
         output.WriteLine($".env (cwd):     {cwdEnv} [{(File.Exists(cwdEnv) ? "found" : "missing")}]");
-        output.WriteLine($"JEV_API_KEY: {(ctx.Config.JevApiKey is null ? "not set" : "set")}");
+        var keySource = ctx.Config.JevApiKey is null ? "not set"
+            : !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("JEV_API_KEY")) ? "set (environment)"
+            : "set (.env)";
+        output.WriteLine($"JEV_API_KEY: {keySource}");
 
         output.WriteLine($"Jev: configured: {(ctx.Jev.IsConfigured ? "yes" : "no")}");
         if (ctx.Jev.IsConfigured)
