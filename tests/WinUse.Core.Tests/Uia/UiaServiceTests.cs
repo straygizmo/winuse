@@ -61,19 +61,26 @@ public class UiaServiceTests
         var windows = new WindowService(d);
         using var uia = new UiaService(d, refs, windows);
 
+        // Isolated like NotepadFixture: never touch a Calculator the user already has open.
+        static bool IsCalc(WindowInfo x) =>
+            x.ProcessName.Contains("Calculator", StringComparison.OrdinalIgnoreCase) || x.Title is "Calculator" or "電卓";
+        var prePids = CalculatorPids();
+        var preWindows = (await windows.ListAsync()).Where(IsCalc).Select(x => x.Hwnd).ToHashSet();
+
         using var proc = Process.Start(new ProcessStartInfo("calc.exe") { UseShellExecute = true });
         WindowInfo? w = null;
         var sw = Stopwatch.StartNew();
         while (w is null && sw.Elapsed < TimeSpan.FromSeconds(20))
         {
-            w = (await windows.ListAsync()).FirstOrDefault(x =>
-                x.ProcessName.Contains("Calculator", StringComparison.OrdinalIgnoreCase)
-                || x.Title is "Calculator" or "電卓");
+            var newPids = CalculatorPids().Except(prePids).ToHashSet();
+            // A window of a new CalculatorApp process, or a new calculator window (it may be hosted by
+            // ApplicationFrameHost, whose pid is shared); never one that existed before the test.
+            w = (await windows.ListAsync()).FirstOrDefault(x => !preWindows.Contains(x.Hwnd) && (newPids.Contains(x.Pid) || IsCalc(x)));
             if (w is null) await Task.Delay(300);
         }
-        Assert.True(w is not null, "Windows Calculator window did not appear within 20 s (is Calculator installed?).");
         try
         {
+            Assert.True(w is not null, "No new Windows Calculator window appeared within 20 s (is Calculator installed?).");
             await Task.Delay(1000);
             var tree = await uia.GetTreeAsync(w!.Hwnd, new TreeOptions(InteractiveOnly: false, MaxDepth: 20));
             string RefOf(string id)
@@ -90,6 +97,17 @@ public class UiaServiceTests
             var res = await uia.GetElementAsync(RefOf("CalculatorResults"));
             Assert.Contains("3", res.Name);
         }
-        finally { await windows.CloseAsync(w!.Hwnd); }
+        finally
+        {
+            if (w is not null) await windows.CloseAsync(w.Hwnd); // only the window this test opened
+            await Task.Delay(500);
+            foreach (var pid in CalculatorPids().Except(prePids))
+            {
+                try { using var p = Process.GetProcessById(pid); p.Kill(); } catch { }
+            }
+        }
     }
+
+    private static HashSet<int> CalculatorPids() =>
+        Process.GetProcessesByName("CalculatorApp").Select(x => { var id = x.Id; x.Dispose(); return id; }).ToHashSet();
 }
