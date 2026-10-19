@@ -70,3 +70,14 @@ Exit codes: `0` PASS, `1` FAIL (an assertion failed), `2` error (bad scenario, t
 ```
 
 `${NAME}` expands from `env`, then process environment variables. A step with `soft: true` only warns on failure. Steps may carry a `resolved` locator recorded at save time.
+
+## Driving winuse without an AI client
+
+`scripts/mcp_batch.py` (Python 3.11+, stdlib only) runs a list of tool calls against one `winuse --mcp` process, so refs and step ids persist across calls:
+
+```powershell
+python scripts/mcp_batch.py --exe out\winuse.exe --calls calls.json --out out\batch
+python scripts/mcp_batch.py --exe "dotnet run --project src/WinUse --" --calls calls.json
+```
+
+`calls.json` is an array of `{ "tool": "...", "args": { ... } }` (optionally `"stop_on_error": true`). Each result is printed as one JSON line `{"i", "tool", "result", "isError", "ms"}`; images are saved as `<out>/<i>-<tool>.png` and the server's stderr goes to `<out>/server.log`. An argument string `"$<i>.<path>"` (e.g. `"$7.target.ref"`) is replaced by that field of call `i`'s result. End the file with `scenario_save` to turn the session into a scenario.
