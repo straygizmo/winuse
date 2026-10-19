@@ -25,18 +25,38 @@ public sealed class WindowService(AutomationDispatcher d)
     public Task<bool> ExistsAsync(WindowLocator loc) =>
         d.RunAsync(() => Enumerate().Any(w => Matches(w, loc)));
 
-    public Task<bool> ActivateAsync(nint hwnd) => d.RunAsync(() =>
+    public async Task<bool> ActivateAsync(nint hwnd)
+    {
+        // A freshly launched window may still be taking foreground itself; retry briefly.
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            if (await d.RunAsync(() => TryActivate(hwnd)).ConfigureAwait(false)) return true;
+            await Task.Delay(100).ConfigureAwait(false);
+        }
+        return false;
+    }
+
+    private static bool TryActivate(nint hwnd)
     {
         if (NativeMethods.IsIconic(hwnd)) NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
         if (NativeMethods.SetForegroundWindow(hwnd)) return true;
 
-        var targetThread = NativeMethods.GetWindowThreadProcessId(hwnd, out _);
         var current = NativeMethods.GetCurrentThreadId();
-        var attached = targetThread != 0 && targetThread != current
+        var targetThread = NativeMethods.GetWindowThreadProcessId(hwnd, out _);
+        var fgThread = NativeMethods.GetWindowThreadProcessId(NativeMethods.GetForegroundWindow(), out _);
+        // Attach to the target window's thread and to the current foreground thread so the
+        // foreground lock does not reject us; detach afterwards.
+        var attachedTarget = targetThread != 0 && targetThread != current
             && NativeMethods.AttachThreadInput(current, targetThread, true);
+        var attachedFg = fgThread != 0 && fgThread != current && fgThread != targetThread
+            && NativeMethods.AttachThreadInput(current, fgThread, true);
         try { return NativeMethods.SetForegroundWindow(hwnd); }
-        finally { if (attached) NativeMethods.AttachThreadInput(current, targetThread, false); }
-    });
+        finally
+        {
+            if (attachedFg) NativeMethods.AttachThreadInput(current, fgThread, false);
+            if (attachedTarget) NativeMethods.AttachThreadInput(current, targetThread, false);
+        }
+    }
 
     public Task<bool> CloseAsync(nint hwnd) =>
         d.RunAsync(() => NativeMethods.PostMessageW(hwnd, NativeMethods.WM_CLOSE, 0, 0));

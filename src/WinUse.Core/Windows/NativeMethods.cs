@@ -79,5 +79,8 @@ internal static partial class NativeMethods
     public static partial uint GetCurrentThreadId();
 
     [LibraryImport("user32.dll")]
+    public static partial nint GetForegroundWindow();
+
+    [LibraryImport("user32.dll")]
     public static partial int GetSystemMetrics(int index);
 }
