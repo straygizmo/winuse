@@ -25,6 +25,7 @@ public sealed record JevResponse(string Model, IReadOnlyDictionary<string, objec
 public interface IJevClient
 {
     bool IsConfigured { get; }
+    Config.DecisionProvider Provider { get; }
     Task<JevResponse> AskAsync(object state, IReadOnlyDictionary<string, JevQuestion> questions,
         IReadOnlyList<ImageAttachment>? images = null, CancellationToken ct = default);
 }

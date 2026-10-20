@@ -23,6 +23,7 @@ public sealed class RefRegistry
                 RefKind.Window => "win",
                 RefKind.Uia => "u",
                 RefKind.Dom => "w",
+                RefKind.Point => "pt",
                 _ => throw new ArgumentOutOfRangeException(nameof(kind)),
             };
             var r = new ElementRef($"{prefix}{n}", kind, locator, handle);

@@ -57,4 +57,23 @@ public class RefRegistryTests
         var json = JsonSerializer.Serialize(r);
         Assert.DoesNotContain("Handle", json);
     }
+
+    [Fact]
+    public void PointLocator_RoundTrips()
+    {
+        var l = new PointLocator(new WindowLocator("^VirtualBox$", "VirtualBoxVM", null), 0.25, 0.75);
+        var json = JsonSerializer.Serialize<Locator>(l);
+        Assert.Contains("\"$type\":\"point\"", json);
+        var back = Assert.IsType<PointLocator>(JsonSerializer.Deserialize<Locator>(json));
+        Assert.Equal(l, back);
+    }
+
+    [Fact]
+    public void Register_Point_UsesThePtPrefix()
+    {
+        var reg = new RefRegistry();
+        var r = reg.Register(RefKind.Point, new PointLocator(new WindowLocator("t", null, null), 0.5, 0.5), (10, 20));
+        Assert.Equal("pt1", r.Id);
+        Assert.Equal("pt2", reg.Register(RefKind.Point, r.Locator, null).Id);
+    }
 }

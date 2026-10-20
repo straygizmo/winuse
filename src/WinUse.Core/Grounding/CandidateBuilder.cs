@@ -54,12 +54,11 @@ public static class CandidateBuilder
 
     static string? First(params string?[] values) => values.FirstOrDefault(v => !string.IsNullOrEmpty(v));
 
-    static string RegionOf(Rect r, Rect win)
-    {
-        var cx = r.X + r.Width / 2.0;
-        var cy = r.Y + r.Height / 2.0;
-        return Regions[Bucket(cy, win.Y, win.Height), Bucket(cx, win.X, win.Width)];
-    }
+    static string RegionOf(Rect r, Rect win) => RegionOfPoint(r.X + r.Width / 2.0, r.Y + r.Height / 2.0, win);
+
+    /// <summary>The coarse 3x3 region ("top-left" ...) of a screen point within a window.</summary>
+    public static string RegionOfPoint(double x, double y, Rect win) =>
+        Regions[Bucket(y, win.Y, win.Height), Bucket(x, win.X, win.Width)];
 
     static int Bucket(double v, int origin, int size)
     {

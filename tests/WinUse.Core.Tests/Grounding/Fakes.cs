@@ -1,5 +1,8 @@
+using WinUse.Core.Config;
 using WinUse.Core.Grounding;
+using WinUse.Core.Grounding.Visual;
 using WinUse.Core.Jev;
+using WinUse.Core.Tests.Grounding.Visual;
 using WinUse.Core.Uia;
 using WinUse.Core.Web;
 using WinUse.Core.Windows;
@@ -11,9 +14,13 @@ sealed class FakeJev(
     (string choice, double p, double conf)? choice = null,
     double noul = 0.5,
     bool throwUnavailable = false,
-    string kind = "click") : IJevClient
+    string kind = "click",
+    string cell = "A1",
+    BoxAnswer? box = null,
+    DecisionProvider provider = DecisionProvider.Jev) : IJevClient
 {
     public bool IsConfigured => configured;
+    public DecisionProvider Provider => provider;
     public object? LastState { get; private set; }
     public List<IReadOnlyDictionary<string, JevQuestion>> Calls { get; } = [];
 
@@ -33,6 +40,12 @@ sealed class FakeJev(
             {
                 case NoulQuestion:
                     answers[key] = new NoulAnswer(noul);
+                    break;
+                case BoxQuestion:
+                    answers[key] = box ?? new BoxAnswer(0.4, 0.6, 0.4, 0.6, 0.9);
+                    break;
+                case ChoiceQuestion when key == "cell":
+                    answers[key] = new ChoiceAnswer(cell, new Dictionary<string, double> { [cell] = 0.9 }, 0.9);
                     break;
                 case ChoiceQuestion when key == "kind":
                     answers[key] = new ChoiceAnswer(kind, new Dictionary<string, double> { [kind] = 0.9 }, 0.9);
@@ -69,10 +82,29 @@ sealed class FakeExecutor : IActionExecutor
     public ActKind? LastKind { get; private set; }
     public string? LastText { get; private set; }
 
+    public (int X, int Y)? LastPoint { get; private set; }
+
     public Task ExecuteAsync(Candidate target, ActKind kind, string? text)
     {
         Last = target; LastKind = kind; LastText = text;
         return Task.CompletedTask;
+    }
+
+    public Task ExecuteAtAsync(int x, int y, ActKind kind, string? text)
+    {
+        LastPoint = (x, y); LastKind = kind; LastText = text;
+        return Task.CompletedTask;
+    }
+}
+
+sealed class FakeCapture(int width = 800, int height = 600, int originX = 0, int originY = 0) : IWindowCapture
+{
+    public int Captures { get; private set; }
+
+    public Task<VisualFrame?> CaptureAsync(WindowInfo window)
+    {
+        Captures++;
+        return Task.FromResult<VisualFrame?>(GridLocatorTests.Blank(width, height, originX, originY));
     }
 }
 
