@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using WinUse.Core.Grounding;
+using WinUse.Core.Refs;
 using WinUse.Core.Scenarios;
 using WinUse.Core.Tests.Grounding;
 using WinUse.Core.Windows;
@@ -385,5 +386,80 @@ public sealed class ToolDispatcherTests : IDisposable
         var o = await new ToolDispatcher(ctx).InvokeAsync(new("read_text", new JsonObject(), null), default);
         Assert.False(o.Ok);
         Assert.Contains("path", o.Error);
+    }
+
+    // ---- visual grounding (windows without candidates) ----------------------------------------
+
+    private ToolContext VisualContext(FakeJev jev, FakeExecutor exec) =>
+        ToolContext.Create(TestConfig.WithRoots(tmp), null, jev, new FakeObservation(), exec, new FakeCapture(800, 600));
+
+    [Fact]
+    public async Task Act_Visual_JournalsAPointLocator_AndReturnsAPointRef()
+    {
+        var exec = new FakeExecutor();
+        using var c = VisualContext(new FakeJev(cell: "A1", noul: 0.9), exec);
+        var o = await new ToolDispatcher(c).InvokeAsync(new("act", Args(("intent", "tap OK"), ("kind", "click")), null), default);
+        Assert.True(o.Ok, o.Error);
+        Assert.NotEqual(false, o.Passed);
+        var loc = Assert.IsType<PointLocator>(o.Resolved);
+        var (x, y) = exec.LastPoint!.Value;
+        Assert.Equal(x / 900.0, loc.Fx, 3); Assert.Equal(y / 900.0, loc.Fy, 3); // FakeObservation window rect is 900x900 at (0,0)
+        Assert.Equal("^T$", loc.Window.TitleRegex);
+        Assert.Equal(x, o.Result["point"]!["x"]!.GetValue<int>());
+        Assert.Equal(y, o.Result["point"]!["y"]!.GetValue<int>());
+        var refId = o.Result["target"]!["ref"]!.GetValue<string>();
+        Assert.StartsWith("pt", refId);
+        Assert.True(c.Refs.TryGet(refId, out var r));
+        Assert.Equal(RefKind.Point, r.Kind);
+        Assert.Equal((x, y), await c.CenterOfAsync(r));
+    }
+
+    [Fact]
+    public async Task Find_Visual_ReturnsAPointRef()
+    {
+        using var c = VisualContext(new FakeJev(cell: "A1"), new FakeExecutor());
+        var o = await new ToolDispatcher(c).InvokeAsync(new("find", Args(("intent", "the OK button")), null), default);
+        Assert.True(o.Ok, o.Error);
+        Assert.True(o.Result["grounded"]!.GetValue<bool>());
+        Assert.NotNull(o.Result["point"]);
+        var refId = o.Result["candidates"]![0]!["ref"]!.GetValue<string>();
+        Assert.StartsWith("pt", refId);
+        Assert.True(c.Refs.TryGet(refId, out _));
+    }
+
+    [Fact]
+    public async Task Replay_PointLocator_ActsAtTheWindowPoint_WithoutTheModel()
+    {
+        var jev = new FakeJev(cell: "A1");
+        var exec = new FakeExecutor();
+        using var c = VisualContext(jev, exec);
+        var windows = await c.Windows.ListAsync();
+        var w = windows.GroupBy(x => x.Title).Where(g => g.Count() == 1).Select(g => g.First()).First(); // a live window with a unique title
+        var loc = new PointLocator(ToolContext.LocatorOf(w), 0.5, 0.25);
+
+        var o = await WinUse.Cli.RunCommand.CreateDispatcher(c, heal: false)
+            .InvokeAsync(new("act", Args(("intent", "tap OK"), ("kind", "click")), loc, IsReplay: true), default);
+
+        Assert.True(o.Ok, o.Error);
+        Assert.NotEqual(false, o.Passed);
+        Assert.Empty(jev.Calls);
+        Assert.Equal(loc.ToScreen(w.Rect), exec.LastPoint);
+        Assert.Equal(ActKind.Click, exec.LastKind);
+        Assert.IsType<PointLocator>(o.Resolved);
+        Assert.True(o.Result["replayed"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task Replay_PointLocator_WindowGone_FailsNotErrors()
+    {
+        var exec = new FakeExecutor();
+        using var c = VisualContext(new FakeJev(cell: "A1"), exec);
+        var loc = new PointLocator(new WindowLocator("^no such window 9f3e$", "nope", null), 0.5, 0.5);
+        var o = await WinUse.Cli.RunCommand.CreateDispatcher(c, heal: false)
+            .InvokeAsync(new("act", Args(("intent", "tap OK"), ("kind", "click")), loc, IsReplay: true), default);
+        Assert.True(o.Ok, o.Error);
+        Assert.False(o.Passed);
+        Assert.Equal("locator not found: resolved", o.Error);
+        Assert.Null(exec.LastPoint);
     }
 }

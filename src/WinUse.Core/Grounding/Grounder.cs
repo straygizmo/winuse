@@ -33,7 +33,7 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
                 if (frame is null) return Ungrounded(o, topK);
                 var p = await LocateAsync(intent, o, frame, cfg.MinConfidence).ConfigureAwait(false);
                 if (p is not { } vp) return new FindResult([], 0, true);
-                return new FindResult([(PointCandidate(vp.X, vp.Y, o), vp.Probability)], vp.Confidence, true, (vp.X, vp.Y));
+                return new FindResult([(PointCandidate(vp.X, vp.Y, o), vp.Probability)], vp.Confidence, true, (vp.X, vp.Y), o.Window);
             }
             var g = await GroundAsync(intent, o, false, await ScreenshotAsync(o).ConfigureAwait(false)).ConfigureAwait(false);
             return new FindResult(g.Ranked.Take(topK).ToList(), g.Confidence, true);
@@ -105,7 +105,7 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
         var target = PointCandidate(p.X, p.Y, o);
         var action = new ExecutedAction(resolved.ToString().ToLowerInvariant(), target.Label, text);
         var verified = await VerifyAsync(intent, null, action).ConfigureAwait(false);
-        return new ActResult(true, target, p.Probability, p.Confidence, verified, [], null, (p.X, p.Y));
+        return new ActResult(true, target, p.Probability, p.Confidence, verified, [], null, (p.X, p.Y), o.Window);
     }
 
     /// <summary>Re-observes after the settle wait and asks whether the goal is now accomplished; null when the model is unavailable.</summary>

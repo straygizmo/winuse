@@ -53,7 +53,8 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
     private readonly AsyncLocal<StrongBox<ActKind?>?> _kindCapture = new();
     private int _disposed;
 
-    private ToolContext(WinUseConfig cfg, ILoggerFactory lf, IJevClient? jev, IObservationSource? observation, IActionExecutor? executor)
+    private ToolContext(WinUseConfig cfg, ILoggerFactory lf, IJevClient? jev, IObservationSource? observation, IActionExecutor? executor,
+        IWindowCapture? capture)
     {
         Config = cfg;
         Log = lf.CreateLogger("WinUse.Tools");
@@ -67,7 +68,8 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
         Uia = new UiaService(Dispatcher, Refs, Windows);
         Web = new WebService(Refs);
         Jev = jev ?? new JevClient(new HttpClient(), cfg, lf.CreateLogger<JevClient>());
-        Grounder = new Grounder(Jev, observation ?? this, new KindCapturingExecutor(executor ?? this, this), cfg, this, Log);
+        Executor = executor ?? this;
+        Grounder = new Grounder(Jev, observation ?? this, new KindCapturingExecutor(Executor, this), cfg, capture ?? this, Log);
         Journal = new Journal();
         ActScreenshot = async () => LastWindow is { } h
             ? await Screen.CaptureWindowAsync(h, ActScreenshotScale).ConfigureAwait(false)
@@ -75,12 +77,12 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
     }
 
     public static ToolContext Create(WinUseConfig cfg, ILoggerFactory? loggerFactory = null) =>
-        new(cfg, loggerFactory ?? NullLoggerFactory.Instance, null, null, null);
+        new(cfg, loggerFactory ?? NullLoggerFactory.Instance, null, null, null, null);
 
-    /// <summary>Overload with replaceable grounding collaborators (Jev, observation, execution), mainly for tests.</summary>
+    /// <summary>Overload with replaceable grounding collaborators (model, observation, execution, capture), mainly for tests.</summary>
     public static ToolContext Create(WinUseConfig cfg, ILoggerFactory? loggerFactory, IJevClient? jev,
-        IObservationSource? observation = null, IActionExecutor? executor = null) =>
-        new(cfg, loggerFactory ?? NullLoggerFactory.Instance, jev, observation, executor);
+        IObservationSource? observation = null, IActionExecutor? executor = null, IWindowCapture? capture = null) =>
+        new(cfg, loggerFactory ?? NullLoggerFactory.Instance, jev, observation, executor, capture);
 
     public WinUseConfig Config { get; }
     public ILogger Log { get; }
@@ -94,6 +96,8 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
     public UiaService Uia { get; }
     public WebService Web { get; }
     public IJevClient Jev { get; }
+    /// <summary>Executes grounded actions; this context itself unless a replacement was injected (tests).</summary>
+    public IActionExecutor Executor { get; }
     public Grounder Grounder { get; }
     public Journal Journal { get; }
 

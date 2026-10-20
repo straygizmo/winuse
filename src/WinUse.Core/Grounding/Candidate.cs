@@ -21,7 +21,7 @@ public sealed record Observation(WindowInfo Window, IReadOnlyList<Candidate> Can
 
 /// <summary><see cref="Point"/> is set when the target was located on a screenshot (no candidates).</summary>
 public sealed record FindResult(IReadOnlyList<(Candidate Candidate, double Probability)> Ranked, double Confidence, bool Grounded,
-    (int X, int Y)? Point = null);
+    (int X, int Y)? Point = null, WindowInfo? Window = null);
 
 public sealed record ActResult(
     bool Executed,
@@ -31,7 +31,8 @@ public sealed record ActResult(
     bool? Verified,
     IReadOnlyList<(Candidate, double)> Alternatives,
     string? Reason,
-    (int X, int Y)? Point = null);
+    (int X, int Y)? Point = null,
+    WindowInfo? Window = null);
 
 public sealed record CheckResult(double Probability, bool Available);
 
