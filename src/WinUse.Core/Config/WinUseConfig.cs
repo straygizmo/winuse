@@ -10,6 +10,26 @@ public enum DecisionProvider
     Clef,
 }
 
+/// <summary>When a window screenshot is attached to decision-model requests.</summary>
+public enum ScreenshotPolicy
+{
+    /// <summary>Only when the observed window exposes no UIA / DOM candidates.</summary>
+    Auto,
+    /// <summary>Always, also next to candidates.</summary>
+    Always,
+    /// <summary>Never; visual grounding is disabled.</summary>
+    Off,
+}
+
+/// <summary>How a target is located on a screenshot when there are no candidates.</summary>
+public enum VisualLocatorKind
+{
+    /// <summary>Staged grid-cell choice questions (works with Jev and Clef).</summary>
+    Grid,
+    /// <summary>One Jev 1.14 <c>box</c> question (Jev only; falls back to Grid on Clef).</summary>
+    Box,
+}
+
 public sealed record WinUseConfig(
     string? JevApiKey,
     string JevBaseUrl,
@@ -25,7 +45,9 @@ public sealed record WinUseConfig(
     string? CloudflareApiToken = null,
     string ClefModel = WinUseConfig.DefaultClefModel,
     string ClefBaseUrl = WinUseConfig.DefaultClefBaseUrl,
-    DecisionProvider? ProviderOverride = null)
+    DecisionProvider? ProviderOverride = null,
+    ScreenshotPolicy Screenshots = ScreenshotPolicy.Auto,
+    VisualLocatorKind VisualLocator = VisualLocatorKind.Grid)
 {
     public const string DefaultClefModel = "clef";
     public const string DefaultClefBaseUrl = "https://api.cloudflare.com";
@@ -75,7 +97,17 @@ public sealed record WinUseConfig(
             CloudflareApiToken: Get("CLOUDFLARE_API_TOKEN"),
             ClefModel: Get("CLEF_MODEL") ?? DefaultClefModel,
             ClefBaseUrl: Get("CLEF_BASE_URL") ?? DefaultClefBaseUrl,
-            ProviderOverride: ParseProvider(Get("WINUSE_DECISION_PROVIDER")));
+            ProviderOverride: ParseProvider(Get("WINUSE_DECISION_PROVIDER")),
+            Screenshots: ParseEnum<ScreenshotPolicy>("WINUSE_SCREENSHOTS", Get("WINUSE_SCREENSHOTS")) ?? ScreenshotPolicy.Auto,
+            VisualLocator: ParseEnum<VisualLocatorKind>("WINUSE_VISUAL_LOCATOR", Get("WINUSE_VISUAL_LOCATOR")) ?? VisualLocatorKind.Grid);
+    }
+
+    private static T? ParseEnum<T>(string name, string? raw) where T : struct, Enum
+    {
+        if (raw is null) return null;
+        if (Enum.TryParse<T>(raw, ignoreCase: true, out var v) && Enum.IsDefined(v)) return v;
+        var allowed = string.Join(", ", Enum.GetNames<T>().Select(n => n.ToLowerInvariant()));
+        throw new InvalidOperationException($"{name} must be one of {allowed}, not '{raw}'.");
     }
 
     private static DecisionProvider? ParseProvider(string? raw) => raw?.ToLowerInvariant() switch

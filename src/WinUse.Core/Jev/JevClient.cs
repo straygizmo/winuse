@@ -59,13 +59,19 @@ public sealed class JevClient : IJevClient
 
     string? Token => _cfg.Provider == DecisionProvider.Clef ? _cfg.CloudflareApiToken : _cfg.JevApiKey;
 
-    public async Task<JevResponse> AskAsync(object state, IReadOnlyDictionary<string, JevQuestion> questions, CancellationToken ct = default)
+    /// <summary>Jev requires this opt-in header on every request that carries an image or a box question.</summary>
+    public const string JevImagesHeader = "TypeSafe-Danger-Zone-Images";
+
+    public async Task<JevResponse> AskAsync(object state, IReadOnlyDictionary<string, JevQuestion> questions,
+        IReadOnlyList<ImageAttachment>? images = null, CancellationToken ct = default)
     {
         if (!IsConfigured || Endpoint is not { } url || Token is not { } token)
             throw new InvalidOperationException(NotConfiguredMessage);
 
-        var body = BuildBody(state, questions);
-        _log.LogDebug("{Provider} request to {Url} (Authorization: Bearer ***): {Body}", Provider, url, body);
+        var hasImages = images is { Count: > 0 };
+        var body = BuildBody(state, questions, images);
+        _log.LogDebug("{Provider} request to {Url} (Authorization: Bearer ***), {Images} image(s): {Body}",
+            Provider, url, images?.Count ?? 0, hasImages ? "(body with images omitted)" : body);
 
         Exception? last = null;
         for (var attempt = 0; attempt <= _backoff.Length; attempt++)
@@ -85,6 +91,8 @@ public sealed class JevClient : IJevClient
                     Content = new StringContent(body, Encoding.UTF8, "application/json"),
                 };
                 req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                var needsOptIn = hasImages || questions.Values.Any(q => q is BoxQuestion);
+                if (Provider == DecisionProvider.Jev && needsOptIn) req.Headers.Add(JevImagesHeader, "true");
 
                 using var resp = await _http.SendAsync(req, cts.Token).ConfigureAwait(false);
                 var text = await resp.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
@@ -118,7 +126,7 @@ public sealed class JevClient : IJevClient
         throw new JevUnavailableException($"{Provider} unavailable after {_backoff.Length + 1} attempts: {last?.Message}", last);
     }
 
-    string BuildBody(object state, IReadOnlyDictionary<string, JevQuestion> questions)
+    string BuildBody(object state, IReadOnlyDictionary<string, JevQuestion> questions, IReadOnlyList<ImageAttachment>? images)
     {
         var qs = new JsonObject();
         foreach (var (id, q) in questions)
@@ -135,6 +143,9 @@ public sealed class JevClient : IJevClient
                 case NoulQuestion n:
                     qs[id] = new JsonObject { ["type"] = "noul", ["instructions"] = n.Instructions };
                     break;
+                case BoxQuestion b:
+                    qs[id] = new JsonObject { ["type"] = "box", ["instructions"] = b.Instructions };
+                    break;
                 default:
                     throw new ArgumentException($"Unsupported question type {q.GetType().Name}", nameof(questions));
             }
@@ -145,6 +156,24 @@ public sealed class JevClient : IJevClient
             ["state"] = JsonSerializer.SerializeToNode(state),
             ["questions"] = qs,
         };
+        if (images is { Count: > 0 })
+        {
+            if (Provider == DecisionProvider.Clef)
+            {
+                // Clef: embedded data URLs, placed before the state by the service; referenced implicitly.
+                var arr = new JsonArray();
+                foreach (var img in images) arr.Add("data:image/png;base64," + Convert.ToBase64String(img.Png));
+                root["images"] = arr;
+            }
+            else
+            {
+                // Jev: assets referenced by id from state / instructions (an unreferenced asset is rejected).
+                var assets = new JsonObject();
+                foreach (var img in images)
+                    assets[img.Id] = new JsonObject { ["type"] = "image", ["format"] = "png", ["data_base64"] = Convert.ToBase64String(img.Png) };
+                root["assets"] = assets;
+            }
+        }
         return root.ToJsonString();
     }
 
@@ -175,6 +204,13 @@ public sealed class JevClient : IJevClient
                         break;
                     case "noul":
                         answers[p.Name] = new NoulAnswer(p.Value.GetProperty("noul").GetDouble());
+                        break;
+                    case "box":
+                        var box = p.Value.GetProperty("box");
+                        answers[p.Name] = new BoxAnswer(
+                            box.GetProperty("top").GetDouble(), box.GetProperty("bottom").GetDouble(),
+                            box.GetProperty("left").GetDouble(), box.GetProperty("right").GetDouble(),
+                            p.Value.TryGetProperty("confidence", out var bc) && bc.ValueKind == JsonValueKind.Number ? bc.GetDouble() : 0);
                         break;
                     default:
                         throw new InvalidOperationException($"{Provider} answer '{p.Name}' has unknown type '{type}'");

@@ -1,3 +1,4 @@
+using WinUse.Core.Grounding.Visual;
 using WinUse.Core.Windows;
 
 namespace WinUse.Core.Grounding;
@@ -18,7 +19,9 @@ public enum ActKind { Auto, Click, Type, Select, Toggle }
 
 public sealed record Observation(WindowInfo Window, IReadOnlyList<Candidate> Candidates, IReadOnlyList<string> RecentActions);
 
-public sealed record FindResult(IReadOnlyList<(Candidate Candidate, double Probability)> Ranked, double Confidence, bool Grounded);
+/// <summary><see cref="Point"/> is set when the target was located on a screenshot (no candidates).</summary>
+public sealed record FindResult(IReadOnlyList<(Candidate Candidate, double Probability)> Ranked, double Confidence, bool Grounded,
+    (int X, int Y)? Point = null, WindowInfo? Window = null);
 
 public sealed record ActResult(
     bool Executed,
@@ -27,7 +30,9 @@ public sealed record ActResult(
     double Confidence,
     bool? Verified,
     IReadOnlyList<(Candidate, double)> Alternatives,
-    string? Reason);
+    string? Reason,
+    (int X, int Y)? Point = null,
+    WindowInfo? Window = null);
 
 public sealed record CheckResult(double Probability, bool Available);
 
@@ -39,4 +44,13 @@ public interface IObservationSource
 public interface IActionExecutor
 {
     Task ExecuteAsync(Candidate target, ActKind kind, string? text);
+
+    /// <summary>Acts at a screen point: click, or click then type <paramref name="text"/> for <see cref="ActKind.Type"/>.</summary>
+    Task ExecuteAtAsync(int x, int y, ActKind kind, string? text);
+}
+
+/// <summary>Captures the observed window for visual grounding; null when it cannot be captured.</summary>
+public interface IWindowCapture
+{
+    Task<VisualFrame?> CaptureAsync(WindowInfo window);
 }

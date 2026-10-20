@@ -142,6 +142,14 @@ public sealed class ToolDispatcher(ToolContext ctx) : IToolDispatcher
                 if (info is null) return lazy ? ctx.Refs.Register(RefKind.Window, w, null).Id : null;
                 return ctx.Refs.Register(RefKind.Window, ToolContext.LocatorOf(info), info.Hwnd).Id;
             }
+            case PointLocator p:
+            {
+                // A visually grounded point follows its window: re-resolve the window, then apply the fractions to its rect.
+                var info = await ctx.Windows.FindWithFallbackAsync(p.Window).ConfigureAwait(false);
+                if (info is null) return lazy ? ctx.Refs.Register(RefKind.Point, p, null).Id : null;
+                var live = p with { Window = ToolContext.LocatorOf(info) };
+                return ctx.Refs.Register(RefKind.Point, live, live.ToScreen(info.Rect)).Id;
+            }
             default:
                 return null;
         }

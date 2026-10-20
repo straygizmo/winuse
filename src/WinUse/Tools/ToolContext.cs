@@ -10,6 +10,7 @@ using ModelContextProtocol.Protocol;
 using WinUse.Core.Config;
 using WinUse.Core.Files;
 using WinUse.Core.Grounding;
+using WinUse.Core.Grounding.Visual;
 using WinUse.Core.Input;
 using WinUse.Core.Jev;
 using WinUse.Core.Processes;
@@ -36,11 +37,12 @@ public sealed class ToolStep(JsonObject args)
 }
 
 /// <summary>All services shared by the MCP tools (DI singleton). Creating it has no UIA / Playwright side effects.</summary>
-public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposable
+public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCapture, IDisposable
 {
     private static readonly Regex WebRefPattern = new(@"^w\d+$", RegexOptions.CultureInvariant);
     private static readonly Regex UiaRefPattern = new(@"^u\d+$", RegexOptions.CultureInvariant);
-    private static readonly Regex AnyRefPattern = new(@"^(u|w|win)\d+$", RegexOptions.CultureInvariant);
+    private static readonly Regex PointRefPattern = new(@"^pt\d+$", RegexOptions.CultureInvariant);
+    private static readonly Regex AnyRefPattern = new(@"^(u|w|win|pt)\d+$", RegexOptions.CultureInvariant);
 
     /// <summary>Arguments that may carry a ref; their locators are journaled under <see cref="ResolvedRefsKey"/>.</summary>
     public static readonly string[] RefArgNames = ["ref", "from_ref", "to_ref", "window", "scope", "title"];
@@ -51,7 +53,8 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
     private readonly AsyncLocal<StrongBox<ActKind?>?> _kindCapture = new();
     private int _disposed;
 
-    private ToolContext(WinUseConfig cfg, ILoggerFactory lf, IJevClient? jev, IObservationSource? observation, IActionExecutor? executor)
+    private ToolContext(WinUseConfig cfg, ILoggerFactory lf, IJevClient? jev, IObservationSource? observation, IActionExecutor? executor,
+        IWindowCapture? capture)
     {
         Config = cfg;
         Log = lf.CreateLogger("WinUse.Tools");
@@ -65,7 +68,8 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
         Uia = new UiaService(Dispatcher, Refs, Windows);
         Web = new WebService(Refs);
         Jev = jev ?? new JevClient(new HttpClient(), cfg, lf.CreateLogger<JevClient>());
-        Grounder = new Grounder(Jev, observation ?? this, new KindCapturingExecutor(executor ?? this, this), cfg);
+        Executor = executor ?? this;
+        Grounder = new Grounder(Jev, observation ?? this, new KindCapturingExecutor(Executor, this), cfg, capture ?? this, Log);
         Journal = new Journal();
         ActScreenshot = async () => LastWindow is { } h
             ? await Screen.CaptureWindowAsync(h, ActScreenshotScale).ConfigureAwait(false)
@@ -73,12 +77,12 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
     }
 
     public static ToolContext Create(WinUseConfig cfg, ILoggerFactory? loggerFactory = null) =>
-        new(cfg, loggerFactory ?? NullLoggerFactory.Instance, null, null, null);
+        new(cfg, loggerFactory ?? NullLoggerFactory.Instance, null, null, null, null);
 
-    /// <summary>Overload with replaceable grounding collaborators (Jev, observation, execution), mainly for tests.</summary>
+    /// <summary>Overload with replaceable grounding collaborators (model, observation, execution, capture), mainly for tests.</summary>
     public static ToolContext Create(WinUseConfig cfg, ILoggerFactory? loggerFactory, IJevClient? jev,
-        IObservationSource? observation = null, IActionExecutor? executor = null) =>
-        new(cfg, loggerFactory ?? NullLoggerFactory.Instance, jev, observation, executor);
+        IObservationSource? observation = null, IActionExecutor? executor = null, IWindowCapture? capture = null) =>
+        new(cfg, loggerFactory ?? NullLoggerFactory.Instance, jev, observation, executor, capture);
 
     public WinUseConfig Config { get; }
     public ILogger Log { get; }
@@ -92,6 +96,8 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
     public UiaService Uia { get; }
     public WebService Web { get; }
     public IJevClient Jev { get; }
+    /// <summary>Executes grounded actions; this context itself unless a replacement was injected (tests).</summary>
+    public IActionExecutor Executor { get; }
     public Grounder Grounder { get; }
     public Journal Journal { get; }
 
@@ -179,6 +185,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
 
     public static bool IsWebRef(string id) => WebRefPattern.IsMatch(id);
     public static bool IsUiaRef(string id) => UiaRefPattern.IsMatch(id);
+    public static bool IsPointRef(string id) => PointRefPattern.IsMatch(id);
 
     public static WindowLocator LocatorOf(WindowInfo w) =>
         new("^" + Regex.Escape(w.Title) + "$", w.ProcessName, w.ClassName);
@@ -188,6 +195,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
     /// <summary>Centre (screen pixels) of a UIA element ref or a window ref.</summary>
     public async Task<(int X, int Y)> CenterOfAsync(ElementRef r)
     {
+        if (r.Kind == RefKind.Point) return await PointOfAsync(r).ConfigureAwait(false);
         var rect = r.Kind switch
         {
             RefKind.Uia => await Uia.GetRectAsync(r.Id).ConfigureAwait(false),
@@ -198,13 +206,24 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
         return (rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
     }
 
-    /// <summary>Brings the window owning a UIA / window ref to the foreground (best effort) before coordinate input.</summary>
+    /// <summary>The screen point of a point ref: the handle captured at registration, else the locator applied to the live window.</summary>
+    private async Task<(int X, int Y)> PointOfAsync(ElementRef r)
+    {
+        if (r.Handle is ValueTuple<int, int> p) return p;
+        var loc = (PointLocator)r.Locator;
+        var w = await Windows.FindWithFallbackAsync(loc.Window).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"Window for ref '{r.Id}' not found.");
+        return loc.ToScreen(w.Rect);
+    }
+
+    /// <summary>Brings the window owning a UIA / window / point ref to the foreground (best effort) before coordinate input.</summary>
     public async Task ActivateOwnerAsync(ElementRef r)
     {
         var loc = r.Locator switch
         {
             UiaLocator u => u.Window,
             WindowLocator wl => wl,
+            PointLocator pl => pl.Window,
             _ => null,
         };
         if (loc is null) return;
@@ -337,13 +356,44 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
         }
     }
 
+    // ---- IWindowCapture -------------------------------------------------------------------------
+
+    /// <summary>Full-resolution capture of the observed window for visual grounding (null when it cannot be captured).</summary>
+    public async Task<VisualFrame?> CaptureAsync(WindowInfo window)
+    {
+        try
+        {
+            return VisualFrame.FromCapture(await Screen.CaptureWindowAsync(window.Hwnd, 1.0).ConfigureAwait(false));
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "capture of window {Hwnd} failed", window.Hwnd);
+            return null;
+        }
+    }
+
     // ---- IActionExecutor ------------------------------------------------------------------------
+
+    /// <summary>Acts at a screen point (visual grounding): the window under <see cref="LastWindow"/> is activated first.</summary>
+    public async Task ExecuteAtAsync(int x, int y, ActKind kind, string? text)
+    {
+        if (kind is ActKind.Type or ActKind.Select && text is null)
+            throw new ArgumentException($"Action '{kind}' requires text.", nameof(text));
+        if (LastWindow is { } h) await Windows.ActivateAsync(h).ConfigureAwait(false);
+        await Input.ClickAsync(x, y).ConfigureAwait(false);
+        if (kind is ActKind.Type or ActKind.Select) await Input.TypeTextAsync(text!).ConfigureAwait(false);
+    }
 
     public async Task ExecuteAsync(Candidate target, ActKind kind, string? text)
     {
         if (kind is ActKind.Type or ActKind.Select && text is null)
             throw new ArgumentException($"Action '{kind}' requires text.", nameof(text));
-        if (IsWebRef(target.Id))
+        if (IsPointRef(target.Id))
+        {
+            var (x, y) = await PointOfAsync(GetRef(target.Id)).ConfigureAwait(false);
+            await ExecuteAtAsync(x, y, kind, text).ConfigureAwait(false);
+        }
+        else if (IsWebRef(target.Id))
         {
             switch (kind)
             {
@@ -383,6 +433,12 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IDisposab
         public async Task ExecuteAsync(Candidate target, ActKind kind, string? text)
         {
             await inner.ExecuteAsync(target, kind, text).ConfigureAwait(false);
+            if (owner._kindCapture.Value is { } box) box.Value = kind;
+        }
+
+        public async Task ExecuteAtAsync(int x, int y, ActKind kind, string? text)
+        {
+            await inner.ExecuteAtAsync(x, y, kind, text).ConfigureAwait(false);
             if (owner._kindCapture.Value is { } box) box.Value = kind;
         }
     }

@@ -11,7 +11,7 @@ namespace WinUse.Tools;
 public sealed class IntentTools
 {
     [McpServerTool(Name = "act")]
-    [Description("Perform a natural-language intent on the window: build candidates, let the decision model (Jev or Clef) pick the target (and action kind when kind=auto), execute it when confident, then verify. When not confident (or no decision model is configured / reachable) nothing is executed and the top candidates are returned (plus a window screenshot when not confident) so you can act with click/set_text yourself.")]
+    [Description("Perform a natural-language intent on the window: build candidates, let the decision model (Jev or Clef) pick the target (and action kind when kind=auto), execute it when confident, then verify. When not confident (or no decision model is configured / reachable) nothing is executed and the top candidates are returned (plus a window screenshot when not confident) so you can act with click/set_text yourself. A window without any UIA / DOM elements (VM console, emulator, VNC) is handled visually: the target is located on a screenshot and clicked; the result then carries point {x, y} and a pt{n} ref.")]
     public static Task<CallToolResult> Act(
         ToolContext ctx,
         [Description("What to do, e.g. \"Click the Save button\".")] string intent,
@@ -28,6 +28,14 @@ public sealed class IntentTools
             // Journal the kind actually executed so a replay does not have to guess it.
             if (r.Executed && executedKind.Value is { } ek) step.Args["kind"] = KindName(ek);
             if (r.Executed && r.Target is not null && ctx.Refs.TryGet(r.Target.Id, out var er)) step.Resolved = er.Locator;
+            // Visual grounding: the target is a screen point; journal it relative to the window so a replay follows the window.
+            var target = r.Target;
+            if (r.Executed && r.Point is { } pt && r.Window is { } w)
+            {
+                var pr = RegisterPoint(ctx, w, pt);
+                step.Resolved = pr.Locator;
+                target = target! with { Id = pr.Id };
+            }
             // Not confident: return a screenshot with the candidates so the caller can pick the target itself.
             if (!r.Executed && r.Reason == "low confidence")
             {
@@ -43,7 +51,8 @@ public sealed class IntentTools
             return new
             {
                 executed = r.Executed,
-                target = r.Target is null ? null : CandidateJson(r.Target, r.Probability),
+                target = target is null ? null : CandidateJson(target, r.Probability),
+                point = r.Point is { } p ? new { x = p.X, y = p.Y } : null,
                 probability = r.Probability,
                 confidence = r.Confidence,
                 verified = r.Verified,
@@ -51,6 +60,10 @@ public sealed class IntentTools
                 reason = r.Reason,
             };
         });
+
+    /// <summary>Registers a <c>pt{n}</c> ref for a screen point located on a screenshot of <paramref name="w"/>.</summary>
+    private static ElementRef RegisterPoint(ToolContext ctx, WinUse.Core.Windows.WindowInfo w, (int X, int Y) pt) =>
+        ctx.Refs.Register(RefKind.Point, PointLocator.FromScreen(ToolContext.LocatorOf(w), w.Rect, pt.X, pt.Y), pt);
 
     /// <summary>
     /// Replays a recorded <c>act</c> step deterministically on an already resolved ref (no decision-model call).
@@ -66,8 +79,21 @@ public sealed class IntentTools
             var k = ParseKind(kind);
             if (k == ActKind.Auto) k = text is null ? ActKind.Click : ActKind.Type;
             step.Args["kind"] = KindName(k);
+            if (target.Kind == RefKind.Point)
+            {
+                var (x, y) = await ctx.CenterOfAsync(target);
+                await ctx.Executor.ExecuteAtAsync(x, y, k, text);
+                return new
+                {
+                    executed = true,
+                    target = new { @ref = target.Id },
+                    point = new { x, y },
+                    replayed = true,
+                    kind = k.ToString().ToLowerInvariant(),
+                };
+            }
             var cand = new Candidate(target.Id, "", "", null, true, false, k == ActKind.Type, null, "", null);
-            await ctx.ExecuteAsync(cand, k, text);
+            await ctx.Executor.ExecuteAsync(cand, k, text);
             return new
             {
                 executed = true,
@@ -78,7 +104,7 @@ public sealed class IntentTools
         });
 
     [McpServerTool(Name = "find", ReadOnly = true)]
-    [Description("Rank the elements that best match a natural-language intent without acting. Returns refs with labels and probabilities (probability 0 and grounded=false when no decision model is configured or reachable).")]
+    [Description("Rank the elements that best match a natural-language intent without acting. Returns refs with labels and probabilities (probability 0 and grounded=false when no decision model is configured or reachable). On a window without elements the target is located on a screenshot and returned as a pt{n} ref with point {x, y}.")]
     public static Task<CallToolResult> Find(
         ToolContext ctx,
         [Description("The element you are looking for, e.g. \"the search box\".")] string intent,
@@ -87,16 +113,23 @@ public sealed class IntentTools
         ctx.RunStepAsync("find", ToolContext.Args(("intent", intent), ("window", window), ("top_k", top_k)), async _ =>
         {
             var r = await ctx.Grounder.FindAsync(intent, window, top_k);
+            var ranked = r.Ranked;
+            if (r.Point is { } pt && r.Window is { } w)
+            {
+                var pr = RegisterPoint(ctx, w, pt);
+                ranked = ranked.Select(x => (x.Candidate with { Id = pr.Id }, x.Probability)).ToList();
+            }
             return new
             {
                 grounded = r.Grounded,
                 confidence = r.Confidence,
-                candidates = r.Ranked.Select(c => CandidateJson(c.Candidate, c.Probability)).ToList(),
+                point = r.Point is { } p ? new { x = p.X, y = p.Y } : null,
+                candidates = ranked.Select(c => CandidateJson(c.Candidate, c.Probability)).ToList(),
             };
         });
 
     [McpServerTool(Name = "check", ReadOnly = true)]
-    [Description("Ask the decision model (Jev or Clef) a yes/no question about the current state of the window. Returns the probability of \"yes\"; available=false when no decision model is configured or reachable.")]
+    [Description("Ask the decision model (Jev or Clef) a yes/no question about the current state of the window. Returns the probability of \"yes\"; available=false when no decision model is configured or reachable. On a window without elements (or with WINUSE_SCREENSHOTS=always) a screenshot is attached.")]
     public static Task<CallToolResult> Check(
         ToolContext ctx,
         [Description("A yes/no question, e.g. \"Is the document shown as saved?\".")] string question,

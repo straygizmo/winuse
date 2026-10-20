@@ -33,6 +33,21 @@ The provider is chosen automatically: Jev when `JEV_API_KEY` is set, otherwise C
 
 Optional: `JEV_BASE_URL`, `JEV_MODEL` (default `jev-latest`), `CLEF_MODEL` (`clef`, the default, or the cheaper `clef-flash`), `CLEF_BASE_URL` (default `https://api.cloudflare.com`), `WINUSE_ALLOWED_ROOTS` (`;`-separated), `WINUSE_KILLABLE_PROCESSES` (`;`-separated), `WINUSE_SETTLE_MS` (wait before `act` verifies its result, default 400). A self-hosted Clef server that speaks `/v1/systemone` can be used as the Jev provider by pointing `JEV_BASE_URL` at it.
 
+### Visual grounding (windows without UI elements)
+
+Some windows expose no UI Automation or DOM elements at all: VirtualBox and other VM consoles, phone emulators, VNC / RDP viewers. For those, `act`, `find` and `check` fall back to a screenshot of the window:
+
+- `act` / `find` locate the target on the screenshot and return a screen point (`point: {x, y}`) plus a `pt{n}` ref that `click` / `hover` / `drag` accept like any other ref. `act` clicks the point (or clicks and types for `kind=type`), then verifies with a fresh screenshot.
+- `check` answers from the screenshot.
+- The point is journaled as a fraction of the window rectangle, so a saved scenario replays it without the model even when the window has moved.
+
+Settings:
+
+- `WINUSE_SCREENSHOTS`: `auto` (default: screenshots are sent only for windows without elements), `always` (also next to the element list, which helps with ambiguous labels but costs tokens), `off` (never; `act` on such a window fails with `no elements (screenshots off)`).
+- `WINUSE_VISUAL_LOCATOR`: `grid` (default, works with Jev and Clef: up to three rounds of "which labelled grid cell holds the target", zooming in each time) or `box` (one Jev 1.14 `box` question; needs `JEV_MODEL=jev-preview` or newer and falls back to `grid` on Clef).
+
+Screenshots of the window are sent to the configured decision model. Jev requires the `TypeSafe-Danger-Zone-Images` opt-in header, which winuse adds automatically, and documents images and `box` as experimental.
+
 ## Register with Claude Code
 
 ```powershell
@@ -58,7 +73,7 @@ Replay never calls the decision model for `act`: each `act` step replays on its 
 ## Tools
 
 - Observe: `screenshot` (returns `origin {x, y}`: map an image pixel to `click(x, y)` with `screen_x = origin.x + pixel_x / scale`), `list_windows`, `get_ui_tree`, `get_dom`, `get_element`, `get_text`, `get_table`, `get_list_items`
-- Intent: `act`, `find`, `check`
+- Intent: `act`, `find`, `check` (see "Visual grounding" above for windows without elements)
 - Input: `click`, `hover`, `drag`, `scroll`, `type_text`, `press_keys`
 - Element: `set_text`, `select_item`, `set_checked`, `focus`, `invoke`
 - Window: `window_activate`, `window_close`, `window_set_state`, `window_move`, `window_exists`

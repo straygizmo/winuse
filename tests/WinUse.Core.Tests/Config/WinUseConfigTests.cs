@@ -115,4 +115,29 @@ public class WinUseConfigTests
         Assert.Equal("clef-flash", cfg.ClefModel);
         Assert.Equal("https://gw.example/", cfg.ClefBaseUrl);
     }
+
+    [Fact]
+    public void Load_VisualDefaults_AreAutoScreenshotsAndGrid()
+    {
+        var cfg = LoadEnv(new Dictionary<string, string?>());
+        Assert.Equal(ScreenshotPolicy.Auto, cfg.Screenshots);
+        Assert.Equal(VisualLocatorKind.Grid, cfg.VisualLocator);
+    }
+
+    [Fact]
+    public void Load_VisualSettings_FromEnvironment_CaseInsensitive()
+    {
+        var cfg = LoadEnv(new Dictionary<string, string?> { ["WINUSE_SCREENSHOTS"] = "Always", ["WINUSE_VISUAL_LOCATOR"] = "BOX" });
+        Assert.Equal(ScreenshotPolicy.Always, cfg.Screenshots);
+        Assert.Equal(VisualLocatorKind.Box, cfg.VisualLocator);
+    }
+
+    [Fact]
+    public void Load_InvalidVisualSettings_Throw()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => LoadEnv(new Dictionary<string, string?> { ["WINUSE_SCREENSHOTS"] = "sometimes" }));
+        Assert.Contains("WINUSE_SCREENSHOTS", ex.Message);
+        ex = Assert.Throws<InvalidOperationException>(() => LoadEnv(new Dictionary<string, string?> { ["WINUSE_VISUAL_LOCATOR"] = "ocr" }));
+        Assert.Contains("WINUSE_VISUAL_LOCATOR", ex.Message);
+    }
 }
