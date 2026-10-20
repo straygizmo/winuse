@@ -21,6 +21,9 @@ public static class Program
                 return 0;
             case "run":
                 return await RunAsync(args);
+            case "--version":
+                Console.WriteLine($"winuse {Version}");
+                return 0;
             case "doctor":
             {
                 var cfg = LoadConfig();
@@ -66,9 +69,15 @@ public static class Program
         b.AddProvider(new FileLoggerProvider(cfg.LogDirectory));
     });
 
+    /// <summary>The package version (<c>Version</c> in Directory.Build.props), without build metadata.</summary>
+    public static string Version =>
+        (typeof(Program).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion
+         ?? typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown").Split('+')[0];
+
     private static int Usage()
     {
-        Console.Error.WriteLine("usage: winuse --mcp | winuse run <scenario.json> [--heal] [--report <dir>] | winuse doctor");
+        Console.Error.WriteLine("usage: winuse --mcp | winuse run <scenario.json> [--heal] [--report <dir>] | winuse doctor | winuse --version");
         return 2;
     }
 

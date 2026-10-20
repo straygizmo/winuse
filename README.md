@@ -60,6 +60,7 @@ claude mcp add winuse -- <repo>\out\winuse.exe --mcp
 winuse --mcp                                          MCP server over stdio
 winuse run <scenario.json> [--heal] [--report <dir>]  replay a scenario without AI
 winuse doctor                                         check the environment
+winuse --version                                      print the version
 ```
 
 `run` logs one line per step to stderr (`[PASS] 1 process_run (812ms)`, with ` p=0.81` appended for steps whose result has a probability, e.g. `check`), writes `report.json` and before/after screenshots to `--report <dir>`, and with `--heal` re-grounds `act` steps whose recorded element is gone with the decision model and saves updated locators next to the scenario as `<name>.healed.json` (e.g. `scenarios/mdium-smoke.json` → `scenarios/mdium-smoke.healed.json`; `scenario_run heal=true` uses the same name). It needs an interactive desktop session.

@@ -12,6 +12,7 @@ public static class DoctorCommand
 
     public static async Task<int> ExecuteAsync(ToolContext ctx, TextWriter output)
     {
+        output.WriteLine($"winuse {Program.Version}");
         var exeEnv = Path.Combine(AppContext.BaseDirectory, ".env");
         var cwdEnv = Path.Combine(Environment.CurrentDirectory, ".env");
         output.WriteLine($".env (exe dir): {exeEnv} [{(File.Exists(exeEnv) ? "found" : "missing")}]");
