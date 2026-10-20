@@ -59,7 +59,8 @@ public class JevClientTests
     {
         var client = new JevClient(new HttpClient(), TestConfig.Default, NullLogger<JevClient>.Instance);
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => client.AskAsync(new { }, OneNoul()));
-        Assert.Equal("Jev is not configured", ex.Message);
+        Assert.Contains("JEV_API_KEY", ex.Message);
+        Assert.Contains("CLOUDFLARE_API_TOKEN", ex.Message);
     }
 
     [Fact]
@@ -82,5 +83,81 @@ public class JevClientTests
         await Assert.ThrowsAsync<ArgumentException>(() => client.AskAsync(new { },
             new Dictionary<string, JevQuestion> { ["q"] = new ChoiceQuestion("?", criteria) }));
         Assert.Equal(0, handler.CallCount);
+    }
+
+    const string ClefEnvelope = """{"result":{"model":"clef","answers":{"target":{"type":"choice","choice":"u3","probabilities":{"u3":0.9,"none":0.1},"confidence":0.8},"done":{"type":"noul","noul":0.2}},"usage":{"input_tokens":154,"output_tokens":0}},"success":true,"errors":[],"messages":[]}""";
+
+    [Fact]
+    public async Task AskAsync_Clef_SendsCloudflareRequestAndUnwrapsEnvelope()
+    {
+        var handler = new FakeHttpHandler(req => {
+            Assert.Equal("https://api.cloudflare.com/client/v4/accounts/acct/ai/run/@cf/cloudflare/clef", req.RequestUri!.ToString());
+            Assert.Equal("Bearer cf-token", req.Headers.Authorization!.ToString());
+            var body = JsonDocument.Parse(req.Content!.ReadAsStringAsync().Result).RootElement;
+            Assert.Equal("clef", body.GetProperty("model").GetString());
+            Assert.Equal("choice", body.GetProperty("questions").GetProperty("target").GetProperty("type").GetString());
+            Assert.Equal("x", body.GetProperty("state").GetProperty("goal").GetString());
+            return Json(200, ClefEnvelope);
+        });
+        var client = new JevClient(new HttpClient(handler), TestConfig.WithClef(), NullLogger<JevClient>.Instance);
+        var r = await client.AskAsync(new { goal = "x" }, new Dictionary<string, JevQuestion> {
+            ["target"] = new ChoiceQuestion("Which element?", new Dictionary<string,string?> { ["u3"] = "Save button", ["none"] = null }),
+            ["done"] = new NoulQuestion("Is it done?") });
+        var c = Assert.IsType<ChoiceAnswer>(r.Answers["target"]);
+        Assert.Equal("u3", c.Choice); Assert.Equal(0.8, c.Confidence); Assert.Equal(0.9, c.Probabilities["u3"]);
+        Assert.Equal(0.2, Assert.IsType<NoulAnswer>(r.Answers["done"]).Probability);
+        Assert.Equal("clef", r.Model);
+        Assert.Equal(154, r.InputTokens);
+    }
+
+    [Fact]
+    public async Task AskAsync_Clef_UsesConfiguredModelAndBaseUrl()
+    {
+        var handler = new FakeHttpHandler(req => {
+            Assert.Equal("https://gw.example/client/v4/accounts/a1/ai/run/@cf/cloudflare/clef-flash", req.RequestUri!.ToString());
+            var body = JsonDocument.Parse(req.Content!.ReadAsStringAsync().Result).RootElement;
+            Assert.Equal("clef-flash", body.GetProperty("model").GetString());
+            return Json(200, ClefEnvelope);
+        });
+        var cfg = TestConfig.WithClef("a1") with { ClefModel = "clef-flash", ClefBaseUrl = "https://gw.example/" };
+        await new JevClient(new HttpClient(handler), cfg, NullLogger<JevClient>.Instance).AskAsync(new { }, OneNoul());
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task AskAsync_Clef_SuccessFalse_ThrowsWithCloudflareError()
+    {
+        var handler = new FakeHttpHandler(_ => Json(200, """{"result":null,"success":false,"errors":[{"code":7000,"message":"No route for that URI"}],"messages":[]}"""));
+        var client = new JevClient(new HttpClient(handler), TestConfig.WithClef(), NullLogger<JevClient>.Instance, NoDelay);
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => client.AskAsync(new { }, OneNoul()));
+        Assert.Contains("No route for that URI", ex.Message);
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task AskAsync_Clef_RetriesOn429_ThenThrowsUnavailable()
+    {
+        var handler = new FakeHttpHandler(_ => new HttpResponseMessage((HttpStatusCode)429));
+        var client = new JevClient(new HttpClient(handler), TestConfig.WithClef(), NullLogger<JevClient>.Instance, NoDelay);
+        await Assert.ThrowsAsync<JevUnavailableException>(() => client.AskAsync(new { }, OneNoul()));
+        Assert.Equal(4, handler.CallCount);
+    }
+
+    [Fact]
+    public void IsConfigured_TrueWithClefCredentials()
+        => Assert.True(new JevClient(new HttpClient(), TestConfig.WithClef(), NullLogger<JevClient>.Instance).IsConfigured);
+
+    [Fact]
+    public void IsConfigured_FalseWhenClefForcedWithoutCredentials()
+    {
+        var cfg = TestConfig.WithJev("k") with { ProviderOverride = WinUse.Core.Config.DecisionProvider.Clef };
+        Assert.False(new JevClient(new HttpClient(), cfg, NullLogger<JevClient>.Instance).IsConfigured);
+    }
+
+    [Fact]
+    public void IsConfigured_FalseWhenJevForcedWithoutKey()
+    {
+        var cfg = TestConfig.WithClef() with { ProviderOverride = WinUse.Core.Config.DecisionProvider.Jev };
+        Assert.False(new JevClient(new HttpClient(), cfg, NullLogger<JevClient>.Instance).IsConfigured);
     }
 }

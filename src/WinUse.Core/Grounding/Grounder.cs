@@ -33,7 +33,7 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
     {
         var o = await obs.ObserveAsync(window).ConfigureAwait(false);
         if (!jev.IsConfigured)
-            return Fail(Ungrounded(o, 5).Ranked, "jev not configured");
+            return Fail(Ungrounded(o, 5).Ranked, "model not configured");
         if (o.Candidates.Count == 0)
             return Fail([], "low confidence");
 
@@ -44,7 +44,7 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
         }
         catch (JevUnavailableException)
         {
-            return Fail(Ungrounded(o, 5).Ranked, "jev unavailable");
+            return Fail(Ungrounded(o, 5).Ranked, "model unavailable");
         }
 
         var alternatives = g.Ranked.Take(5).ToList();

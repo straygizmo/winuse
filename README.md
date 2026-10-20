@@ -1,6 +1,6 @@
 # winuse
 
-winuse is an MCP server and CLI that lets an AI observe and operate Windows desktop apps (UI Automation, WebView2/Playwright, input, windows, processes, files). Grounding and verification checks can use the Jev API. Sessions can be saved as JSON scenarios and replayed without AI.
+winuse is an MCP server and CLI that lets an AI observe and operate Windows desktop apps (UI Automation, WebView2/Playwright, input, windows, processes, files). Grounding and verification checks (`act`, `find`, `check`) use a System One decision model: TypeSafe Jev or Cloudflare Clef. Sessions can be saved as JSON scenarios and replayed without AI.
 
 Requires Windows and the .NET 10 SDK.
 
@@ -13,15 +13,25 @@ dotnet publish src/WinUse -c Release -o out
 
 ## Configuration
 
-`JEV_API_KEY` is read from the environment. Register it once as a user environment variable so that both Claude Code (which launches `winuse --mcp`) and `winuse run` see it:
+The intent tools (`act`, `find`, `check`) and `--heal` need one decision model. Everything else works without one. Configure either:
+
+- **Jev** (TypeSafe): set `JEV_API_KEY`.
+- **Clef** (Cloudflare Workers AI): set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (an API token with Workers AI permission). Use this when you have no Jev key.
+
+Register them once as user environment variables so that both Claude Code (which launches `winuse --mcp`) and `winuse run` see them:
 
 ```powershell
 [Environment]::SetEnvironmentVariable('JEV_API_KEY', 'your-key', 'User')
+# or
+[Environment]::SetEnvironmentVariable('CLOUDFLARE_ACCOUNT_ID', 'your-account-id', 'User')
+[Environment]::SetEnvironmentVariable('CLOUDFLARE_API_TOKEN', 'your-token', 'User')
 ```
 
 Restart the terminal / Claude Code afterwards. As a development fallback, a `.env` file next to `winuse.exe` or in the working directory is also read (`KEY=VALUE` lines, never commit it); environment variables take precedence over `.env`.
 
-Optional: `JEV_BASE_URL`, `JEV_MODEL`, `WINUSE_ALLOWED_ROOTS` (`;`-separated), `WINUSE_KILLABLE_PROCESSES` (`;`-separated), `WINUSE_SETTLE_MS` (wait before `act` verifies its result, default 400).
+The provider is chosen automatically: Jev when `JEV_API_KEY` is set, otherwise Clef when both Cloudflare values are set. `WINUSE_DECISION_PROVIDER=jev|clef` forces one. `winuse doctor` shows which one is in use.
+
+Optional: `JEV_BASE_URL`, `JEV_MODEL` (default `jev-latest`), `CLEF_MODEL` (`clef`, the default, or the cheaper `clef-flash`), `CLEF_BASE_URL` (default `https://api.cloudflare.com`), `WINUSE_ALLOWED_ROOTS` (`;`-separated), `WINUSE_KILLABLE_PROCESSES` (`;`-separated), `WINUSE_SETTLE_MS` (wait before `act` verifies its result, default 400). A self-hosted Clef server that speaks `/v1/systemone` can be used as the Jev provider by pointing `JEV_BASE_URL` at it.
 
 ## Register with Claude Code
 
@@ -37,13 +47,13 @@ winuse run <scenario.json> [--heal] [--report <dir>]  replay a scenario without 
 winuse doctor                                         check the environment
 ```
 
-`run` logs one line per step to stderr (`[PASS] 1 process_run (812ms)`, with ` p=0.81` appended for steps whose result has a probability, e.g. `check`), writes `report.json` and before/after screenshots to `--report <dir>`, and with `--heal` re-grounds `act` steps whose recorded element is gone with Jev and saves updated locators next to the scenario as `<name>.healed.json` (e.g. `scenarios/mdium-smoke.json` → `scenarios/mdium-smoke.healed.json`; `scenario_run heal=true` uses the same name). It needs an interactive desktop session.
+`run` logs one line per step to stderr (`[PASS] 1 process_run (812ms)`, with ` p=0.81` appended for steps whose result has a probability, e.g. `check`), writes `report.json` and before/after screenshots to `--report <dir>`, and with `--heal` re-grounds `act` steps whose recorded element is gone with the decision model and saves updated locators next to the scenario as `<name>.healed.json` (e.g. `scenarios/mdium-smoke.json` → `scenarios/mdium-smoke.healed.json`; `scenario_run heal=true` uses the same name). It needs an interactive desktop session.
 
 Exit codes: `0` PASS, `1` FAIL (an assertion failed, or a recorded element / `act` target can no longer be found), `2` error (bad scenario, tool error, no desktop session).
 
-Replay never calls Jev for `act`: each `act` step replays on its recorded `resolved` locator, and an `act` step without one fails (unless `--heal`). `scenario_save` therefore refuses `act` steps that did not execute. Only `check` steps (soft) ask Jev during replay.
+Replay never calls the decision model for `act`: each `act` step replays on its recorded `resolved` locator, and an `act` step without one fails (unless `--heal`). `scenario_save` therefore refuses `act` steps that did not execute. Only `check` steps (soft) ask the decision model during replay.
 
-`doctor` reports where `JEV_API_KEY` came from (environment or `.env`), Jev configuration and a live probe, UIA window count, WebView2 runtime version and the Playwright driver.
+`doctor` reports the decision model in use, where each key came from (environment or `.env`), its endpoint and a live probe, UIA window count, WebView2 runtime version and the Playwright driver.
 
 ## Tools
 

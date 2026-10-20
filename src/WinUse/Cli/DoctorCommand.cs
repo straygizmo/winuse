@@ -1,4 +1,5 @@
 using Microsoft.Win32;
+using WinUse.Core.Config;
 using WinUse.Core.Jev;
 using WinUse.Tools;
 
@@ -15,12 +16,20 @@ public static class DoctorCommand
         var cwdEnv = Path.Combine(Environment.CurrentDirectory, ".env");
         output.WriteLine($".env (exe dir): {exeEnv} [{(File.Exists(exeEnv) ? "found" : "missing")}]");
         output.WriteLine($".env (cwd):     {cwdEnv} [{(File.Exists(cwdEnv) ? "found" : "missing")}]");
-        var keySource = ctx.Config.JevApiKey is null ? "not set"
-            : !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("JEV_API_KEY")) ? "set (environment)"
-            : "set (.env)";
-        output.WriteLine($"JEV_API_KEY: {keySource}");
+        var cfg = ctx.Config;
+        var provider = cfg.Provider;
+        var chosenBy = cfg.ProviderOverride is not null ? " (WINUSE_DECISION_PROVIDER)"
+            : provider == DecisionProvider.None ? " (set JEV_API_KEY, or CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN for Clef)"
+            : " (auto)";
+        output.WriteLine($"Decision model: {(provider == DecisionProvider.None ? "none" : provider.ToString())}{chosenBy}");
+        output.WriteLine($"JEV_API_KEY: {Source(cfg.JevApiKey, "JEV_API_KEY")}");
+        output.WriteLine($"CLOUDFLARE_ACCOUNT_ID: {Source(cfg.CloudflareAccountId, "CLOUDFLARE_ACCOUNT_ID")}");
+        output.WriteLine($"CLOUDFLARE_API_TOKEN: {Source(cfg.CloudflareApiToken, "CLOUDFLARE_API_TOKEN")}");
+        if (provider == DecisionProvider.Clef) output.WriteLine($"Clef model: {cfg.ClefModel}");
+        if (JevClient.EndpointOf(cfg) is { } endpoint) output.WriteLine($"Endpoint: {endpoint}");
 
-        output.WriteLine($"Jev: configured: {(ctx.Jev.IsConfigured ? "yes" : "no")}");
+        if (provider != DecisionProvider.None)
+            output.WriteLine($"{provider}: {(ctx.Jev.IsConfigured ? "configured" : "not configured (missing values above)")}");
         if (ctx.Jev.IsConfigured)
         {
             try
@@ -28,12 +37,12 @@ public static class DoctorCommand
                 var r = await ctx.Jev.AskAsync(new { question = "1+1=2" },
                     new Dictionary<string, JevQuestion> { ["q"] = new NoulQuestion("Is 1+1 equal to 2?") }).ConfigureAwait(false);
                 output.WriteLine(r.Answers.TryGetValue("q", out var a) && a is NoulAnswer n
-                    ? $"Jev: probe ok, probability {n.Probability:0.000}"
-                    : "Jev: probe returned an unexpected answer");
+                    ? $"{provider}: probe ok, probability {n.Probability:0.000}"
+                    : $"{provider}: probe returned an unexpected answer");
             }
             catch (Exception ex)
             {
-                output.WriteLine($"Jev: probe failed: {ex.Message}");
+                output.WriteLine($"{provider}: probe failed: {ex.Message}");
             }
         }
 
@@ -55,6 +64,11 @@ public static class DoctorCommand
 
         return uiaOk ? 0 : 1;
     }
+
+    /// <summary>Where a configuration value came from: the process environment wins over .env (see <see cref="WinUseConfig.Load"/>).</summary>
+    private static string Source(string? value, string envName) => value is null ? "not set"
+        : !string.IsNullOrEmpty(Environment.GetEnvironmentVariable(envName)) ? "set (environment)"
+        : "set (.env)";
 
     private static string? WebView2Version()
     {

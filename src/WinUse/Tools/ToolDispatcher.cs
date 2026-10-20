@@ -16,7 +16,7 @@ public sealed class ToolDispatcher(ToolContext ctx) : IToolDispatcher
 {
     private static readonly Lazy<IReadOnlyDictionary<string, MethodInfo>> Tools = new(Discover);
 
-    /// <summary>When set, an <c>act</c> step whose recorded locator no longer resolves is re-grounded with Jev instead of failing.</summary>
+    /// <summary>When set, an <c>act</c> step whose recorded locator no longer resolves is re-grounded with the decision model instead of failing.</summary>
     public bool Heal { get; init; }
 
     public static IReadOnlyList<string> DiscoverToolNames() => Tools.Value.Keys.Order(StringComparer.Ordinal).ToList();
@@ -63,7 +63,7 @@ public sealed class ToolDispatcher(ToolContext ctx) : IToolDispatcher
                     healCause = $"locator not found: {primary ?? "resolved"}";
                     // A target that is gone is a FAIL of the scenario, not an execution error.
                     if (!(Heal && isAct)) return NotFound(healCause, inv.Resolved);
-                    regroundAct = true; // re-ground the intent with Jev
+                    regroundAct = true; // re-ground the intent with the decision model
                 }
                 else if (isAct)
                 {
@@ -77,7 +77,7 @@ public sealed class ToolDispatcher(ToolContext ctx) : IToolDispatcher
             }
             else if (isAct && inv.IsReplay)
             {
-                // Replay must not depend on Jev: an act without a recorded locator is only re-grounded when healing.
+                // Replay must not depend on the decision model: an act without a recorded locator is only re-grounded when healing.
                 healCause = "act step has no resolved locator";
                 if (!Heal) return NotFound(healCause, null);
                 regroundAct = true;
@@ -199,10 +199,10 @@ public sealed class ToolDispatcher(ToolContext ctx) : IToolDispatcher
         var jevUnavailable = tool switch
         {
             "check" => result["available"] is JsonValue av && av.TryGetValue<bool>(out var a) && !a,
-            "act" => reason is "jev unavailable" or "jev not configured",
+            "act" => reason is "model unavailable" or "model not configured",
             _ => false,
         };
-        // Nothing to act on (low confidence / Jev unavailable) is a FAIL, not an execution error.
+        // Nothing to act on (low confidence / decision model unavailable) is a FAIL, not an execution error.
         if (tool == "act" && result["executed"] is JsonValue ev && ev.TryGetValue<bool>(out var executed) && !executed)
             return new ToolOutcome(true, false, resolved, result, $"act not executed: {reason ?? "unknown reason"}", jevUnavailable);
         return new ToolOutcome(true, passed, resolved, result, null, jevUnavailable);

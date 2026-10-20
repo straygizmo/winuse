@@ -49,11 +49,11 @@ public sealed class ScenarioTools
         });
 
     [McpServerTool(Name = "scenario_run")]
-    [Description("Replay a scenario file. Steps with a recorded locator are resolved deterministically; heal=true re-grounds failed act steps with Jev and writes <name>.healed.json. Returns per-step status and exit_code (0 pass, 1 fail, 2 error).")]
+    [Description("Replay a scenario file. Steps with a recorded locator are resolved deterministically; heal=true re-grounds failed act steps with the decision model (Jev or Clef) and writes <name>.healed.json. Returns per-step status and exit_code (0 pass, 1 fail, 2 error).")]
     public static Task<CallToolResult> ScenarioRun(
         ToolContext ctx,
         [Description("Scenario file path (under the allowed roots).")] string path,
-        [Description("Re-resolve failed locators with Jev and save a healed copy.")] bool heal = false,
+        [Description("Re-resolve failed locators with the decision model and save a healed copy.")] bool heal = false,
         [Description("Optional directory for before/after screenshots of each step (under the allowed roots).")] string? report_dir = null,
         CancellationToken cancellationToken = default) =>
         ctx.RunStepAsync("scenario_run", ToolContext.Args(("path", path), ("heal", heal), ("report_dir", report_dir)), async step =>
