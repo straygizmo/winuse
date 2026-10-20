@@ -11,7 +11,7 @@ namespace WinUse.Tools;
 public sealed class IntentTools
 {
     [McpServerTool(Name = "act")]
-    [Description("Perform a natural-language intent on the window: build candidates, let the decision model (Jev or Clef) pick the target (and action kind when kind=auto), execute it when confident, then verify. When not confident (or no decision model is configured / reachable) nothing is executed and the top candidates are returned (plus a window screenshot when not confident) so you can act with click/set_text yourself.")]
+    [Description("Perform a natural-language intent on the window: build candidates, let the decision model (Jev or Clef) pick the target (and action kind when kind=auto), execute it when confident, then verify. When not confident (or no decision model is configured / reachable) nothing is executed and the top candidates are returned (plus a window screenshot when not confident) so you can act with click/set_text yourself. A window without any UIA / DOM elements (VM console, emulator, VNC) is handled visually: the target is located on a screenshot and clicked; the result then carries point {x, y} and a pt{n} ref.")]
     public static Task<CallToolResult> Act(
         ToolContext ctx,
         [Description("What to do, e.g. \"Click the Save button\".")] string intent,
@@ -104,7 +104,7 @@ public sealed class IntentTools
         });
 
     [McpServerTool(Name = "find", ReadOnly = true)]
-    [Description("Rank the elements that best match a natural-language intent without acting. Returns refs with labels and probabilities (probability 0 and grounded=false when no decision model is configured or reachable).")]
+    [Description("Rank the elements that best match a natural-language intent without acting. Returns refs with labels and probabilities (probability 0 and grounded=false when no decision model is configured or reachable). On a window without elements the target is located on a screenshot and returned as a pt{n} ref with point {x, y}.")]
     public static Task<CallToolResult> Find(
         ToolContext ctx,
         [Description("The element you are looking for, e.g. \"the search box\".")] string intent,
@@ -129,7 +129,7 @@ public sealed class IntentTools
         });
 
     [McpServerTool(Name = "check", ReadOnly = true)]
-    [Description("Ask the decision model (Jev or Clef) a yes/no question about the current state of the window. Returns the probability of \"yes\"; available=false when no decision model is configured or reachable.")]
+    [Description("Ask the decision model (Jev or Clef) a yes/no question about the current state of the window. Returns the probability of \"yes\"; available=false when no decision model is configured or reachable. On a window without elements (or with WINUSE_SCREENSHOTS=always) a screenshot is attached.")]
     public static Task<CallToolResult> Check(
         ToolContext ctx,
         [Description("A yes/no question, e.g. \"Is the document shown as saved?\".")] string question,
