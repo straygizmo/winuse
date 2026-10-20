@@ -11,14 +11,14 @@ namespace WinUse.Tools;
 public sealed class IntentTools
 {
     [McpServerTool(Name = "act")]
-    [Description("Perform a natural-language intent on the window: build candidates, let Jev pick the target (and action kind when kind=auto), execute it when confident, then verify. When not confident (or Jev is unavailable) nothing is executed and the top candidates are returned (plus a window screenshot when not confident) so you can act with click/set_text yourself.")]
+    [Description("Perform a natural-language intent on the window: build candidates, let the decision model (Jev or Clef) pick the target (and action kind when kind=auto), execute it when confident, then verify. When not confident (or no decision model is configured / reachable) nothing is executed and the top candidates are returned (plus a window screenshot when not confident) so you can act with click/set_text yourself.")]
     public static Task<CallToolResult> Act(
         ToolContext ctx,
         [Description("What to do, e.g. \"Click the Save button\".")] string intent,
         [Description("Window ref (win{n}) or title regex. Default: last observed window, else the foreground window.")] string? window = null,
         [Description("auto, click, type, select or toggle.")] string kind = "auto",
         [Description("Text for kind=type, or the item label for kind=select.")] string? text = null,
-        [Description("Minimum Jev confidence required to execute (default from configuration, 0.35).")] double? min_confidence = null) =>
+        [Description("Minimum decision-model confidence required to execute (default from configuration, 0.35).")] double? min_confidence = null) =>
         ctx.RunStepAsync("act", ToolContext.Args(("intent", intent), ("window", window), ("kind", kind), ("text", text),
             ("min_confidence", min_confidence)), async step =>
         {
@@ -53,7 +53,7 @@ public sealed class IntentTools
         });
 
     /// <summary>
-    /// Replays a recorded <c>act</c> step deterministically on an already resolved ref (no Jev call).
+    /// Replays a recorded <c>act</c> step deterministically on an already resolved ref (no decision-model call).
     /// With kind=auto the action is a type when text is given, else a click.
     /// </summary>
     internal static Task<CallToolResult> ActOnRefAsync(ToolContext ctx, string intent, string? window, string kind, string? text,
@@ -78,7 +78,7 @@ public sealed class IntentTools
         });
 
     [McpServerTool(Name = "find", ReadOnly = true)]
-    [Description("Rank the elements that best match a natural-language intent without acting. Returns refs with labels and probabilities (probability 0 and grounded=false when Jev is unavailable).")]
+    [Description("Rank the elements that best match a natural-language intent without acting. Returns refs with labels and probabilities (probability 0 and grounded=false when no decision model is configured or reachable).")]
     public static Task<CallToolResult> Find(
         ToolContext ctx,
         [Description("The element you are looking for, e.g. \"the search box\".")] string intent,
@@ -96,7 +96,7 @@ public sealed class IntentTools
         });
 
     [McpServerTool(Name = "check", ReadOnly = true)]
-    [Description("Ask Jev a yes/no question about the current state of the window. Returns the probability of \"yes\"; available=false when Jev is not configured or not reachable.")]
+    [Description("Ask the decision model (Jev or Clef) a yes/no question about the current state of the window. Returns the probability of \"yes\"; available=false when no decision model is configured or reachable.")]
     public static Task<CallToolResult> Check(
         ToolContext ctx,
         [Description("A yes/no question, e.g. \"Is the document shown as saved?\".")] string question,

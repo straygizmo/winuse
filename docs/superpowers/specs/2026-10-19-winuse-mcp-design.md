@@ -59,7 +59,7 @@ AI は「保存ボタンをクリック」のような**意図**だけを渡し�
 - Jev: `POST https://api.typesafe.ai/v1/systemone`、Bearer 認証、`model` / `state` / `questions` の JSON。.NET SDK は無いので HttpClient で直接叩く。
   - 質問型: `noul`（yes/no 確率）、`choice`（最大 255 択、`choice` / `probabilities` / `confidence` を返す）、`score`、`box`（1.14、実験的）。
   - state + 全質問で約 64k トークン、state + 1 質問で約 32k トークン。
-  - 同じ要求形式で動く Cloudflare の Clef を、設定でベース URL とモデル名を差し替えて使えるようにする。
+  - 同じ要求形式で動く Cloudflare の Clef も使える（2026-10-20 追加。Jev が新規アカウントの受付を停止しているため）。Workers AI ホスト版は `POST https://api.cloudflare.com/client/v4/accounts/<account>/ai/run/@cf/cloudflare/<clef|clef-flash>`、Bearer は Cloudflare API トークン、応答は `{ result, success, errors }` に包まれる。`CLOUDFLARE_ACCOUNT_ID` と `CLOUDFLARE_API_TOKEN` で設定し、`JEV_API_KEY` が無ければ自動で選ばれる（`WINUSE_DECISION_PROVIDER` で強制可）。自前ホストの Clef は `/v1/systemone` を話すので `JEV_BASE_URL` 差し替えで足りる。
 - WebView2 のリモートデバッグは、対象アプリの起動時に環境変数 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port> --remote-allow-origins=*` を与えて有効化する。アプリ側がコードで指定した引数と併用される。昇格（管理者）プロセスはこの環境変数を無視する。
   - したがって WebView2 の DOM を扱うには **winuse が対象プロセスを起動する**必要がある（既に起動済みの Office には繋げない）。
 - stdio モードでは stdout を MCP 専用にし、ログは stderr とファイルへ出す。
@@ -232,7 +232,7 @@ JSON。ツール名と引数をそのまま並べる。意図とロケータの�
 
 ### 8.3 Jev クライアント
 - `HttpClient`、タイムアウト 10 秒、429 / 529 は指数バックオフで 3 回まで再試行。
-- 設定: `JEV_API_KEY`（環境変数が正。`.env` は補助で、環境変数が優先）、`JEV_BASE_URL`（既定 TypeSafe、Clef 用に差し替え）、`JEV_MODEL`（既定 `jev-latest`）。
+- 設定: `JEV_API_KEY`（環境変数が正。`.env` は補助で、環境変数が優先）、`JEV_BASE_URL`（既定 TypeSafe、自前ホスト Clef 用に差し替え）、`JEV_MODEL`（既定 `jev-latest`）。Clef（Workers AI）は `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` / `CLEF_MODEL`（既定 `clef`）/ `CLEF_BASE_URL`。`act` の未設定・障害理由はプロバイダ名を含まない `model not configured` / `model unavailable`。
 - 起動時に実行ファイルのディレクトリとカレントディレクトリの `.env` も読むが、環境変数が常に優先される。
 - 要求と応答を（キーを除いて）デバッグログに残す。
 

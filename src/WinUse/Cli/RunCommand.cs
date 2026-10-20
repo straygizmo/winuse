@@ -26,7 +26,7 @@ public static class RunCommand
             async () => (await ctx.Screen.CaptureScreenAsync(0.5).ConfigureAwait(false)).Png, Console.Error).ConfigureAwait(false);
     }
 
-    /// <summary>The dispatcher <c>winuse run</c> replays with; <paramref name="heal"/> lets act steps re-ground with Jev.</summary>
+    /// <summary>The dispatcher <c>winuse run</c> replays with; <paramref name="heal"/> lets act steps re-ground with the decision model.</summary>
     public static ToolDispatcher CreateDispatcher(ToolContext ctx, bool heal) => new(ctx) { Heal = heal };
 
     public static async Task<int> ExecuteAsync(string scenarioPath, bool heal, string? reportDir,

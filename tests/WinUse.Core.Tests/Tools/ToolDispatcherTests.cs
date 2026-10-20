@@ -180,6 +180,27 @@ public sealed class ToolDispatcherTests : IDisposable
     }
 
     [Fact]
+    public async Task Act_ModelNotConfigured_IsFlaggedAsUnavailable()
+    {
+        using var c = GroundingContext(new FakeJev(configured: false), new FakeExecutor());
+        var o = await new ToolDispatcher(c).InvokeAsync(new("act", Args(("intent", "save"), ("kind", "click")), null), default);
+        Assert.True(o.Ok, o.Error);
+        Assert.False(o.Passed);
+        Assert.True(o.JevUnavailable);
+        Assert.Equal("act not executed: model not configured", o.Error);
+    }
+
+    [Fact]
+    public async Task Act_ModelUnavailable_IsFlaggedAsUnavailable()
+    {
+        using var c = GroundingContext(new FakeJev(throwUnavailable: true), new FakeExecutor());
+        var o = await new ToolDispatcher(c).InvokeAsync(new("act", Args(("intent", "save"), ("kind", "click")), null), default);
+        Assert.True(o.Ok, o.Error);
+        Assert.True(o.JevUnavailable);
+        Assert.Equal("act not executed: model unavailable", o.Error);
+    }
+
+    [Fact]
     public async Task Replay_HealWithJevUnavailable_IsFailNotError()
     {
         var exec = new FakeExecutor();

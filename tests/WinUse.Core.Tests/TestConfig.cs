@@ -14,4 +14,7 @@ static class TestConfig
     public static WinUseConfig WithRoots(params string[] roots) => Default with { AllowedRoots = roots };
 
     public static WinUseConfig WithJev(string apiKey) => Default with { JevApiKey = apiKey };
+
+    public static WinUseConfig WithClef(string accountId = "acct", string token = "cf-token") =>
+        Default with { CloudflareAccountId = accountId, CloudflareApiToken = token };
 }

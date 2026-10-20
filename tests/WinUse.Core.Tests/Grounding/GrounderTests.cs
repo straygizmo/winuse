@@ -50,14 +50,14 @@ public class GrounderTests
     {
         var g = new Grounder(new FakeJev(configured: false), new FakeObservation(Cand("u1"), Cand("u2")), new FakeExecutor(), TestConfig.Default);
         var r = await g.ActAsync("x", null, ActKind.Click, null, null);
-        Assert.False(r.Executed); Assert.Equal("jev not configured", r.Reason); Assert.Equal(2, r.Alternatives.Count);
+        Assert.False(r.Executed); Assert.Equal("model not configured", r.Reason); Assert.Equal(2, r.Alternatives.Count);
     }
 
     [Fact]
     public async Task ActAsync_JevUnavailable()
     {
         var r = await Make(new FakeJev(throwUnavailable: true), new FakeExecutor(), Cand("u1")).ActAsync("x", null, ActKind.Click, null, null);
-        Assert.False(r.Executed); Assert.Equal("jev unavailable", r.Reason);
+        Assert.False(r.Executed); Assert.Equal("model unavailable", r.Reason);
     }
 
     [Fact]

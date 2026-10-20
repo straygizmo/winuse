@@ -1,5 +1,15 @@
 namespace WinUse.Core.Config;
 
+/// <summary>Which decision-model API answers grounding and check questions.</summary>
+public enum DecisionProvider
+{
+    None,
+    /// <summary>TypeSafe Jev: <c>POST {JevBaseUrl}/v1/systemone</c> with <c>JEV_API_KEY</c>.</summary>
+    Jev,
+    /// <summary>Cloudflare Clef on Workers AI (same request/response body as Jev, wrapped in the Cloudflare envelope).</summary>
+    Clef,
+}
+
 public sealed record WinUseConfig(
     string? JevApiKey,
     string JevBaseUrl,
@@ -10,8 +20,25 @@ public sealed record WinUseConfig(
     IReadOnlyList<string> AllowedRoots,
     IReadOnlyList<string> KillableProcesses,
     string LogDirectory,
-    int SettleMs = WinUseConfig.DefaultSettleMs)
+    int SettleMs = WinUseConfig.DefaultSettleMs,
+    string? CloudflareAccountId = null,
+    string? CloudflareApiToken = null,
+    string ClefModel = WinUseConfig.DefaultClefModel,
+    string ClefBaseUrl = WinUseConfig.DefaultClefBaseUrl,
+    DecisionProvider? ProviderOverride = null)
 {
+    public const string DefaultClefModel = "clef";
+    public const string DefaultClefBaseUrl = "https://api.cloudflare.com";
+
+    /// <summary>
+    /// The decision model in use: <c>WINUSE_DECISION_PROVIDER</c> when set, else Jev when <c>JEV_API_KEY</c> is present,
+    /// else Clef when both Cloudflare values are present, else none.
+    /// </summary>
+    public DecisionProvider Provider => ProviderOverride ?? (
+        JevApiKey is not null ? DecisionProvider.Jev
+        : CloudflareAccountId is not null && CloudflareApiToken is not null ? DecisionProvider.Clef
+        : DecisionProvider.None);
+
     /// <summary>Default wait (ms) after an <c>act</c> before re-observing to verify it (<c>WINUSE_SETTLE_MS</c>).</summary>
     public const int DefaultSettleMs = 400;
 
@@ -43,8 +70,21 @@ public sealed record WinUseConfig(
             AllowedRoots: allowedRoots,
             KillableProcesses: SplitList(Get("WINUSE_KILLABLE_PROCESSES")),
             LogDirectory: Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "winuse", "logs"),
-            SettleMs: int.TryParse(Get("WINUSE_SETTLE_MS"), out var settle) && settle >= 0 ? settle : DefaultSettleMs);
+            SettleMs: int.TryParse(Get("WINUSE_SETTLE_MS"), out var settle) && settle >= 0 ? settle : DefaultSettleMs,
+            CloudflareAccountId: Get("CLOUDFLARE_ACCOUNT_ID"),
+            CloudflareApiToken: Get("CLOUDFLARE_API_TOKEN"),
+            ClefModel: Get("CLEF_MODEL") ?? DefaultClefModel,
+            ClefBaseUrl: Get("CLEF_BASE_URL") ?? DefaultClefBaseUrl,
+            ProviderOverride: ParseProvider(Get("WINUSE_DECISION_PROVIDER")));
     }
+
+    private static DecisionProvider? ParseProvider(string? raw) => raw?.ToLowerInvariant() switch
+    {
+        null => null,
+        "jev" => DecisionProvider.Jev,
+        "clef" => DecisionProvider.Clef,
+        _ => throw new InvalidOperationException($"WINUSE_DECISION_PROVIDER must be 'jev' or 'clef', not '{raw}'."),
+    };
 
     private static string[] SplitList(string? raw) =>
         raw is null
