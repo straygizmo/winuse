@@ -17,11 +17,15 @@ sealed class FakeJev(
     public object? LastState { get; private set; }
     public List<IReadOnlyDictionary<string, JevQuestion>> Calls { get; } = [];
 
-    public Task<JevResponse> AskAsync(object state, IReadOnlyDictionary<string, JevQuestion> questions, CancellationToken ct = default)
+    public List<IReadOnlyList<ImageAttachment>?> Images { get; } = [];
+
+    public Task<JevResponse> AskAsync(object state, IReadOnlyDictionary<string, JevQuestion> questions,
+        IReadOnlyList<ImageAttachment>? images = null, CancellationToken ct = default)
     {
         if (throwUnavailable) throw new JevUnavailableException("down");
         LastState = state;
         Calls.Add(questions);
+        Images.Add(images);
         var answers = new Dictionary<string, object>();
         foreach (var (key, q) in questions)
         {

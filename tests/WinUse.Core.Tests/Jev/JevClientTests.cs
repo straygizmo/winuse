@@ -160,4 +160,72 @@ public class JevClientTests
         var cfg = TestConfig.WithClef() with { ProviderOverride = WinUse.Core.Config.DecisionProvider.Jev };
         Assert.False(new JevClient(new HttpClient(), cfg, NullLogger<JevClient>.Instance).IsConfigured);
     }
+
+    static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3];
+
+    [Fact]
+    public async Task AskAsync_Jev_WithImage_SendsAssetAndDangerZoneHeader()
+    {
+        var handler = new FakeHttpHandler(req => {
+            Assert.Equal("true", Assert.Single(req.Headers.GetValues("TypeSafe-Danger-Zone-Images")));
+            var body = JsonDocument.Parse(req.Content!.ReadAsStringAsync().Result).RootElement;
+            var asset = body.GetProperty("assets").GetProperty("shot");
+            Assert.Equal("image", asset.GetProperty("type").GetString());
+            Assert.Equal("png", asset.GetProperty("format").GetString());
+            Assert.Equal(Convert.ToBase64String(Png), asset.GetProperty("data_base64").GetString());
+            Assert.False(body.TryGetProperty("images", out _));
+            return Json(200, """{"model":"jev-1.14.0","answers":{"q":{"type":"noul","noul":0.5}}}""");
+        });
+        var client = new JevClient(new HttpClient(handler), TestConfig.WithJev("k"), NullLogger<JevClient>.Instance);
+        await client.AskAsync(new { screenshot = "shot" }, OneNoul(), [new ImageAttachment("shot", Png)]);
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task AskAsync_Jev_WithoutImage_SendsNoAssetsAndNoHeader()
+    {
+        var handler = new FakeHttpHandler(req => {
+            Assert.False(req.Headers.Contains("TypeSafe-Danger-Zone-Images"));
+            var body = JsonDocument.Parse(req.Content!.ReadAsStringAsync().Result).RootElement;
+            Assert.False(body.TryGetProperty("assets", out _));
+            return Json(200, """{"model":"jev-1.13.0","answers":{"q":{"type":"noul","noul":0.5}}}""");
+        });
+        await new JevClient(new HttpClient(handler), TestConfig.WithJev("k"), NullLogger<JevClient>.Instance).AskAsync(new { }, OneNoul());
+    }
+
+    [Fact]
+    public async Task AskAsync_Clef_WithImage_SendsDataUrlInImages()
+    {
+        var handler = new FakeHttpHandler(req => {
+            Assert.False(req.Headers.Contains("TypeSafe-Danger-Zone-Images"));
+            var body = JsonDocument.Parse(req.Content!.ReadAsStringAsync().Result).RootElement;
+            var images = body.GetProperty("images");
+            Assert.Equal(1, images.GetArrayLength());
+            Assert.Equal("data:image/png;base64," + Convert.ToBase64String(Png), images[0].GetString());
+            Assert.False(body.TryGetProperty("assets", out _));
+            return Json(200, ClefEnvelope);
+        });
+        var client = new JevClient(new HttpClient(handler), TestConfig.WithClef(), NullLogger<JevClient>.Instance);
+        await client.AskAsync(new { screenshot = "shot" }, OneNoul(), [new ImageAttachment("shot", Png)]);
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task AskAsync_BoxQuestion_IsSentAndParsed()
+    {
+        var handler = new FakeHttpHandler(req => {
+            var body = JsonDocument.Parse(req.Content!.ReadAsStringAsync().Result).RootElement;
+            var q = body.GetProperty("questions").GetProperty("where");
+            Assert.Equal("box", q.GetProperty("type").GetString());
+            Assert.Equal("the OK button in `shot`", q.GetProperty("instructions").GetString());
+            Assert.False(q.TryGetProperty("criteria", out _));
+            return Json(200, """{"model":"jev-1.14.0","answers":{"where":{"type":"box","box":{"top":0.25,"bottom":0.82,"left":0.44,"right":0.84},"confidence":0.92}}}""");
+        });
+        var client = new JevClient(new HttpClient(handler), TestConfig.WithJev("k"), NullLogger<JevClient>.Instance);
+        var r = await client.AskAsync(new { shot = "shot" }, new Dictionary<string, JevQuestion> { ["where"] = new BoxQuestion("the OK button in `shot`") },
+            [new ImageAttachment("shot", Png)]);
+        var b = Assert.IsType<BoxAnswer>(r.Answers["where"]);
+        Assert.Equal(0.25, b.Top); Assert.Equal(0.82, b.Bottom); Assert.Equal(0.44, b.Left); Assert.Equal(0.84, b.Right);
+        Assert.Equal(0.92, b.Confidence);
+    }
 }
