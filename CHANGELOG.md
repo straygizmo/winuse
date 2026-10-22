@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+Added
+
+- Java Swing support through Java Access Bridge: Swing windows (`SunAwt*`) are read into the same element model as UIA (`j{n}` refs), so `get_ui_tree`, `act` / `find` / `check`, `click`, `invoke`, `set_text`, `set_checked`, `select_item`, `get_text`, `get_list_items`, `assert_*`, `wait_for` and scenario replay work on them. Menu items are listed and invokable while their menu is closed. 32-bit and 64-bit JVMs (tested on Temurin 8 x86 and Temurin 21 x64).
+- `scripts/fetch-jab.ps1` fetches `WindowsAccessBridge-64.dll` (and, with `-Dev`, the test JDK/JRE) from Eclipse Temurin.
+- `winuse jab enable|disable|status` manages `%USERPROFILE%\.accessibility.properties`.
+- `winuse doctor` reports the bridge DLL, the user-profile enablement and every Java window with its JVM.
+- Settings `WINUSE_JAB`, `WINUSE_JAB_DLL`, `WINUSE_JAVA_ACCESSIBILITY`.
+
+Changed
+
+- `process_run` starts its children with `JAVA_TOOL_OPTIONS` carrying the accessibility flag (Java processes print one `Picked up JAVA_TOOL_OPTIONS` line to stderr); `WINUSE_JAVA_ACCESSIBILITY=off` restores the old behaviour.
+- `get_ui_tree` on a Java window the bridge cannot read returns `java_access_bridge` with the reason; `act` on such a window reports `no elements (java access bridge: ...)`.
+- Candidates inside a menu carry the menu's name as their container (affects only menus whose items are visible to the tree, i.e. Swing).
+
+Known issues
+
+- `get_table` does not read Swing tables yet (`get_table is not supported for Java elements yet`).
+- A JRE without the Java side of the bridge (trimmed Java 8 without `JavaAccessBridge-32.dll` / `access-bridge-32.jar`, or a `jlink` image without `jdk.accessibility`) cannot be read; `doctor` reports the missing files. A Java app running elevated or as another user is out of reach.
+
 ## 0.1.0 - 2026-10-20
 
 First release.
