@@ -284,6 +284,8 @@ public sealed class JavaIntegrationTests : IDisposable
         Assert.Contains("Java Access Bridge: built-in client (window 0x", text);
         Assert.Contains("\"WinUse Swing Fixture\"", text);
         Assert.Contains(jvm == Jvm.Jre8x86Legacy ? "bridge responding (legacy wire format" : "bridge responding (wide wire format", text);
+        Assert.Contains(jvm == Jvm.Jdk21x64 ? ", Java 21" : ", Java 1.8.0", text);
+        Assert.Contains(", bridge ", text);
         Assert.Contains(jvm == Jvm.Jdk21x64 ? "64-bit" : "32-bit", text);
         Assert.Contains(jvm switch
         {

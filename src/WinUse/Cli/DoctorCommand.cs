@@ -90,8 +90,14 @@ public static class DoctorCommand
             var info = JavaProcessInfo.Inspect(w.Pid);
             var bits = info.Is32Bit switch { true => "32-bit", false => "64-bit", null => "?-bit" };
             var responding = java.BridgeAvailable && await java.IsJavaWindowAsync(w).ConfigureAwait(false);
+            var version = responding ? await java.GetVersionAsync(w).ConfigureAwait(false) : null;
             var state = responding
-                ? info.Layout is null ? "bridge responding" : $"bridge responding ({JavaProcessInfo.FormatName(info.Layout)} wire format)"
+                ? "bridge responding (" + string.Join(", ", new[]
+                    {
+                        info.Layout is null ? null : $"{JavaProcessInfo.FormatName(info.Layout)} wire format",
+                        version is null ? null : $"Java {version.VmVersion}",
+                        version is null ? null : $"bridge {version.JavaDllVersion}",
+                    }.Where(s => s is not null)) + ")"
                 : java.BridgeAvailable ? "bridge NOT responding (accessibility not enabled when the app started?)"
                 : "bridge unavailable";
             output.WriteLine($"  \"{w.Title}\" (pid {w.Pid}, {bits}, {w.ClassName}): {state}");

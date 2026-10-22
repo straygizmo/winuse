@@ -93,6 +93,19 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
         return false;
     }
 
+    /// <summary>The JVM behind a Java window as the bridge reports it (Java version, Java-side bridge version); null when it cannot be reached.</summary>
+    public async Task<JabVersionInfo?> GetVersionAsync(WindowInfo w)
+    {
+        if (!bridge.IsAvailable) return null;
+        return await bridge.RunAsync(j =>
+        {
+            var root = j.GetContextFromHwnd(w.Hwnd);
+            if (root is null) return null;
+            try { return j.GetVersion(root.Value.VmId); }
+            finally { j.Release(root.Value); }
+        }).ConfigureAwait(false);
+    }
+
     /// <summary>Why the last probe of this Java window failed; null for non-Java windows and for windows the bridge reads.</summary>
     public string? UnavailableReason(WindowInfo w)
     {
