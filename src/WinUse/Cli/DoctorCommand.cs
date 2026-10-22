@@ -1,5 +1,6 @@
 using Microsoft.Win32;
 using WinUse.Core.Config;
+using WinUse.Core.Java;
 using WinUse.Core.Jev;
 using WinUse.Tools;
 
@@ -59,11 +60,42 @@ public static class DoctorCommand
             output.WriteLine($"UIA: failed: {ex.Message}");
         }
 
+        await ReportJavaAsync(ctx, output).ConfigureAwait(false);
+
         output.WriteLine($"WebView2 runtime: {WebView2Version() ?? "not found"}");
         var pw = Path.Combine(AppContext.BaseDirectory, ".playwright");
         output.WriteLine($"Playwright driver: {(Directory.Exists(pw) ? "present" : "missing")} ({pw})");
 
         return uiaOk ? 0 : 1;
+    }
+
+    /// <summary>Java Access Bridge: the client DLL, this user's enablement, and every Java window with its JVM.</summary>
+    private static async Task ReportJavaAsync(ToolContext ctx, TextWriter output)
+    {
+        var java = ctx.Java;
+        output.WriteLine(java.BridgeAvailable
+            ? $"Java Access Bridge: loaded from {java.BridgeDllPath}"
+            : $"Java Access Bridge: {java.BridgeUnavailableReason}");
+        var props = JabEnablement.DefaultPropertiesPath;
+        output.WriteLine(JabEnablement.IsEnabled(props)
+            ? $"Java accessibility (user): enabled ({props})"
+            : $"Java accessibility (user): not enabled (run: winuse jab enable; process_run enables it for the processes it starts)");
+
+        IReadOnlyList<WinUse.Core.Windows.WindowInfo> windows;
+        try { windows = (await ctx.Windows.ListAsync().ConfigureAwait(false)).Where(JavaService.LooksLikeJavaWindow).ToList(); }
+        catch { windows = []; }
+        output.WriteLine($"Java windows: {windows.Count}");
+        foreach (var w in windows)
+        {
+            var info = JavaProcessInfo.Inspect(w.Pid);
+            var bits = info.Is32Bit switch { true => "32-bit", false => "64-bit", null => "?-bit" };
+            var responding = java.BridgeAvailable && await java.IsJavaWindowAsync(w).ConfigureAwait(false);
+            var state = responding ? "bridge responding"
+                : java.BridgeAvailable ? "bridge NOT responding (accessibility not enabled when the app started?)"
+                : "bridge unavailable";
+            output.WriteLine($"  \"{w.Title}\" (pid {w.Pid}, {bits}, {w.ClassName}): {state}");
+            output.WriteLine($"      {info.Describe()}");
+        }
     }
 
     /// <summary>Where a configuration value came from: the process environment wins over .env (see <see cref="WinUseConfig.Load"/>).</summary>

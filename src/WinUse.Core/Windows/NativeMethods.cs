@@ -186,4 +186,27 @@ internal static partial class NativeMethods
     public static partial bool PostThreadMessageW(uint threadId, uint msg, nint wParam, nint lParam);
     [LibraryImport("user32.dll")]
     public static partial uint GetDpiForWindow(nint hwnd);
+    // ---- process inspection (doctor) -----------------------------------------------------------
+
+    public const uint PROCESS_QUERY_INFORMATION = 0x0400;
+    public const uint PROCESS_VM_READ = 0x0010;
+    public const uint LIST_MODULES_ALL = 0x03;
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    public static partial nint OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint processId);
+
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool CloseHandle(nint handle);
+
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool IsWow64Process(nint process, [MarshalAs(UnmanagedType.Bool)] out bool wow64);
+
+    [LibraryImport("psapi.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool EnumProcessModulesEx(nint process, [Out] nint[]? modules, uint size, out uint needed, uint filter);
+
+    [LibraryImport("psapi.dll", EntryPoint = "GetModuleFileNameExW", StringMarshalling = StringMarshalling.Utf16)]
+    public static partial uint GetModuleFileNameExW(nint process, nint module, [Out] char[] fileName, uint size);
 }

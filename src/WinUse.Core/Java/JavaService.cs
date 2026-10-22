@@ -45,6 +45,13 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
 
     internal Func<KeyChord, Task> Press { get; set; } = input.PressAsync;
 
+    // ---- bridge facts (doctor) ------------------------------------------------------------------
+
+    /// <summary>Loads the bridge on first call; false when the DLL is missing, fails to load, or WINUSE_JAB=off.</summary>
+    public bool BridgeAvailable => bridge.IsAvailable;
+    public string? BridgeUnavailableReason => bridge.UnavailableReason;
+    public string? BridgeDllPath => bridge.DllPath;
+
     // ---- window probing -------------------------------------------------------------------------
 
     /// <summary>Cheap pre-check: AWT top-level windows have class names SunAwtFrame / SunAwtDialog / SunAwtWindow.</summary>
