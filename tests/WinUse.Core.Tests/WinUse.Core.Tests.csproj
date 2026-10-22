@@ -24,4 +24,8 @@
     <ProjectReference Include="..\..\src\WinUse\WinUse.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Java\SwingFixture.java" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
