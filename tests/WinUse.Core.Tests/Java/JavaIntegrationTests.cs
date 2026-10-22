@@ -282,6 +282,7 @@ public sealed class JavaIntegrationTests : IDisposable
         await DoctorCommand.ExecuteAsync(s.Ctx, w);
         var text = w.ToString();
         Assert.Contains("Java Access Bridge: built-in client (window 0x", text);
+        Assert.Contains($"1 JVMs: pid {s.Fixture.Pid} {(jvm == Jvm.Jre8x86Legacy ? "legacy" : "wide")})", text);
         Assert.Contains("\"WinUse Swing Fixture\"", text);
         Assert.Contains(jvm == Jvm.Jre8x86Legacy ? "bridge responding (legacy wire format" : "bridge responding (wide wire format", text);
         Assert.Contains(jvm == Jvm.Jdk21x64 ? ", Java 21" : ", Java 1.8.0", text);

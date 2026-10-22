@@ -283,6 +283,9 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
 
     public bool SetText(JabHandle h, string text)
     {
+        // The packet holds MaxStringSize - 1 characters; a longer text would be truncated and reported as success, so let
+        // the caller fall back to typing it instead.
+        if (text.Length >= MaxStringSize) return false;
         var p = SendFor(h, JabPacketKind.SetText, p => p.WriteWChars(JabPackets.SetText.Text, text));
         return p is not null && p.ReadI32(JabPackets.SetText.Result) != 0;
     }
@@ -320,6 +323,17 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
             p.ReadWChars(JabPackets.GetVersion.VmVersion),
             p.ReadWChars(JabPackets.GetVersion.JavaDllVersion),
             "winuse " + (mine is null ? "?" : mine.ToString(3)));
+    }
+
+    public JabVersionInfo? GetVersionForWindow(nint hwnd)
+    {
+        Prune();
+        foreach (var j in _jvms.ToArray())
+        {
+            var p = Send(j, JabPacketKind.IsJavaWindow, p => p.WriteI32(JabPackets.IsJavaWindow.Window, (int)hwnd));
+            if (p is not null && p.ReadBool8(JabPackets.IsJavaWindow.Result)) return GetVersion(j.VmId);
+        }
+        return null;
     }
 
     private static string? NullIfEmpty(string s) => s.Length == 0 ? null : s;

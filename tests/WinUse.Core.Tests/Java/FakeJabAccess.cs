@@ -183,6 +183,7 @@ internal sealed class FakeJabAccess(FakeNode root, nint hwnd = 0x1234) : IJabAcc
     }
 
     public JabVersionInfo? GetVersion(int vmId) => new("fake 1.8.0", "fake", "fake");
+    public JabVersionInfo? GetVersionForWindow(nint hwnd) => IsJavaWindow(hwnd) ? GetVersion(0) : null;
 }
 
 /// <summary>Runs bridge work inline; <paramref name="available"/> false mimics a client whose window could not be created.</summary>

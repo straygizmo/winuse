@@ -73,18 +73,12 @@ public static class DoctorCommand
     private static async Task ReportJavaAsync(ToolContext ctx, TextWriter output)
     {
         var java = ctx.Java;
-        output.WriteLine(java.BridgeAvailable
-            ? $"Java Access Bridge: {java.BridgeStatus}"
-            : $"Java Access Bridge: {java.BridgeUnavailableReason}");
-        var props = JabEnablement.DefaultPropertiesPath;
-        output.WriteLine(JabEnablement.IsEnabled(props)
-            ? $"Java accessibility (user): enabled ({props})"
-            : $"Java accessibility (user): not enabled (run: winuse jab enable; process_run enables it for the processes it starts)");
-
+        // Probe the windows first: the JVMs answer the client's hello asynchronously, and probing waits for them, so the
+        // status line printed afterwards lists the JVMs the window lines talk about.
         IReadOnlyList<WinUse.Core.Windows.WindowInfo> windows;
         try { windows = (await ctx.Windows.ListAsync().ConfigureAwait(false)).Where(JavaService.LooksLikeJavaWindow).ToList(); }
         catch { windows = []; }
-        output.WriteLine($"Java windows: {windows.Count}");
+        var windowLines = new List<string>();
         foreach (var w in windows)
         {
             var info = JavaProcessInfo.Inspect(w.Pid);
@@ -100,9 +94,19 @@ public static class DoctorCommand
                     }.Where(s => s is not null)) + ")"
                 : java.BridgeAvailable ? "bridge NOT responding (accessibility not enabled when the app started?)"
                 : "bridge unavailable";
-            output.WriteLine($"  \"{w.Title}\" (pid {w.Pid}, {bits}, {w.ClassName}): {state}");
-            output.WriteLine($"      {info.Describe()}");
+            windowLines.Add($"  \"{w.Title}\" (pid {w.Pid}, {bits}, {w.ClassName}): {state}");
+            windowLines.Add($"      {info.Describe()}");
         }
+
+        output.WriteLine(java.BridgeAvailable
+            ? $"Java Access Bridge: {java.BridgeStatus}"
+            : $"Java Access Bridge: {java.BridgeUnavailableReason}");
+        var props = JabEnablement.DefaultPropertiesPath;
+        output.WriteLine(JabEnablement.IsEnabled(props)
+            ? $"Java accessibility (user): enabled ({props})"
+            : $"Java accessibility (user): not enabled (run: winuse jab enable; process_run enables it for the processes it starts)");
+        output.WriteLine($"Java windows: {windows.Count}");
+        foreach (var line in windowLines) output.WriteLine(line);
     }
 
     /// <summary>Where a configuration value came from: the process environment wins over .env (see <see cref="WinUseConfig.Load"/>).</summary>

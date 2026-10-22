@@ -252,6 +252,46 @@ public class JabClientTests
         Assert.False(client.DoAction(new JabHandle(VmA, 7), "togglePopup"));
     }
 
+    /// <summary>A text longer than the packet's 1024-wchar field must not be truncated and reported as success.</summary>
+    [Fact]
+    public void SetText_LongerThanThePacket_ReturnsFalse_WithoutSending()
+    {
+        var rig = new Rig();
+        var a = rig.Add(HwndA, JabLayout.Wide, VmA, (kind, p) => { if (kind == JabPacketKind.SetText) p.WriteI32(SetText.Result, 1); return true; });
+        var client = new JabClient(rig.Services);
+        client.Connect(HwndA, VmA);
+        Assert.True(client.SetText(new JabHandle(VmA, 7), new string('x', 1023)));
+        Assert.False(client.SetText(new JabHandle(VmA, 7), new string('x', 1024)));
+        Assert.Equal(1, a.SentTypeIds.Count(t => t == 0x1600));
+    }
+
+    /// <summary>doctor's version line must survive a wrong layout guess: it may only use packets without object handles.</summary>
+    [Fact]
+    public void GetVersionForWindow_NeedsNoObjectHandlePacket()
+    {
+        var rig = new Rig();
+        var a = rig.Add(HwndA, JabLayout.Wide, VmA, (kind, p) =>
+        {
+            switch (kind)
+            {
+                case JabPacketKind.IsJavaWindow:
+                    p.Buffer[4 + p.Layout.Offset(IsJavaWindow.Result)] = (byte)(p.ReadI32(IsJavaWindow.Window) == (int)HwndA ? 1 : 0);
+                    return true;
+                case JabPacketKind.GetVersion:
+                    p.WriteWChars(GetVersion.VmVersion, "1.7.0_45");
+                    return true;
+                default:
+                    return false; // every handle-carrying packet goes unanswered, as after a layout mismatch
+            }
+        });
+        var client = new JabClient(rig.Services);
+        client.Connect(HwndA, VmA);
+        var v = client.GetVersionForWindow(HwndA);
+        Assert.Equal("1.7.0_45", v!.VmVersion);
+        Assert.DoesNotContain(0x10, a.SentTypeIds);
+        Assert.Null(client.GetVersionForWindow(HwndB));
+    }
+
     [Fact]
     public void GetVersion_FillsWindowsDllVersionWithWinuse()
     {
