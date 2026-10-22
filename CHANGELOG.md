@@ -7,6 +7,7 @@ Added
 - Java Swing support through Java Access Bridge: Swing windows (`SunAwt*`) are read into the same element model as UIA (`j{n}` refs), so `get_ui_tree`, `act` / `find` / `check`, `click`, `invoke`, `set_text`, `set_checked`, `select_item`, `get_text`, `get_list_items`, `assert_*`, `wait_for` and scenario replay work on them. Menu items are listed and invokable while their menu is closed. 32-bit and 64-bit JVMs (tested on Temurin 8 x86 and Temurin 21 x64).
 - `WindowsAccessBridge-64.dll` (Eclipse Temurin 21, GPLv2 + Classpath Exception) is bundled in `third_party\jab\` and copied next to `winuse.exe` on build and publish, so releases read Swing without a 64-bit Java on the machine. Needed in particular for apps on a 32-bit JRE (Java 7 or 8), which ships only `WindowsAccessBridge-32.dll` / the legacy `WindowsAccessBridge.dll`, neither loadable by the 64-bit winuse. `scripts/fetch-jab.ps1` refreshes the bundled DLL (and, with `-Dev`, fetches the test JDK/JRE).
 - When the DLL is missing, `doctor` (and the `java_access_bridge` reason) also lists the 32-bit client DLLs found in the searched directories and System32/SysWOW64, and says they cannot be used by a 64-bit process.
+- `doctor` shows which `JavaAccessBridge*.dll` each Java window's JVM loaded and recognises the legacy `JavaAccessBridge.dll` / `access-bridge.jar` as a bridge (no false "no Access Bridge" warning for a 32-bit JRE that ships only those). When the JVM loaded the legacy one, `doctor` and the `get_ui_tree` error say that the 64-bit winuse cannot read its tree instead of a bare "no accessible context".
 - `winuse jab enable|disable|status` manages `%USERPROFILE%\.accessibility.properties`.
 - `winuse doctor` reports the bridge DLL, the user-profile enablement and every Java window with its JVM.
 - Settings `WINUSE_JAB`, `WINUSE_JAB_DLL`, `WINUSE_JAVA_ACCESSIBILITY`.
@@ -20,6 +21,7 @@ Changed
 Known issues
 
 - `get_table` does not read Swing tables yet (`get_table is not supported for Java elements yet`).
+- A 32-bit JRE whose JVM loads the legacy `JavaAccessBridge.dll` (a Java 7/8 x86 without `JavaAccessBridge-32.dll` / `access-bridge-32.jar`) cannot be read: the legacy wire format carries 32-bit object handles, so the JVM answers `isJavaWindow` but drops every request from `WindowsAccessBridge-64.dll` (reproduced with Temurin 8 x86 started with `-Djava.ext.dirs` holding only `access-bridge.jar`). `doctor` and `get_ui_tree` report it; the window falls back to visual grounding.
 - A JRE without the Java side of the bridge (trimmed Java 8 without `JavaAccessBridge-32.dll` / `access-bridge-32.jar`, or a `jlink` image without `jdk.accessibility`) cannot be read, and a JVM on such a JRE fails to start when accessibility is requested (`AWTError: Assistive Technology not found`): set `WINUSE_JAVA_ACCESSIBILITY=off` for apps on such a JRE and do not use `winuse jab enable`. `doctor` reports the missing files and this consequence. A Java app running elevated or as another user is out of reach.
 
 ## 0.1.0 - 2026-10-20

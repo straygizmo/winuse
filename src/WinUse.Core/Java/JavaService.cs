@@ -58,6 +58,20 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
     public static bool LooksLikeJavaWindow(WindowInfo w) => w.ClassName.StartsWith("SunAwt", StringComparison.Ordinal);
 
     /// <summary>
+    /// Why <c>getAccessibleContextFromHWND</c> answered nothing for a window whose JVM does answer <c>isJavaWindow</c>:
+    /// usually the legacy Java-side bridge (see <see cref="JavaProcessInfo.LegacyBridgeModule"/>).
+    /// </summary>
+    internal static string NoContextMessage(int pid)
+    {
+        var info = JavaProcessInfo.Inspect(pid);
+        if (info.IsLegacyBridge)
+            return $"Java Access Bridge returned no accessible context for the window: the JVM (pid {pid}) loaded the legacy Java-side bridge "
+                   + $"({JavaProcessInfo.LegacyBridgeModule}, 32-bit object handles), which answers isJavaWindow but drops every request from the 64-bit client. "
+                   + "The tree cannot be read; a JRE with JavaAccessBridge-32.dll and access-bridge-32.jar would be readable.";
+        return $"Java Access Bridge returned no accessible context for the window (JVM pid {pid}, bridge module {info.LoadedBridgeModule ?? "not loaded"}).";
+    }
+
+    /// <summary>
     /// True when the window is an AWT window whose JVM answers through the bridge. Until the first JVM has ever
     /// answered, a negative answer is retried for about a second (the JVMs respond asynchronously to <c>Windows_run</c>).
     /// </summary>
@@ -129,7 +143,7 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
         return await bridge.RunAsync(jab =>
         {
             var windowRoot = jab.GetContextFromHwnd(hwnd)
-                ?? throw new InvalidOperationException("Java Access Bridge returned no accessible context for the window.");
+                ?? throw new InvalidOperationException(NoContextMessage(window.Pid));
             var tx = Calibrate(jab, windowRoot, window.Rect, dpi);
             var root = scope ?? windowRoot;
             var builder = new JavaTreeBuilder(jab, refs, wloc, opt, tx, (id, h) => Own(id, h, snapshot));
