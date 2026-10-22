@@ -18,7 +18,7 @@ The intent tools (`act`, `find`, `check`) and `--heal` need one decision model. 
 - **Jev** (TypeSafe): set `JEV_API_KEY`.
 - **Clef** (Cloudflare Workers AI): set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (an API token with Workers AI permission). Use this when you have no Jev key.
 
-Register them once as user environment variables so that both Claude Code (which launches `winuse --mcp`) and `winuse run` see them:
+Register them once as user environment variables so that both the AI client (which launches `winuse --mcp`) and `winuse run` see them:
 
 ```powershell
 [Environment]::SetEnvironmentVariable('JEV_API_KEY', 'your-key', 'User')
@@ -27,7 +27,7 @@ Register them once as user environment variables so that both Claude Code (which
 [Environment]::SetEnvironmentVariable('CLOUDFLARE_API_TOKEN', 'your-token', 'User')
 ```
 
-Restart the terminal / Claude Code afterwards. As a development fallback, a `.env` file next to `winuse.exe` or in the working directory is also read (`KEY=VALUE` lines, never commit it); environment variables take precedence over `.env`.
+Restart the terminal / AI client afterwards. As a development fallback, a `.env` file next to `winuse.exe` or in the working directory is also read (`KEY=VALUE` lines, never commit it); environment variables take precedence over `.env`.
 
 The provider is chosen automatically: Jev when `JEV_API_KEY` is set, otherwise Clef when both Cloudflare values are set. `WINUSE_DECISION_PROVIDER=jev|clef` forces one. `winuse doctor` shows which one is in use.
 
@@ -64,10 +64,62 @@ The Swing integration tests need Java under `tools\` (git-ignored): `pwsh -File 
 
 Limits: `get_table` does not read Swing tables yet. A JRE trimmed of `jdk.accessibility` (Java 8: `bin\JavaAccessBridge-32.dll` and `lib\ext\access-bridge-32.jar`) cannot be read at all, and **a JVM on such a JRE refuses to start when accessibility is requested** (`AWTError: Assistive Technology not found`): for apps on a trimmed JRE set `WINUSE_JAVA_ACCESSIBILITY=off` before `process_run`, and do not run `winuse jab enable`. `winuse doctor` points this out for every Java window whose JRE lacks the bridge files. A Java app running elevated or as another user is out of reach (its messages are blocked and the user-profile setting does not apply).
 
-## Register with Claude Code
+## Register with an AI client
+
+winuse speaks MCP over stdio, so any MCP-capable client can launch `<repo>\out\winuse.exe --mcp`. Replace `<repo>` with the absolute path of this checkout (use `\\` in JSON/TOML strings). The decision-model keys are read from the environment, so register them as user environment variables (see Configuration) rather than per client.
+
+### Claude Code
 
 ```powershell
 claude mcp add winuse -- <repo>\out\winuse.exe --mcp
+```
+
+### Codex CLI
+
+```powershell
+codex mcp add winuse -- <repo>\out\winuse.exe --mcp
+```
+
+Or add it to `~\.codex\config.toml` (`.codex\config.toml` inside a project scopes it to that project):
+
+```toml
+[mcp_servers.winuse]
+command = "<repo>\\out\\winuse.exe"
+args = ["--mcp"]
+```
+
+### opencode
+
+Add it to `~\.config\opencode\opencode.json` (global) or `opencode.json` in the project root:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "winuse": {
+      "type": "local",
+      "command": ["<repo>\\out\\winuse.exe", "--mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+### GitHub Copilot CLI
+
+In an interactive session run `/mcp add`, choose **Local**, enter `<repo>\out\winuse.exe --mcp` as the command and `*` as the tools, then press Ctrl+S. Or add it to `~\.copilot\mcp-config.json` (user-level) or `.mcp.json` in the project root:
+
+```json
+{
+  "mcpServers": {
+    "winuse": {
+      "type": "local",
+      "command": "<repo>\\out\\winuse.exe",
+      "args": ["--mcp"],
+      "tools": ["*"]
+    }
+  }
+}
 ```
 
 ## CLI
