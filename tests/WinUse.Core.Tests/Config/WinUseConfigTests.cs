@@ -1,4 +1,4 @@
-using WinUse.Core.Config;
+﻿using WinUse.Core.Config;
 
 namespace WinUse.Core.Tests.Config;
 
@@ -139,5 +139,37 @@ public class WinUseConfigTests
         Assert.Contains("WINUSE_SCREENSHOTS", ex.Message);
         ex = Assert.Throws<InvalidOperationException>(() => LoadEnv(new Dictionary<string, string?> { ["WINUSE_VISUAL_LOCATOR"] = "ocr" }));
         Assert.Contains("WINUSE_VISUAL_LOCATOR", ex.Message);
+    }
+    [Fact]
+    public void Load_JabDefaults_AutoAndEnabledInjection()
+    {
+        var cfg = LoadEnv(new Dictionary<string, string?>());
+        Assert.Equal(JabMode.Auto, cfg.Jab);
+        Assert.Null(cfg.JabDll);
+        Assert.True(cfg.JavaAccessibility);
+    }
+
+    [Fact]
+    public void Load_JabSettings_FromEnvironment()
+    {
+        var cfg = LoadEnv(new Dictionary<string, string?>
+        {
+            ["WINUSE_JAB"] = "off",
+            ["WINUSE_JAB_DLL"] = @"C:\x\WindowsAccessBridge-64.dll",
+            ["WINUSE_JAVA_ACCESSIBILITY"] = "off",
+        });
+        Assert.Equal(JabMode.Off, cfg.Jab);
+        Assert.Equal(@"C:\x\WindowsAccessBridge-64.dll", cfg.JabDll);
+        Assert.False(cfg.JavaAccessibility);
+        Assert.True(LoadEnv(new Dictionary<string, string?> { ["WINUSE_JAVA_ACCESSIBILITY"] = "on" }).JavaAccessibility);
+    }
+
+    [Fact]
+    public void Load_InvalidJabSettings_Throw()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => LoadEnv(new Dictionary<string, string?> { ["WINUSE_JAB"] = "maybe" }));
+        Assert.Contains("WINUSE_JAB", ex.Message);
+        var ex2 = Assert.Throws<InvalidOperationException>(() => LoadEnv(new Dictionary<string, string?> { ["WINUSE_JAVA_ACCESSIBILITY"] = "yes" }));
+        Assert.Contains("WINUSE_JAVA_ACCESSIBILITY", ex2.Message);
     }
 }

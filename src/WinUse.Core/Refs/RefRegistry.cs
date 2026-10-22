@@ -1,4 +1,4 @@
-namespace WinUse.Core.Refs;
+﻿namespace WinUse.Core.Refs;
 
 public sealed class RefRegistry
 {
@@ -24,6 +24,7 @@ public sealed class RefRegistry
                 RefKind.Uia => "u",
                 RefKind.Dom => "w",
                 RefKind.Point => "pt",
+                RefKind.Java => "j",
                 _ => throw new ArgumentOutOfRangeException(nameof(kind)),
             };
             var r = new ElementRef($"{prefix}{n}", kind, locator, handle);

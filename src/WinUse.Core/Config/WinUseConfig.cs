@@ -1,4 +1,4 @@
-namespace WinUse.Core.Config;
+﻿namespace WinUse.Core.Config;
 
 /// <summary>Which decision-model API answers grounding and check questions.</summary>
 public enum DecisionProvider
@@ -30,6 +30,15 @@ public enum VisualLocatorKind
     Box,
 }
 
+/// <summary>Whether Java Swing windows are read through Java Access Bridge.</summary>
+public enum JabMode
+{
+    /// <summary>Use the bridge when <c>WindowsAccessBridge-64.dll</c> can be loaded.</summary>
+    Auto,
+    /// <summary>Never load the bridge; Java windows fall back to visual grounding.</summary>
+    Off,
+}
+
 public sealed record WinUseConfig(
     string? JevApiKey,
     string JevBaseUrl,
@@ -47,7 +56,10 @@ public sealed record WinUseConfig(
     string ClefBaseUrl = WinUseConfig.DefaultClefBaseUrl,
     DecisionProvider? ProviderOverride = null,
     ScreenshotPolicy Screenshots = ScreenshotPolicy.Auto,
-    VisualLocatorKind VisualLocator = VisualLocatorKind.Grid)
+    VisualLocatorKind VisualLocator = VisualLocatorKind.Grid,
+    JabMode Jab = JabMode.Auto,
+    string? JabDll = null,
+    bool JavaAccessibility = true)
 {
     public const string DefaultClefModel = "clef";
     public const string DefaultClefBaseUrl = "https://api.cloudflare.com";
@@ -99,7 +111,10 @@ public sealed record WinUseConfig(
             ClefBaseUrl: Get("CLEF_BASE_URL") ?? DefaultClefBaseUrl,
             ProviderOverride: ParseProvider(Get("WINUSE_DECISION_PROVIDER")),
             Screenshots: ParseEnum<ScreenshotPolicy>("WINUSE_SCREENSHOTS", Get("WINUSE_SCREENSHOTS")) ?? ScreenshotPolicy.Auto,
-            VisualLocator: ParseEnum<VisualLocatorKind>("WINUSE_VISUAL_LOCATOR", Get("WINUSE_VISUAL_LOCATOR")) ?? VisualLocatorKind.Grid);
+            VisualLocator: ParseEnum<VisualLocatorKind>("WINUSE_VISUAL_LOCATOR", Get("WINUSE_VISUAL_LOCATOR")) ?? VisualLocatorKind.Grid,
+            Jab: ParseEnum<JabMode>("WINUSE_JAB", Get("WINUSE_JAB")) ?? JabMode.Auto,
+            JabDll: Get("WINUSE_JAB_DLL"),
+            JavaAccessibility: ParseOnOff("WINUSE_JAVA_ACCESSIBILITY", Get("WINUSE_JAVA_ACCESSIBILITY")) ?? true);
     }
 
     private static T? ParseEnum<T>(string name, string? raw) where T : struct, Enum
@@ -109,6 +124,14 @@ public sealed record WinUseConfig(
         var allowed = string.Join(", ", Enum.GetNames<T>().Select(n => n.ToLowerInvariant()));
         throw new InvalidOperationException($"{name} must be one of {allowed}, not '{raw}'.");
     }
+
+    private static bool? ParseOnOff(string name, string? raw) => raw?.ToLowerInvariant() switch
+    {
+        null => null,
+        "on" or "true" => true,
+        "off" or "false" => false,
+        _ => throw new InvalidOperationException($"{name} must be 'on' or 'off', not '{raw}'."),
+    };
 
     private static DecisionProvider? ParseProvider(string? raw) => raw?.ToLowerInvariant() switch
     {

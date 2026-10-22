@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using WinUse.Core.Refs;
 
 namespace WinUse.Core.Tests.Refs;
@@ -75,5 +75,25 @@ public class RefRegistryTests
         var r = reg.Register(RefKind.Point, new PointLocator(new WindowLocator("t", null, null), 0.5, 0.5), (10, 20));
         Assert.Equal("pt1", r.Id);
         Assert.Equal("pt2", reg.Register(RefKind.Point, r.Locator, null).Id);
+    }
+    [Fact]
+    public void Register_JavaRef_UsesJPrefix()
+    {
+        var reg = new RefRegistry();
+        var w = new WindowLocator("^Swing", null, "SunAwtFrame");
+        Assert.Equal("j1", reg.Register(RefKind.Java, new JavaLocator(w, []), null).Id);
+        Assert.Equal("j2", reg.Register(RefKind.Java, new JavaLocator(w, []), null).Id);
+        Assert.True(reg.TryGet("j2", out var r) && r.Kind == RefKind.Java);
+    }
+
+    [Fact]
+    public void JavaLocator_RoundTripsWithDiscriminatorAndRole()
+    {
+        Locator l = new JavaLocator(new WindowLocator("x", "javaw", "SunAwtFrame"), [new JavaPathSegment("push button", "Save", 1)]);
+        var json = JsonSerializer.Serialize(l);
+        Assert.Contains("\"$type\":\"java\"", json);
+        var back = Assert.IsType<JavaLocator>(JsonSerializer.Deserialize<Locator>(json));
+        Assert.Equal(new JavaPathSegment("push button", "Save", 1), Assert.Single(back.Path));
+        Assert.Equal("SunAwtFrame", back.Window.ClassName);
     }
 }
