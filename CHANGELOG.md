@@ -9,7 +9,7 @@ Added
 - `doctor` shows which `JavaAccessBridge*.dll` each Java window's JVM loaded, its wire format, and the Java and bridge versions the JVM reports; the legacy `JavaAccessBridge.dll` / `access-bridge.jar` count as a bridge (no false "no Access Bridge" warning for a 32-bit JRE that ships only those).
 - `scripts/fetch-dev-java.ps1` fetches the JDK/JRE the integration tests use.
 - `winuse jab enable|disable|status` manages `%USERPROFILE%\.accessibility.properties`.
-- `winuse doctor` reports the bridge DLL, the user-profile enablement and every Java window with its JVM.
+- `winuse doctor` reports the client window and the JVMs connected to it, the user-profile enablement and every Java window with its JVM.
 - Settings `WINUSE_JAB`, `WINUSE_JAVA_ACCESSIBILITY`.
 
 Changed

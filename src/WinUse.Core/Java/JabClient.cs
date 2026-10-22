@@ -4,15 +4,17 @@ using static WinUse.Core.Java.JabPackets;
 
 namespace WinUse.Core.Java;
 
+/// <summary>What inspecting a JVM process tells the client: its wire format and bitness, each null when not (yet) readable.</summary>
+internal sealed record JabJvmProbe(JabLayout? Layout, bool? Is32Bit);
+
 /// <summary>
 /// What <see cref="JabClient"/> needs from the outside world, injectable for tests. <paramref name="OpenChannel"/> performs
-/// the memory-mapped-file handshake with a JVM window and returns null when it fails; <paramref name="DetectLayout"/> reads
-/// the JVM process's loaded bridge DLL (null when the process cannot be inspected yet); <paramref name="PidOf"/> and
-/// <paramref name="IsWindow"/> wrap the user32 calls.
+/// the memory-mapped-file handshake with a JVM window and returns null when it fails; <paramref name="Inspect"/> reads the
+/// JVM process (loaded bridge DLL, bitness); <paramref name="PidOf"/> and <paramref name="IsWindow"/> wrap the user32 calls.
 /// </summary>
 internal sealed record JabClientServices(
     Func<nint, IJabChannel?> OpenChannel,
-    Func<int, JabLayout?> DetectLayout,
+    Func<int, JabJvmProbe> Inspect,
     Func<nint, int> PidOf,
     Func<nint, bool> IsWindow);
 
@@ -25,7 +27,10 @@ internal sealed class JabJvm
     public required IJabChannel Channel { get; init; }
     /// <summary>Null until the JVM process could be inspected; <see cref="JabClient"/> retries before the first packet.</summary>
     public JabLayout? Layout { get; set; }
+    /// <summary>True when <see cref="Layout"/> is the wide default taken after inspection kept failing, not a detection.</summary>
+    public bool LayoutAssumed { get; set; }
     public int LayoutAttempts { get; set; }
+    public bool? Is32Bit { get; set; }
     /// <summary>Set from the window procedure (JVM shutdown, AB_DLL_GOING_AWAY); the list is pruned at the next call.</summary>
     public volatile bool Dead;
 }
@@ -61,15 +66,15 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
             Remove(existing);
         }
         var pid = services.PidOf(javaHwnd);
-        var layout = Detect(pid);
+        var probe = Detect(pid);
         var channel = services.OpenChannel(javaHwnd);
         if (channel is null)
         {
             _log.LogWarning("JAB handshake with JVM window 0x{Hwnd:X} (pid {Pid}) failed", javaHwnd, pid);
             return;
         }
-        _jvms.Add(new JabJvm { JavaHwnd = javaHwnd, VmId = vmId, Pid = pid, Channel = channel, Layout = layout, LayoutAttempts = 1 });
-        _log.LogInformation("JAB connected to JVM pid {Pid} (vmID {VmId}, {Layout} wire format)", pid, vmId, Name(layout));
+        _jvms.Add(new JabJvm { JavaHwnd = javaHwnd, VmId = vmId, Pid = pid, Channel = channel, Layout = probe.Layout, Is32Bit = probe.Is32Bit, LayoutAttempts = 1 });
+        _log.LogInformation("JAB connected to JVM pid {Pid} (vmID {VmId}, {Layout} wire format)", pid, vmId, Name(probe.Layout));
     }
 
     /// <summary>Flags a JVM as gone without touching the list (safe from inside a window procedure).</summary>
@@ -90,7 +95,8 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
     {
         Prune();
         if (_jvms.Count == 0) return "no JVMs connected";
-        return $"{_jvms.Count} JVMs: " + string.Join(", ", _jvms.Select(j => $"pid {j.Pid} {Name(j.Layout)}"));
+        return $"{_jvms.Count} JVMs: " + string.Join(", ", _jvms.Select(j =>
+            $"pid {j.Pid} {(j.Is32Bit switch { true => "32-bit ", false => "64-bit ", null => "" })}{Name(j.Layout)}"));
     }
 
     public void Dispose()
@@ -115,29 +121,41 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
         _log.LogInformation("JAB disconnected from JVM pid {Pid}", j.Pid);
     }
 
-    private JabLayout? Detect(int pid)
+    private JabJvmProbe Detect(int pid)
     {
-        try { return services.DetectLayout(pid); }
+        try { return services.Inspect(pid); }
         catch (Exception ex)
         {
-            _log.LogDebug(ex, "JAB layout detection for pid {Pid} threw", pid);
-            return null;
+            _log.LogDebug(ex, "JAB process inspection for pid {Pid} threw", pid);
+            return new JabJvmProbe(null, null);
         }
     }
 
-    /// <summary>The layout to send with: retried while unknown, then wide with a warning.</summary>
+    /// <summary>One more inspection of a JVM; true when it now reports a layout (which replaces the current one).</summary>
+    private bool Redetect(JabJvm j)
+    {
+        var probe = Detect(j.Pid);
+        j.Is32Bit ??= probe.Is32Bit;
+        if (probe.Layout is null) return false;
+        j.Layout = probe.Layout;
+        j.LayoutAssumed = false;
+        return true;
+    }
+
+    /// <summary>The layout to send with: retried while unknown, then wide with a warning (and flagged as assumed).</summary>
     private JabLayout LayoutOf(JabJvm j)
     {
         while (j.Layout is null && j.LayoutAttempts < LayoutRetries)
         {
             Thread.Sleep(LayoutRetryDelay);
             j.LayoutAttempts++;
-            j.Layout = Detect(j.Pid);
+            Redetect(j);
         }
         if (j.Layout is null)
         {
             _log.LogWarning("JAB could not tell the wire format of JVM pid {Pid}; assuming wide", j.Pid);
             j.Layout = JabLayout.Wide;
+            j.LayoutAssumed = true;
         }
         return j.Layout.Value;
     }
@@ -192,19 +210,25 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
         Prune();
         foreach (var j in _jvms.ToArray())
         {
-            var p = Send(j, JabPacketKind.GetContextFromHwnd, p => p.WriteI32(JabPackets.GetContextFromHwnd.Window, (int)hwnd));
-            if (p is null) continue;
-            var ac = p.ReadObj(JabPackets.GetContextFromHwnd.Result);
-            if (ac == 0) continue;
-            var vm = p.ReadI32(JabPackets.GetContextFromHwnd.VmId);
-            if (vm != j.VmId)
-            {
-                _log.LogDebug("JAB getAccessibleContextFromHWND: JVM pid {Pid} answered with vmID {Vm}, expected {Expected}", j.Pid, vm, j.VmId);
-                continue;
-            }
-            return new JabHandle(j.VmId, ac);
+            var ac = ContextFromHwnd(j, hwnd);
+            // An assumed-wide JVM that drops the packet may be legacy after all: look at the process once more and retry.
+            if (ac == 0 && j.LayoutAssumed && Redetect(j)) ac = ContextFromHwnd(j, hwnd);
+            if (ac != 0) return new JabHandle(j.VmId, ac);
         }
         return null;
+    }
+
+    /// <summary>The window's root context from one JVM, or 0. Routing stays on the hello's vmID even if the JVM reports another.</summary>
+    private long ContextFromHwnd(JabJvm j, nint hwnd)
+    {
+        var p = Send(j, JabPacketKind.GetContextFromHwnd, p => p.WriteI32(JabPackets.GetContextFromHwnd.Window, (int)hwnd));
+        if (p is null) return 0;
+        var ac = p.ReadObj(JabPackets.GetContextFromHwnd.Result);
+        if (ac == 0) return 0;
+        var vm = p.ReadI32(JabPackets.GetContextFromHwnd.VmId);
+        if (vm != j.VmId)
+            _log.LogDebug("JAB getAccessibleContextFromHWND: JVM pid {Pid} answered with vmID {Vm}, routing by {Expected}", j.Pid, vm, j.VmId);
+        return ac;
     }
 
     public JabContextInfo? GetInfo(JabHandle h)
@@ -327,11 +351,20 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
 
     public JabVersionInfo? GetVersionForWindow(nint hwnd)
     {
+        var j = OwnerOf(hwnd);
+        return j is null ? null : GetVersion(j.VmId);
+    }
+
+    public JabLayout? LayoutForWindow(nint hwnd) => OwnerOf(hwnd)?.Layout;
+
+    /// <summary>The connected JVM that answers isJavaWindow for this window (a handle-free packet), or null.</summary>
+    private JabJvm? OwnerOf(nint hwnd)
+    {
         Prune();
         foreach (var j in _jvms.ToArray())
         {
             var p = Send(j, JabPacketKind.IsJavaWindow, p => p.WriteI32(JabPackets.IsJavaWindow.Window, (int)hwnd));
-            if (p is not null && p.ReadBool8(JabPackets.IsJavaWindow.Result)) return GetVersion(j.VmId);
+            if (p is not null && p.ReadBool8(JabPackets.IsJavaWindow.Result)) return j;
         }
         return null;
     }
