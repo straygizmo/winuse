@@ -1,4 +1,4 @@
-using WinUse.Core.Input;
+﻿using WinUse.Core.Input;
 using WinUse.Core.Java;
 using WinUse.Core.Refs;
 using WinUse.Core.Threading;
@@ -33,6 +33,7 @@ internal sealed class JavaServiceHarness : IDisposable
             DpiScale = _ => 1.0,
             ClickAt = (x, y) => { Clicks.Add((x, y)); return Task.CompletedTask; },
             Press = k => { Pressed.Add(k); return Task.CompletedTask; },
+            Activate = _ => Task.CompletedTask,
         };
     }
 
