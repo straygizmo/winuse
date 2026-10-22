@@ -1,34 +1,40 @@
-using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using WinUse.Core.Config;
+using WinUse.Core.Windows;
 
 namespace WinUse.Core.Java;
 
-/// <summary>Lazily loaded Java Access Bridge: availability, the reason it is not available, and a way to run work on its thread.</summary>
+/// <summary>Lazily started Java Access Bridge client: availability, the reason it is not available, and a way to run work on its thread.</summary>
 public interface IJabBridge : IDisposable
 {
-    /// <summary>Loads the DLL and starts the bridge thread on first use.</summary>
+    /// <summary>Starts the client thread and its hidden window on first use.</summary>
     bool IsAvailable { get; }
-    /// <summary>Why the bridge cannot be used ("WINUSE_JAB=off", "not found (searched: ...)", "load failed: ..."); null when available.</summary>
+    /// <summary>Why the bridge cannot be used ("WINUSE_JAB=off", "client window could not be created: ..."); null when available.</summary>
     string? UnavailableReason { get; }
-    string? DllPath { get; }
+    /// <summary>One line for doctor: the client window and the JVMs connected with their wire formats; null when unavailable.</summary>
+    string? Status { get; }
     Task<T> RunAsync<T>(Func<IJabAccess, T> work);
 }
 
-public sealed class JabBridge(WinUseConfig cfg, string exeDirectory, ILogger? log = null) : IJabBridge
+/// <summary>
+/// The built-in Java Access Bridge client: a <see cref="JabDispatcher"/> thread that owns a <see cref="JabWindow"/> and a
+/// <see cref="JabClient"/>. No Windows-side DLL is loaded; winuse speaks the wire format itself, so JVMs with the legacy
+/// bridge are read like any other.
+/// </summary>
+public sealed class JabBridge(WinUseConfig cfg, ILogger? log = null) : IJabBridge
 {
     private readonly ILogger _log = log ?? NullLogger.Instance;
     private readonly object _gate = new();
     private bool _initialized;
     private JabDispatcher? _dispatcher;
-    private JabAccess? _access;
+    private JabClient? _client;
+    private JabWindow? _window;
     private string? _reason;
-    private string? _dllPath;
 
     public bool IsAvailable
     {
-        get { Initialize(); return _access is not null; }
+        get { Initialize(); return _client is not null; }
     }
 
     public string? UnavailableReason
@@ -36,16 +42,22 @@ public sealed class JabBridge(WinUseConfig cfg, string exeDirectory, ILogger? lo
         get { Initialize(); return _reason; }
     }
 
-    public string? DllPath
+    public string? Status
     {
-        get { Initialize(); return _dllPath; }
+        get
+        {
+            if (!IsAvailable) return null;
+            var client = _client!;
+            var describe = _dispatcher!.RunAsync(client.Describe).GetAwaiter().GetResult();
+            return $"built-in client (window 0x{_window!.Hwnd:X}; {describe})";
+        }
     }
 
     public Task<T> RunAsync<T>(Func<IJabAccess, T> work)
     {
         ArgumentNullException.ThrowIfNull(work);
         if (!IsAvailable) throw new InvalidOperationException($"Java Access Bridge is not available: {_reason}");
-        var access = _access!;
+        var access = _client!;
         return _dispatcher!.RunAsync(() => work(access));
     }
 
@@ -60,33 +72,26 @@ public sealed class JabBridge(WinUseConfig cfg, string exeDirectory, ILogger? lo
                 _reason = "WINUSE_JAB=off";
                 return;
             }
-            var path = JabDllLocator.Locate(cfg.JabDll, exeDirectory, Environment.GetEnvironmentVariable, File.Exists,
-                JabDllLocator.RegistryJavaHomes, out var searched, out var thirtyTwoBit);
-            if (path is null && NativeLibrary.TryLoad(JabDllLocator.FileName, out var viaPath))
-            {
-                NativeLibrary.Free(viaPath);
-                path = JabDllLocator.FileName;
-            }
-            if (path is null)
-            {
-                _reason = JabDllLocator.NotFoundReason(searched, thirtyTwoBit);
-                _log.LogWarning("Java Access Bridge {Reason}", _reason);
-                return;
-            }
+            var services = new JabClientServices(
+                OpenChannel: javaHwnd => _window is null ? null : JabMemoryChannel.Open(_window.Hwnd, javaHwnd, _log),
+                DetectLayout: pid => JavaProcessInfo.Inspect(pid).Layout,
+                PidOf: hwnd => { NativeMethods.GetWindowThreadProcessId(hwnd, out var pid); return (int)pid; },
+                IsWindow: NativeMethods.IsWindow);
+            var client = new JabClient(services, _log);
             try
             {
-                var fns = JabNative.Load(path);
-                _dispatcher = new JabDispatcher(() => { unsafe { fns.Windows_run(); } });
-                _access = new JabAccess(fns);
-                _dllPath = path;
-                _log.LogInformation("Java Access Bridge loaded from {Path}", path);
+                _dispatcher = new JabDispatcher(() => _window = JabWindow.Create(client, _log));
+                _client = client;
+                _log.LogInformation("Java Access Bridge client window 0x{Hwnd:X} created", _window!.Hwnd);
             }
             catch (Exception ex)
             {
-                _reason = $"load failed: {ex.Message} ({path})";
-                _log.LogWarning(ex, "Java Access Bridge load failed from {Path}", path);
+                var cause = ex.InnerException ?? ex;
+                _reason = $"client window could not be created: {cause.Message}";
+                _log.LogWarning(ex, "Java Access Bridge {Reason}", _reason);
                 _dispatcher?.Dispose();
                 _dispatcher = null;
+                client.Dispose();
             }
         }
     }
@@ -95,9 +100,25 @@ public sealed class JabBridge(WinUseConfig cfg, string exeDirectory, ILogger? lo
     {
         lock (_gate)
         {
-            _dispatcher?.Dispose();
-            _dispatcher = null;
-            _access = null;
+            if (_dispatcher is not null)
+            {
+                try
+                {
+                    _dispatcher.RunAsync(() =>
+                    {
+                        _window?.Dispose();
+                        _client?.Dispose();
+                    }).GetAwaiter().GetResult();
+                }
+                catch (Exception ex)
+                {
+                    _log.LogDebug(ex, "Java Access Bridge shutdown threw");
+                }
+                _dispatcher.Dispose();
+                _dispatcher = null;
+            }
+            _client = null;
+            _window = null;
         }
     }
 }

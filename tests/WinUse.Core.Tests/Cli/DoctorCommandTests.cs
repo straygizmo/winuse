@@ -56,25 +56,22 @@ public class DoctorCommandTests
         Assert.Contains("CLOUDFLARE_ACCOUNT_ID: not set", text);
         Assert.Contains("not configured", text);
     }
-    /// <summary>The bundled DLL sits next to the test host like next to winuse.exe, so the real bridge loads from there.</summary>
+    /// <summary>No DLL any more: the built-in client creates its hidden window and reports it.</summary>
     [Fact]
-    public async Task Doctor_ReportsJavaAccessBridge_LoadedFromExeDirectory_AndUserEnablement()
+    public async Task Doctor_ReportsJavaAccessBridge_BuiltInClient_AndUserEnablement()
     {
-        var text = await Run(TestConfig.Default with { JabDll = Path.Combine(Path.GetTempPath(), "no-such-dir", "WindowsAccessBridge-64.dll") },
-            new FakeJev(configured: false));
-        Assert.Contains("Java Access Bridge: loaded from " + Path.Combine(AppContext.BaseDirectory, JabDllLocator.FileName), text);
+        var text = await Run(TestConfig.Default, new FakeJev(configured: false));
+        Assert.Contains("Java Access Bridge: built-in client (window 0x", text);
         Assert.Contains("Java accessibility (user):", text);
         Assert.Contains("Java windows:", text);
     }
 
     [Fact]
-    public async Task Doctor_ReportsJavaAccessBridge_NotFound_WithTheLocatorReason()
+    public async Task Doctor_ReportsJavaAccessBridge_UnavailableReason()
     {
-        var reason = JabDllLocator.NotFoundReason([@"C:\app"], [@"C:\jre7\bin\WindowsAccessBridge-32.dll"]);
-        var text = await Run(TestConfig.Default, new FakeJev(configured: false), new FakeJabBridge(new FakeJabAccess(new FakeNode("frame", "x")), available: false, reason: reason));
-        Assert.Contains("Java Access Bridge: not found (searched: C:\\app)", text);
-        Assert.Contains("WindowsAccessBridge-32.dll", text);
-        Assert.Contains("fetch-jab.ps1", text);
+        var text = await Run(TestConfig.Default, new FakeJev(configured: false),
+            new FakeJabBridge(new FakeJabAccess(new FakeNode("frame", "x")), available: false, reason: "client window could not be created: boom"));
+        Assert.Contains("Java Access Bridge: client window could not be created: boom", text);
     }
 
     [Fact]

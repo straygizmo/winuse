@@ -69,7 +69,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
         Files = new FileService(cfg);
         Uia = new UiaService(Dispatcher, Refs, Windows);
         Web = new WebService(Refs);
-        Java = new JavaService(jab ?? new JabBridge(cfg, AppContext.BaseDirectory, lf.CreateLogger<JabBridge>()), Refs, Windows, Input, Log);
+        Java = new JavaService(jab ?? new JabBridge(cfg, lf.CreateLogger<JabBridge>()), Refs, Windows, Input, Log);
         Jev = jev ?? new JevClient(new HttpClient(), cfg, lf.CreateLogger<JevClient>());
         Executor = executor ?? this;
         Grounder = new Grounder(Jev, observation ?? this, new KindCapturingExecutor(Executor, this), cfg, capture ?? this, Log);

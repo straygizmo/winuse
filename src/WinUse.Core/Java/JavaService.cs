@@ -50,25 +50,19 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
     /// <summary>Loads the bridge on first call; false when the DLL is missing, fails to load, or WINUSE_JAB=off.</summary>
     public bool BridgeAvailable => bridge.IsAvailable;
     public string? BridgeUnavailableReason => bridge.UnavailableReason;
-    public string? BridgeDllPath => bridge.DllPath;
+    public string? BridgeStatus => bridge.Status;
 
     // ---- window probing -------------------------------------------------------------------------
 
     /// <summary>Cheap pre-check: AWT top-level windows have class names SunAwtFrame / SunAwtDialog / SunAwtWindow.</summary>
     public static bool LooksLikeJavaWindow(WindowInfo w) => w.ClassName.StartsWith("SunAwt", StringComparison.Ordinal);
 
-    /// <summary>
-    /// Why <c>getAccessibleContextFromHWND</c> answered nothing for a window whose JVM does answer <c>isJavaWindow</c>:
-    /// usually the legacy Java-side bridge (see <see cref="JavaProcessInfo.LegacyBridgeModule"/>).
-    /// </summary>
+    /// <summary>Why <c>getAccessibleContextFromHWND</c> answered nothing for a window whose JVM does answer <c>isJavaWindow</c>.</summary>
     internal static string NoContextMessage(int pid)
     {
         var info = JavaProcessInfo.Inspect(pid);
-        if (info.IsLegacyBridge)
-            return $"Java Access Bridge returned no accessible context for the window: the JVM (pid {pid}) loaded the legacy Java-side bridge "
-                   + $"({JavaProcessInfo.LegacyBridgeModule}, 32-bit object handles), which answers isJavaWindow but drops every request from the 64-bit client. "
-                   + "The tree cannot be read; a JRE with JavaAccessBridge-32.dll and access-bridge-32.jar would be readable.";
-        return $"Java Access Bridge returned no accessible context for the window (JVM pid {pid}, bridge module {info.LoadedBridgeModule ?? "not loaded"}).";
+        return $"Java Access Bridge returned no accessible context for the window (JVM pid {pid}, "
+               + $"{info.LoadedBridgeModule ?? "no bridge DLL"} loaded, {JavaProcessInfo.FormatName(info.Layout)} wire format).";
     }
 
     /// <summary>

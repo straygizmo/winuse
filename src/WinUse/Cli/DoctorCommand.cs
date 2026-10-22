@@ -74,7 +74,7 @@ public static class DoctorCommand
     {
         var java = ctx.Java;
         output.WriteLine(java.BridgeAvailable
-            ? $"Java Access Bridge: loaded from {java.BridgeDllPath}"
+            ? $"Java Access Bridge: {java.BridgeStatus}"
             : $"Java Access Bridge: {java.BridgeUnavailableReason}");
         var props = JabEnablement.DefaultPropertiesPath;
         output.WriteLine(JabEnablement.IsEnabled(props)

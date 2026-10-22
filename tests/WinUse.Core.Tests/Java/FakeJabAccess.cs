@@ -185,13 +185,13 @@ internal sealed class FakeJabAccess(FakeNode root, nint hwnd = 0x1234) : IJabAcc
     public JabVersionInfo? GetVersion(int vmId) => new("fake 1.8.0", "fake", "fake");
 }
 
-/// <summary>Runs bridge work inline; <paramref name="available"/> false mimics a missing DLL.</summary>
+/// <summary>Runs bridge work inline; <paramref name="available"/> false mimics a client whose window could not be created.</summary>
 internal sealed class FakeJabBridge(FakeJabAccess access, bool available = true, string? reason = null) : IJabBridge
 {
     public FakeJabAccess Access { get; } = access;
     public bool IsAvailable => available;
     public string? UnavailableReason => available ? null : reason ?? "not found (searched: fake)";
-    public string? DllPath => available ? "fake.dll" : null;
+    public string? Status => available ? "fake client" : null;
     public bool Disposed { get; private set; }
 
     public Task<T> RunAsync<T>(Func<IJabAccess, T> work)
