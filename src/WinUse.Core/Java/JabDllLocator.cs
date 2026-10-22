@@ -6,18 +6,31 @@ namespace WinUse.Core.Java;
 public static class JabDllLocator
 {
     public const string FileName = "WindowsAccessBridge-64.dll";
+    /// <summary>The client DLL for 32-bit assistive technologies (ships with 32-bit JREs). Not loadable by the 64-bit winuse.</summary>
+    public const string FileName32 = "WindowsAccessBridge-32.dll";
+    /// <summary>The legacy client DLL (32-bit Windows). Not loadable by the 64-bit winuse.</summary>
+    public const string FileNameLegacy = "WindowsAccessBridge.dll";
 
     /// <returns>The first existing candidate, or null. <paramref name="searched"/> lists every place tried, for doctor.</returns>
+    /// <param name="thirtyTwoBit">
+    /// When nothing was found: the 32-bit client DLLs (<see cref="FileName32"/>, <see cref="FileNameLegacy"/>) that exist in the
+    /// searched directories or in System32/SysWOW64. A machine with only a 32-bit Java has these and not the 64-bit one;
+    /// doctor explains why they do not help.
+    /// </param>
     public static string? Locate(string? configuredPath, string exeDirectory, Func<string, string?> env,
-        Func<string, bool> fileExists, Func<IEnumerable<string>> registryJavaHomes, out IReadOnlyList<string> searched)
+        Func<string, bool> fileExists, Func<IEnumerable<string>> registryJavaHomes,
+        out IReadOnlyList<string> searched, out IReadOnlyList<string> thirtyTwoBit)
     {
         var tried = new List<string>();
+        var dirs = new List<string>();
         string? found = null;
 
         void Try(string label, string? path)
         {
             tried.Add(label);
-            if (found is null && path is not null && fileExists(path)) found = path;
+            if (path is null) return;
+            if (Path.GetDirectoryName(path) is { Length: > 0 } dir) dirs.Add(dir);
+            if (found is null && fileExists(path)) found = path;
         }
 
         Try(configuredPath is null ? "WINUSE_JAB_DLL (not set)" : $"WINUSE_JAB_DLL={configuredPath}", configuredPath);
@@ -30,12 +43,42 @@ public static class JabDllLocator
         tried.Add(homes.Count == 0 ? "registry (no JavaSoft entries)" : "registry: " + string.Join(", ", homes));
         foreach (var h in homes)
         {
-            var p = Path.Combine(h, "bin", FileName);
+            var bin = Path.Combine(h, "bin");
+            dirs.Add(bin);
+            var p = Path.Combine(bin, FileName);
             if (found is null && fileExists(p)) found = p;
         }
         tried.Add("PATH");
         searched = tried;
+
+        var other = new List<string>();
+        if (found is null)
+        {
+            var systemRoot = env("SystemRoot");
+            if (systemRoot is not null)
+            {
+                dirs.Add(Path.Combine(systemRoot, "System32"));
+                dirs.Add(Path.Combine(systemRoot, "SysWOW64"));
+            }
+            foreach (var dir in dirs.Distinct(StringComparer.OrdinalIgnoreCase))
+                foreach (var name in new[] { FileName32, FileNameLegacy })
+                {
+                    var p = Path.Combine(dir, name);
+                    if (fileExists(p)) other.Add(p);
+                }
+        }
+        thirtyTwoBit = other;
         return found;
+    }
+
+    /// <summary>The reason reported when <see cref="Locate"/> found nothing: where it looked, the 32-bit DLLs that exist, and how to fix it.</summary>
+    public static string NotFoundReason(IReadOnlyList<string> searched, IReadOnlyList<string> thirtyTwoBit)
+    {
+        var reason = $"not found (searched: {string.Join("; ", searched)}).";
+        if (thirtyTwoBit.Count > 0)
+            reason += $" Only 32-bit client DLLs exist ({string.Join("; ", thirtyTwoBit)}); the 64-bit winuse cannot load them (the Java app itself may stay 32-bit).";
+        reason += $" {FileName} ships next to winuse.exe in releases: restore it there (scripts/fetch-jab.ps1 fetches it from Temurin) or point WINUSE_JAB_DLL at one.";
+        return reason;
     }
 
     /// <summary>JavaHome values registered under HKLM\SOFTWARE\JavaSoft (JDK, Java Runtime Environment, JRE).</summary>

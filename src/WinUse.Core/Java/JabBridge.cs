@@ -61,7 +61,7 @@ public sealed class JabBridge(WinUseConfig cfg, string exeDirectory, ILogger? lo
                 return;
             }
             var path = JabDllLocator.Locate(cfg.JabDll, exeDirectory, Environment.GetEnvironmentVariable, File.Exists,
-                JabDllLocator.RegistryJavaHomes, out var searched);
+                JabDllLocator.RegistryJavaHomes, out var searched, out var thirtyTwoBit);
             if (path is null && NativeLibrary.TryLoad(JabDllLocator.FileName, out var viaPath))
             {
                 NativeLibrary.Free(viaPath);
@@ -69,7 +69,7 @@ public sealed class JabBridge(WinUseConfig cfg, string exeDirectory, ILogger? lo
             }
             if (path is null)
             {
-                _reason = $"not found (searched: {string.Join("; ", searched)}). Run scripts/fetch-jab.ps1 to place {JabDllLocator.FileName} next to winuse.exe.";
+                _reason = JabDllLocator.NotFoundReason(searched, thirtyTwoBit);
                 _log.LogWarning("Java Access Bridge {Reason}", _reason);
                 return;
             }
