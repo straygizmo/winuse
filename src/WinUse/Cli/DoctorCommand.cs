@@ -85,10 +85,12 @@ public static class DoctorCommand
             var bits = info.Is32Bit switch { true => "32-bit", false => "64-bit", null => "?-bit" };
             var responding = java.BridgeAvailable && await java.IsJavaWindowAsync(w).ConfigureAwait(false);
             var version = responding ? await java.GetVersionAsync(w).ConfigureAwait(false) : null;
+            // The format the client sends with (it may have been assumed) rather than what the process inspection says.
+            var layout = (responding ? await java.GetLayoutAsync(w).ConfigureAwait(false) : null) ?? info.Layout;
             var state = responding
                 ? "bridge responding (" + string.Join(", ", new[]
                     {
-                        info.Layout is null ? null : $"{JavaProcessInfo.FormatName(info.Layout)} wire format",
+                        layout is null ? null : $"{JavaProcessInfo.FormatName(layout)} wire format",
                         version is null ? null : $"Java {version.VmVersion}",
                         version is null ? null : $"bridge {version.JavaDllVersion}",
                     }.Where(s => s is not null)) + ")"

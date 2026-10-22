@@ -61,6 +61,14 @@ public class JavaServiceReadTests
     }
 
     [Fact]
+    public async Task GetLayoutAsync_ReturnsTheLayoutTheClientSendsWith()
+    {
+        using var h = new JavaServiceHarness();
+        Assert.Equal(JabLayout.Wide, await h.Service.GetLayoutAsync(h.Window));
+        Assert.Null(await h.Service.GetLayoutAsync(h.Window with { Hwnd = 0x9999 }));
+    }
+
+    [Fact]
     public async Task GetVersionAsync_IsNull_WhenTheBridgeIsUnavailable()
     {
         using var h = new JavaServiceHarness(available: false, reason: "WINUSE_JAB=off");

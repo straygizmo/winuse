@@ -41,4 +41,6 @@ public interface IJabAccess
     /// answers when the JVM's wire format was guessed wrong; null when no connected JVM claims the window.
     /// </summary>
     JabVersionInfo? GetVersionForWindow(nint hwnd);
+    /// <summary>The wire format the client sends to the JVM that owns <paramref name="hwnd"/>; null when no connected JVM claims it.</summary>
+    JabLayout? LayoutForWindow(nint hwnd);
 }

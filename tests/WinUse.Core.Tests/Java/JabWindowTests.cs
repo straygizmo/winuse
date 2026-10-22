@@ -10,7 +10,7 @@ public class JabWindowTests
     public async Task Create_MakesATopLevelWindow_ThatAnswersHello_AndDisposeDestroysIt()
     {
         var connects = new List<(nint, int)>();
-        var client = new JabClient(new JabClientServices(_ => null, _ => null, _ => 0, _ => true));
+        var client = new JabClient(new JabClientServices(_ => null, _ => new JabJvmProbe(null, null), _ => 0, _ => true));
         client.Connecting += (hwnd, vmId) => connects.Add((hwnd, vmId));
         JabWindow? w = null;
         using var d = new JabDispatcher(() => w = JabWindow.Create(client, null));

@@ -74,7 +74,7 @@ public sealed class JabBridge(WinUseConfig cfg, ILogger? log = null) : IJabBridg
             }
             var services = new JabClientServices(
                 OpenChannel: javaHwnd => _window is null ? null : JabMemoryChannel.Open(_window.Hwnd, javaHwnd, _log),
-                DetectLayout: pid => JavaProcessInfo.Inspect(pid).Layout,
+                Inspect: pid => { var i = JavaProcessInfo.Inspect(pid); return new JabJvmProbe(i.Layout, i.Is32Bit); },
                 PidOf: hwnd => { NativeMethods.GetWindowThreadProcessId(hwnd, out var pid); return (int)pid; },
                 IsWindow: NativeMethods.IsWindow);
             var client = new JabClient(services, _log);

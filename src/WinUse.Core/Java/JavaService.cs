@@ -103,6 +103,13 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
         return await bridge.RunAsync(j => j.GetVersionForWindow(w.Hwnd)).ConfigureAwait(false);
     }
 
+    /// <summary>The wire format the client actually sends to the JVM behind this window; null when the bridge does not reach it.</summary>
+    public async Task<JabLayout?> GetLayoutAsync(WindowInfo w)
+    {
+        if (!bridge.IsAvailable) return null;
+        return await bridge.RunAsync(j => j.LayoutForWindow(w.Hwnd)).ConfigureAwait(false);
+    }
+
     /// <summary>Why the last probe of this Java window failed; null for non-Java windows and for windows the bridge reads.</summary>
     public string? UnavailableReason(WindowInfo w)
     {

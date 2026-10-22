@@ -13,12 +13,13 @@ public class JabClientTests
     {
         public Dictionary<nint, FakeJabChannel> Channels { get; } = new();
         public Dictionary<int, JabLayout?> Layouts { get; } = new();
+        public Dictionary<int, bool?> Bits { get; } = new();
         public HashSet<nint> Alive { get; } = [];
         public List<(int Start, int End)> TextRanges { get; } = [];
 
         public JabClientServices Services => new(
             OpenChannel: hwnd => Channels.TryGetValue(hwnd, out var c) ? c : null,
-            DetectLayout: pid => Layouts.TryGetValue(pid, out var l) ? l : null,
+            Inspect: pid => new JabJvmProbe(Layouts.TryGetValue(pid, out var l) ? l : null, Bits.TryGetValue(pid, out var b) ? b : null),
             PidOf: hwnd => (int)hwnd * 10,
             IsWindow: hwnd => Alive.Contains(hwnd));
 
@@ -27,7 +28,11 @@ public class JabClientTests
             var ch = new FakeJabChannel(layout, handler ?? Jvm(hwnd, vmId));
             Channels[hwnd] = ch;
             Alive.Add(hwnd);
-            if (detectable) Layouts[(int)hwnd * 10] = layout;
+            if (detectable)
+            {
+                Layouts[(int)hwnd * 10] = layout;
+                Bits[(int)hwnd * 10] = layout == JabLayout.Legacy; // the legacy bridge only exists in 32-bit JREs
+            }
             return ch;
         }
 
@@ -106,8 +111,9 @@ public class JabClientTests
         Assert.Equal(JabLayout.Wide, a.LastLayoutSeen);
     }
 
+    /// <summary>Routing uses the vmID from the hello; a JVM that fills rVMID differently is still read (the OpenJDK client does the same).</summary>
     [Fact]
-    public void GetContextFromHwnd_IgnoresAnswersWithForeignVmId()
+    public void GetContextFromHwnd_AcceptsAnswersWithForeignVmId_RoutingByTheHelloVmId()
     {
         var rig = new Rig();
         rig.Add(HwndA, JabLayout.Wide, VmA, (kind, p) =>
@@ -121,7 +127,29 @@ public class JabClientTests
         });
         var client = new JabClient(rig.Services);
         client.Connect(HwndA, VmA);
-        Assert.Null(client.GetContextFromHwnd(HwndA));
+        Assert.Equal(new JabHandle(VmA, 42), client.GetContextFromHwnd(HwndA));
+    }
+
+    /// <summary>A JVM whose process could not be inspected is assumed wide; an empty context answer triggers one more look.</summary>
+    [Fact]
+    public void AssumedWideLayout_IsRedetected_WhenAContextCallComesBackEmpty()
+    {
+        var rig = new Rig();
+        var a = rig.Add(HwndA, JabLayout.Legacy, VmA, detectable: false);
+        var client = new JabClient(rig.Services);
+        client.Connect(HwndA, VmA);
+        Assert.True(client.IsJavaWindow(HwndA)); // same size in both formats, so it answers even with the wrong guess
+        Assert.Equal(JabLayout.Wide, client.Jvms[0].Layout);
+        Assert.Equal(JabLayout.Wide, client.LayoutForWindow(HwndA));
+        Assert.Null(client.GetContextFromHwnd(HwndA)); // still undetectable: the wide packet is dropped
+
+        rig.Layouts[(int)HwndA * 10] = JabLayout.Legacy; // the process became inspectable
+        var h = client.GetContextFromHwnd(HwndA);
+        Assert.Equal(VmA, h!.Value.VmId);
+        Assert.Equal(JabLayout.Legacy, client.Jvms[0].Layout);
+        Assert.Equal(JabLayout.Legacy, client.LayoutForWindow(HwndA));
+        Assert.Equal(JabLayout.Legacy, a.LastLayoutSeen);
+        Assert.Null(client.LayoutForWindow(HwndB));
     }
 
     [Fact]
@@ -315,7 +343,7 @@ public class JabClientTests
         Assert.Equal("no JVMs connected", client.Describe());
         client.Connect(HwndA, VmA);
         client.Connect(HwndB, VmB);
-        Assert.Equal("2 JVMs: pid 160 wide, pid 320 legacy", client.Describe());
+        Assert.Equal("2 JVMs: pid 160 64-bit wide, pid 320 32-bit legacy", client.Describe());
     }
 
     [Fact]
