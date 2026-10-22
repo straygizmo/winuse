@@ -98,6 +98,13 @@ public class SwingFixture {
         });
         tabs.addTab("First", list);
 
+        tabs.addTab("Second", new JLabel("Second page"));
+        tabs.addChangeListener(new ChangeListener() {
+            public void stateChanged(ChangeEvent e) { setStatus("tab " + tabs.getTitleAt(tabs.getSelectedIndex())); }
+        });
+        frame.add(tabs, BorderLayout.CENTER);
+
+        // A button eight unnamed panels deep, always visible: the tree must not lose it to depth limits.
         JButton deep = new JButton("Deep");
         deep.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) { setStatus("deep"); }
@@ -109,11 +116,7 @@ public class SwingFixture {
             outer.add(nested);
             nested = outer;
         }
-        tabs.addTab("Second", nested);
-        tabs.addChangeListener(new ChangeListener() {
-            public void stateChanged(ChangeEvent e) { setStatus("tab " + tabs.getTitleAt(tabs.getSelectedIndex())); }
-        });
-        frame.add(tabs, BorderLayout.CENTER);
+        frame.add(nested, BorderLayout.EAST);
 
         frame.add(status, BorderLayout.SOUTH);
         frame.setVisible(true);
