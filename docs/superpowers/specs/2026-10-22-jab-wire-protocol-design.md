@@ -1,7 +1,7 @@
 # Java Access Bridge ワイヤープロトコルの自前実装 — 旧形式 Bridge の JVM も読む
 
 日付: 2026-10-22
-状態: 設計（ビルダーチェック済み、ユーザー承認待ち）。本文中の「私の判断」はビルダー（Claude）の判断で、ユーザーが決めた事項と区別する。
+状態: 実装済み（ブランチ `feature/jab-wire-protocol`、計画 `docs/superpowers/plans/2026-10-22-jab-wire-protocol.md`）。本文中の「私の判断」はビルダー（Claude）の判断で、ユーザーが決めた事項と区別する。
 前提: PR #4 はマージ済み。`origin/main` から新ブランチを切る。PR #4 の `Jvm.Jre8x86Legacy` テストフィクスチャと `JavaProcessInfo.LoadedBridgeModule` を使う。
 
 ## 1. 目的と背景

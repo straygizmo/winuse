@@ -4,7 +4,7 @@ using WinUse.Core.Windows;
 namespace WinUse.Core.Tests.Java;
 
 /// <summary>
-/// Java runtimes <c>scripts/fetch-jab.ps1 -Dev</c> puts under <c>tools\</c>. <see cref="Jre8x86Legacy"/> is the 32-bit JRE 8
+/// Java runtimes <c>scripts/fetch-dev-java.ps1</c> puts under <c>tools\</c>. <see cref="Jre8x86Legacy"/> is the 32-bit JRE 8
 /// started with an ext directory holding only <c>access-bridge.jar</c> (+ <c>jaccess.jar</c>), so the JVM loads the legacy
 /// <c>JavaAccessBridge.dll</c> like a 32-bit JRE that ships no <c>-32</c> bridge files.
 /// </summary>
@@ -119,7 +119,7 @@ internal sealed class SwingFixture : IDisposable
     /// <summary>Compiles the fixture into %TEMP%\winuse-swing-fixture with --release 8 (runs on the 32-bit Java 8 too).</summary>
     private static string Compile()
     {
-        var javac = Jvms.Javac ?? throw new InvalidOperationException("tools/jdk/bin/javac.exe is missing; run scripts/fetch-jab.ps1 -Dev");
+        var javac = Jvms.Javac ?? throw new InvalidOperationException("tools/jdk/bin/javac.exe is missing; run scripts/fetch-dev-java.ps1");
         var src = Path.Combine(AppContext.BaseDirectory, "Java", "SwingFixture.java");
         var outDir = Path.Combine(Path.GetTempPath(), "winuse-swing-fixture");
         var cls = Path.Combine(outDir, "SwingFixture.class");
