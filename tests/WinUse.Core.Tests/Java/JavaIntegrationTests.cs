@@ -47,7 +47,7 @@ public sealed class JavaIntegrationTests : IDisposable
 
     public void Dispose() { try { Directory.Delete(_tmp, true); } catch { } }
 
-    private WinUseConfig Cfg => TestConfig.Default with { JabDll = JabAccessIntegrationTests.BridgeDll, AllowedRoots = [_tmp] };
+    private WinUseConfig Cfg => TestConfig.Default with { AllowedRoots = [_tmp] };
 
     private static JsonObject Args(params (string k, JsonNode? v)[] kv)
     {
@@ -125,7 +125,7 @@ public sealed class JavaIntegrationTests : IDisposable
         return null;
     }
 
-    public static IEnumerable<object[]> Jvms_() => [[Jvm.Jdk21x64], [Jvm.Jre8x86]];
+    public static IEnumerable<object[]> Jvms_() => [[Jvm.Jdk21x64], [Jvm.Jre8x86], [Jvm.Jre8x86Legacy]];
 
     [Theory] [MemberData(nameof(Jvms_))]
     public async Task Tree_ListsButtonsMenusAndDeepButton(Jvm jvm)
@@ -281,10 +281,18 @@ public sealed class JavaIntegrationTests : IDisposable
         var w = new StringWriter();
         await DoctorCommand.ExecuteAsync(s.Ctx, w);
         var text = w.ToString();
-        Assert.Contains("Java Access Bridge: loaded from", text);
+        Assert.Contains("Java Access Bridge: built-in client (window 0x", text);
+        Assert.Contains($"1 JVMs: pid {s.Fixture.Pid} {(jvm == Jvm.Jre8x86Legacy ? "legacy" : "wide")})", text);
         Assert.Contains("\"WinUse Swing Fixture\"", text);
-        Assert.Contains("bridge responding", text);
-        Assert.Contains(jvm == Jvm.Jre8x86 ? "32-bit" : "64-bit", text);
-        Assert.Contains("JavaAccessBridge-", text);
+        Assert.Contains(jvm == Jvm.Jre8x86Legacy ? "bridge responding (legacy wire format" : "bridge responding (wide wire format", text);
+        Assert.Contains(jvm == Jvm.Jdk21x64 ? ", Java 21" : ", Java 1.8.0", text);
+        Assert.Contains(", bridge ", text);
+        Assert.Contains(jvm == Jvm.Jdk21x64 ? "64-bit" : "32-bit", text);
+        Assert.Contains(jvm switch
+        {
+            Jvm.Jdk21x64 => "javaaccessbridge.dll loaded (wide wire format)",
+            Jvm.Jre8x86 => "JavaAccessBridge-32.dll loaded (wide wire format)",
+            _ => "JavaAccessBridge.dll loaded (legacy wire format)",
+        }, text);
     }
 }

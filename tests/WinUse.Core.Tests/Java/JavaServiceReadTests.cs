@@ -52,6 +52,22 @@ internal sealed class JavaServiceHarness : IDisposable
 public class JavaServiceReadTests
 {
     [Fact]
+    public async Task GetVersionAsync_ReturnsTheJvmVersion_AndReleasesTheRoot()
+    {
+        using var h = new JavaServiceHarness();
+        var v = await h.Service.GetVersionAsync(h.Window);
+        Assert.Equal("fake 1.8.0", v!.VmVersion);
+        Assert.Equal(0, h.Jab.LiveHandles);
+    }
+
+    [Fact]
+    public async Task GetVersionAsync_IsNull_WhenTheBridgeIsUnavailable()
+    {
+        using var h = new JavaServiceHarness(available: false, reason: "WINUSE_JAB=off");
+        Assert.Null(await h.Service.GetVersionAsync(h.Window));
+    }
+
+    [Fact]
     public async Task GetTree_UsesCalibratedCoordinates()
     {
         using var h = new JavaServiceHarness();

@@ -145,7 +145,6 @@ public class WinUseConfigTests
     {
         var cfg = LoadEnv(new Dictionary<string, string?>());
         Assert.Equal(JabMode.Auto, cfg.Jab);
-        Assert.Null(cfg.JabDll);
         Assert.True(cfg.JavaAccessibility);
     }
 
@@ -155,11 +154,9 @@ public class WinUseConfigTests
         var cfg = LoadEnv(new Dictionary<string, string?>
         {
             ["WINUSE_JAB"] = "off",
-            ["WINUSE_JAB_DLL"] = @"C:\x\WindowsAccessBridge-64.dll",
             ["WINUSE_JAVA_ACCESSIBILITY"] = "off",
         });
         Assert.Equal(JabMode.Off, cfg.Jab);
-        Assert.Equal(@"C:\x\WindowsAccessBridge-64.dll", cfg.JabDll);
         Assert.False(cfg.JavaAccessibility);
         Assert.True(LoadEnv(new Dictionary<string, string?> { ["WINUSE_JAVA_ACCESSIBILITY"] = "on" }).JavaAccessibility);
     }

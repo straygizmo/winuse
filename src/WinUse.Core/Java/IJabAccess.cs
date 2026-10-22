@@ -36,4 +36,9 @@ public interface IJabAccess
     int GetSelectionCount(JabHandle h);
     string? GetVirtualName(JabHandle h);
     JabVersionInfo? GetVersion(int vmId);
+    /// <summary>
+    /// Version of the JVM that owns <paramref name="hwnd"/>, found through packets that carry no object handle, so it still
+    /// answers when the JVM's wire format was guessed wrong; null when no connected JVM claims the window.
+    /// </summary>
+    JabVersionInfo? GetVersionForWindow(nint hwnd);
 }

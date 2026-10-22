@@ -16,5 +16,8 @@
 
 ## 実装メモ
 
+- JAB のイベントパケット（フォーカス・プロパティ変化）は `JabWindow` が `WM_COPYDATA` で受けて捨てている。必要になれば `cAddJavaEventNotificationPackage` で購読してここで配る。
+- ワイヤープロトコルの自前実装（`docs/superpowers/specs/2026-10-22-jab-wire-protocol-design.md`）で Windows 側 DLL は不要になった。旧形式の JVM は Temurin 8 x86 を `-Djava.ext.dirs` で旧形式にしたもので検証しており、Java 7 実機での確認は利用者側。
+
 - UIA は Java ウィンドウにもタイトルバーのボタン類を合成する。「JAB が使えない Java ウィンドウは根だけ」という設計書の前提は正確には「Swing の中身が無い」。
 - `KeyChord` の record 等価性は `Modifiers` リストの参照比較（フェーズ 1 申し送り済み）。テストでは `Key` と `Modifiers` を個別に比較している。

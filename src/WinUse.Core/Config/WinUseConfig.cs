@@ -33,7 +33,7 @@ public enum VisualLocatorKind
 /// <summary>Whether Java Swing windows are read through Java Access Bridge.</summary>
 public enum JabMode
 {
-    /// <summary>Use the bridge when <c>WindowsAccessBridge-64.dll</c> can be loaded.</summary>
+    /// <summary>Use the built-in bridge client whenever its window can be created.</summary>
     Auto,
     /// <summary>Never load the bridge; Java windows fall back to visual grounding.</summary>
     Off,
@@ -58,7 +58,6 @@ public sealed record WinUseConfig(
     ScreenshotPolicy Screenshots = ScreenshotPolicy.Auto,
     VisualLocatorKind VisualLocator = VisualLocatorKind.Grid,
     JabMode Jab = JabMode.Auto,
-    string? JabDll = null,
     bool JavaAccessibility = true)
 {
     public const string DefaultClefModel = "clef";
@@ -113,7 +112,6 @@ public sealed record WinUseConfig(
             Screenshots: ParseEnum<ScreenshotPolicy>("WINUSE_SCREENSHOTS", Get("WINUSE_SCREENSHOTS")) ?? ScreenshotPolicy.Auto,
             VisualLocator: ParseEnum<VisualLocatorKind>("WINUSE_VISUAL_LOCATOR", Get("WINUSE_VISUAL_LOCATOR")) ?? VisualLocatorKind.Grid,
             Jab: ParseEnum<JabMode>("WINUSE_JAB", Get("WINUSE_JAB")) ?? JabMode.Auto,
-            JabDll: Get("WINUSE_JAB_DLL"),
             JavaAccessibility: ParseOnOff("WINUSE_JAVA_ACCESSIBILITY", Get("WINUSE_JAVA_ACCESSIBILITY")) ?? true);
     }
 

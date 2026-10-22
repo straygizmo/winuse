@@ -50,12 +50,20 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
     /// <summary>Loads the bridge on first call; false when the DLL is missing, fails to load, or WINUSE_JAB=off.</summary>
     public bool BridgeAvailable => bridge.IsAvailable;
     public string? BridgeUnavailableReason => bridge.UnavailableReason;
-    public string? BridgeDllPath => bridge.DllPath;
+    public string? BridgeStatus => bridge.Status;
 
     // ---- window probing -------------------------------------------------------------------------
 
     /// <summary>Cheap pre-check: AWT top-level windows have class names SunAwtFrame / SunAwtDialog / SunAwtWindow.</summary>
     public static bool LooksLikeJavaWindow(WindowInfo w) => w.ClassName.StartsWith("SunAwt", StringComparison.Ordinal);
+
+    /// <summary>Why <c>getAccessibleContextFromHWND</c> answered nothing for a window whose JVM does answer <c>isJavaWindow</c>.</summary>
+    internal static string NoContextMessage(int pid)
+    {
+        var info = JavaProcessInfo.Inspect(pid);
+        return $"Java Access Bridge returned no accessible context for the window (JVM pid {pid}, "
+               + $"{info.LoadedBridgeModule ?? "no bridge DLL"} loaded, {JavaProcessInfo.FormatName(info.Layout)} wire format).";
+    }
 
     /// <summary>
     /// True when the window is an AWT window whose JVM answers through the bridge. Until the first JVM has ever
@@ -83,6 +91,16 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
         Record(w.Hwnd, "bridge not responding (accessibility not enabled when the app started? run: winuse doctor)");
         _log.LogWarning("Java window 0x{Hwnd:X} '{Title}' does not answer through Java Access Bridge; falling back to UIA", w.Hwnd, w.Title);
         return false;
+    }
+
+    /// <summary>
+    /// The JVM behind a Java window as the bridge reports it (Java version, Java-side bridge version); null when it cannot be
+    /// reached. Uses only handle-free packets, so doctor still shows it when the tree cannot be read.
+    /// </summary>
+    public async Task<JabVersionInfo?> GetVersionAsync(WindowInfo w)
+    {
+        if (!bridge.IsAvailable) return null;
+        return await bridge.RunAsync(j => j.GetVersionForWindow(w.Hwnd)).ConfigureAwait(false);
     }
 
     /// <summary>Why the last probe of this Java window failed; null for non-Java windows and for windows the bridge reads.</summary>
@@ -129,7 +147,7 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
         return await bridge.RunAsync(jab =>
         {
             var windowRoot = jab.GetContextFromHwnd(hwnd)
-                ?? throw new InvalidOperationException("Java Access Bridge returned no accessible context for the window.");
+                ?? throw new InvalidOperationException(NoContextMessage(window.Pid));
             var tx = Calibrate(jab, windowRoot, window.Rect, dpi);
             var root = scope ?? windowRoot;
             var builder = new JavaTreeBuilder(jab, refs, wloc, opt, tx, (id, h) => Own(id, h, snapshot));
