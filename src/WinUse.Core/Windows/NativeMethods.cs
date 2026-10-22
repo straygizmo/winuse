@@ -184,4 +184,6 @@ internal static partial class NativeMethods
     [LibraryImport("user32.dll", EntryPoint = "PostThreadMessageW")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool PostThreadMessageW(uint threadId, uint msg, nint wParam, nint lParam);
+    [LibraryImport("user32.dll")]
+    public static partial uint GetDpiForWindow(nint hwnd);
 }
