@@ -12,6 +12,7 @@ using WinUse.Core.Files;
 using WinUse.Core.Grounding;
 using WinUse.Core.Grounding.Visual;
 using WinUse.Core.Input;
+using WinUse.Core.Java;
 using WinUse.Core.Jev;
 using WinUse.Core.Processes;
 using WinUse.Core.Refs;
@@ -42,7 +43,8 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
     private static readonly Regex WebRefPattern = new(@"^w\d+$", RegexOptions.CultureInvariant);
     private static readonly Regex UiaRefPattern = new(@"^u\d+$", RegexOptions.CultureInvariant);
     private static readonly Regex PointRefPattern = new(@"^pt\d+$", RegexOptions.CultureInvariant);
-    private static readonly Regex AnyRefPattern = new(@"^(u|w|win|pt)\d+$", RegexOptions.CultureInvariant);
+    private static readonly Regex JavaRefPattern = new(@"^j\d+$", RegexOptions.CultureInvariant);
+    private static readonly Regex AnyRefPattern = new(@"^(u|w|win|pt|j)\d+$", RegexOptions.CultureInvariant);
 
     /// <summary>Arguments that may carry a ref; their locators are journaled under <see cref="ResolvedRefsKey"/>.</summary>
     public static readonly string[] RefArgNames = ["ref", "from_ref", "to_ref", "window", "scope", "title"];
@@ -54,7 +56,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
     private int _disposed;
 
     private ToolContext(WinUseConfig cfg, ILoggerFactory lf, IJevClient? jev, IObservationSource? observation, IActionExecutor? executor,
-        IWindowCapture? capture)
+        IWindowCapture? capture, IJabBridge? jab)
     {
         Config = cfg;
         Log = lf.CreateLogger("WinUse.Tools");
@@ -67,6 +69,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
         Files = new FileService(cfg);
         Uia = new UiaService(Dispatcher, Refs, Windows);
         Web = new WebService(Refs);
+        Java = new JavaService(jab ?? new JabBridge(cfg, AppContext.BaseDirectory, lf.CreateLogger<JabBridge>()), Refs, Windows, Input, Log);
         Jev = jev ?? new JevClient(new HttpClient(), cfg, lf.CreateLogger<JevClient>());
         Executor = executor ?? this;
         Grounder = new Grounder(Jev, observation ?? this, new KindCapturingExecutor(Executor, this), cfg, capture ?? this, Log);
@@ -77,12 +80,12 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
     }
 
     public static ToolContext Create(WinUseConfig cfg, ILoggerFactory? loggerFactory = null) =>
-        new(cfg, loggerFactory ?? NullLoggerFactory.Instance, null, null, null, null);
+        new(cfg, loggerFactory ?? NullLoggerFactory.Instance, null, null, null, null, null);
 
-    /// <summary>Overload with replaceable grounding collaborators (model, observation, execution, capture), mainly for tests.</summary>
+    /// <summary>Overload with replaceable collaborators (model, observation, execution, capture, Java Access Bridge), mainly for tests.</summary>
     public static ToolContext Create(WinUseConfig cfg, ILoggerFactory? loggerFactory, IJevClient? jev,
-        IObservationSource? observation = null, IActionExecutor? executor = null, IWindowCapture? capture = null) =>
-        new(cfg, loggerFactory ?? NullLoggerFactory.Instance, jev, observation, executor, capture);
+        IObservationSource? observation = null, IActionExecutor? executor = null, IWindowCapture? capture = null, IJabBridge? jab = null) =>
+        new(cfg, loggerFactory ?? NullLoggerFactory.Instance, jev, observation, executor, capture, jab);
 
     public WinUseConfig Config { get; }
     public ILogger Log { get; }
@@ -95,6 +98,8 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
     public FileService Files { get; }
     public UiaService Uia { get; }
     public WebService Web { get; }
+    /// <summary>Swing windows through Java Access Bridge; <c>j{n}</c> refs.</summary>
+    public JavaService Java { get; }
     public IJevClient Jev { get; }
     /// <summary>Executes grounded actions; this context itself unless a replacement was injected (tests).</summary>
     public IActionExecutor Executor { get; }
@@ -186,6 +191,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
     public static bool IsWebRef(string id) => WebRefPattern.IsMatch(id);
     public static bool IsUiaRef(string id) => UiaRefPattern.IsMatch(id);
     public static bool IsPointRef(string id) => PointRefPattern.IsMatch(id);
+    public static bool IsJavaRef(string id) => JavaRefPattern.IsMatch(id);
 
     public static WindowLocator LocatorOf(WindowInfo w) =>
         new("^" + Regex.Escape(w.Title) + "$", w.ProcessName, w.ClassName);
@@ -199,6 +205,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
         var rect = r.Kind switch
         {
             RefKind.Uia => await Uia.GetRectAsync(r.Id).ConfigureAwait(false),
+            RefKind.Java => await Java.GetRectAsync(r.Id).ConfigureAwait(false),
             RefKind.Window => (await FindWindowAsync(r).ConfigureAwait(false)).Rect,
             _ => throw new NotSupportedException($"Ref '{r.Id}' has no screen rectangle."),
         };
@@ -222,6 +229,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
         var loc = r.Locator switch
         {
             UiaLocator u => u.Window,
+            JavaLocator j => j.Window,
             WindowLocator wl => wl,
             PointLocator pl => pl.Window,
             _ => null,
@@ -243,6 +251,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
         {
             WindowLocator wl => wl,
             UiaLocator u => u.Window,
+            JavaLocator j => j.Window,
             DomLocator d => d.Window,
             _ => throw new ArgumentException($"Ref '{r.Id}' does not identify a window."),
         };
@@ -277,7 +286,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
     {
         var w = await ResolveWindowAsync(null, window, fallback: true).ConfigureAwait(false);
         LastWindow = w.Hwnd;
-        var tree = await UiaService.RetryIfChildlessAsync(() => Uia.GetTreeAsync(w.Hwnd, new TreeOptions()), UiaService.EmptyTreeRetryDelay)
+        var tree = await UiaService.RetryIfChildlessAsync(() => GetTreeAsync(w, new TreeOptions()), UiaService.EmptyTreeRetryDelay)
             .ConfigureAwait(false);
         IReadOnlyList<DomNode> dom = [];
         Rect? webViewRect = null;
@@ -305,8 +314,15 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
         var recent = Journal.Entries.TakeLast(5)
             .Select(e => Truncate($"{e.Tool} {Summary(e.Args)}", 200))
             .ToList();
-        return new Observation(w, candidates, recent);
+        // A Java window that yielded nothing explains itself (bridge missing, not responding), so act / find can say why.
+        return new Observation(w, candidates, recent, candidates.Count == 0 ? Java.UnavailableReason(w) : null);
     }
+
+    /// <summary>The element tree of a window: through Java Access Bridge for a Swing window the bridge can read, else UIA.</summary>
+    public async Task<UiNode> GetTreeAsync(WindowInfo w, TreeOptions opt) =>
+        await Java.IsJavaWindowAsync(w).ConfigureAwait(false)
+            ? await Java.GetTreeAsync(w.Hwnd, opt).ConfigureAwait(false)
+            : await Uia.GetTreeAsync(w.Hwnd, opt).ConfigureAwait(false);
 
     private static string Summary(JsonObject args)
     {
@@ -414,6 +430,18 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
                 default: await Uia.InvokeAsync(target.Id).ConfigureAwait(false); break;
             }
         }
+        else if (IsJavaRef(target.Id))
+        {
+            switch (kind)
+            {
+                case ActKind.Type: await Java.SetTextAsync(target.Id, text!).ConfigureAwait(false); break;
+                case ActKind.Select: await Java.SelectItemAsync(target.Id, text!).ConfigureAwait(false); break;
+                case ActKind.Toggle when target.Checked is { } on:
+                    await Java.SetCheckedAsync(target.Id, !on).ConfigureAwait(false); break;
+                // Click, Auto, and Toggle with unknown state: the element's click action toggles it.
+                default: await Java.InvokeAsync(target.Id).ConfigureAwait(false); break;
+            }
+        }
         else
         {
             throw new ArgumentException($"Ref '{target.Id}' cannot be acted on.");
@@ -447,6 +475,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         try { Web.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)); } catch { }
+        Java.Dispose();
         Uia.Dispose();
         Dispatcher.Dispose();
     }

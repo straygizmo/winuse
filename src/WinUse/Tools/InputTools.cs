@@ -15,7 +15,7 @@ public sealed class InputTools
     [Description("Click an element by ref (UIA: centre of its rectangle plus offset; DOM: Playwright click) or at screen coordinates x,y (physical pixels).")]
     public static Task<CallToolResult> Click(
         ToolContext ctx,
-        [Description("Element ref (u{n}, w{n}) or window ref (win{n}). Either ref or x,y is required.")] string? @ref = null,
+        [Description("Element ref (u{n}, j{n}, w{n}) or window ref (win{n}). Either ref or x,y is required.")] string? @ref = null,
         [Description("Screen x coordinate (physical pixels).")] int? x = null,
         [Description("Screen y coordinate (physical pixels).")] int? y = null,
         [Description("left, right or middle.")] string button = "left",
@@ -49,7 +49,7 @@ public sealed class InputTools
     [Description("Move the mouse over an element (ref) or to screen coordinates x,y.")]
     public static Task<CallToolResult> Hover(
         ToolContext ctx,
-        [Description("Element ref (u{n}, w{n}) or window ref. Either ref or x,y is required.")] string? @ref = null,
+        [Description("Element ref (u{n}, j{n}, w{n}) or window ref. Either ref or x,y is required.")] string? @ref = null,
         [Description("Screen x coordinate (physical pixels).")] int? x = null,
         [Description("Screen y coordinate (physical pixels).")] int? y = null) =>
         ctx.RunStepAsync("hover", ToolContext.Args(("ref", @ref), ("x", x), ("y", y)), async step =>
@@ -106,7 +106,7 @@ public sealed class InputTools
     [Description("Scroll the mouse wheel over an element (ref) or at screen coordinates x,y. Native targets support up/down; DOM refs also left/right.")]
     public static Task<CallToolResult> Scroll(
         ToolContext ctx,
-        [Description("Element ref (u{n}, w{n}) or window ref. Either ref or x,y is required.")] string? @ref = null,
+        [Description("Element ref (u{n}, j{n}, w{n}) or window ref. Either ref or x,y is required.")] string? @ref = null,
         [Description("Screen x coordinate (physical pixels).")] int? x = null,
         [Description("Screen y coordinate (physical pixels).")] int? y = null,
         [Description("up, down, left or right.")] string direction = "down",

@@ -40,7 +40,9 @@ public static class CandidateBuilder
             output.Add(new Candidate(node.Ref, node.ControlType, label, node.Value, node.Enabled,
                 node.Focused, editable, node.Checked, RegionOf(node.Rect, win), container));
         }
-        var childContainer = isContainer && !string.IsNullOrEmpty(node.Name) ? node.Name : container;
+        // An open menu (or a Swing menu read through Java Access Bridge, whose items are listed while closed) names its items' container.
+        var isMenuContainer = node.ControlType is "MenuItem" or "Menu" or "MenuBar" && node.Children.Count > 0;
+        var childContainer = (isContainer || isMenuContainer) && !string.IsNullOrEmpty(node.Name) ? node.Name : container;
         foreach (var c in node.Children) Walk(c, childContainer, win, web, output);
     }
 

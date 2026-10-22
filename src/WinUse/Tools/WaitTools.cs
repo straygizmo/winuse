@@ -65,9 +65,12 @@ public sealed class WaitTools
                 case "enabled":
                 {
                     var target = RequireRef(r);
-                    ok = await PollAsync(async () => target.Kind == RefKind.Dom
-                        ? await ctx.Web.IsEnabledAsync(target.Id)
-                        : (await ctx.Uia.GetElementAsync(target.Id)).Enabled, timeout);
+                    ok = await PollAsync(async () => target.Kind switch
+                    {
+                        RefKind.Dom => await ctx.Web.IsEnabledAsync(target.Id),
+                        RefKind.Java => (await ctx.Java.GetElementAsync(target.Id)).Enabled,
+                        _ => (await ctx.Uia.GetElementAsync(target.Id)).Enabled,
+                    }, timeout);
                     break;
                 }
                 default:
@@ -92,6 +95,9 @@ public sealed class WaitTools
                 return await ctx.Web.ExistsAsync(((DomLocator)r.Locator).Selector);
             case RefKind.Uia:
                 try { await ctx.Uia.GetElementAsync(r.Id); return true; }
+                catch (Exception) { return false; }
+            case RefKind.Java:
+                try { await ctx.Java.GetElementAsync(r.Id); return true; }
                 catch (Exception) { return false; }
             default:
                 return await ctx.Windows.ExistsAsync((WindowLocator)r.Locator);

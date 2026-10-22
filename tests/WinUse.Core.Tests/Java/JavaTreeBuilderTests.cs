@@ -1,4 +1,4 @@
-﻿using WinUse.Core.Java;
+using WinUse.Core.Java;
 using WinUse.Core.Refs;
 using WinUse.Core.Uia;
 using WinUse.Core.Windows;

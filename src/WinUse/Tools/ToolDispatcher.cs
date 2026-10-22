@@ -130,6 +130,8 @@ public sealed class ToolDispatcher(ToolContext ctx) : IToolDispatcher
                 var el = await ctx.Uia.ResolveAsync(u).ConfigureAwait(false);
                 return el is null && !lazy ? null : ctx.Refs.Register(RefKind.Uia, u, el).Id;
             }
+            case JavaLocator j:
+                return await ctx.Java.RegisterResolvedAsync(j, lazy).ConfigureAwait(false);
             case DomLocator d:
             {
                 var sel = await ctx.Web.ResolveAsync(d).ConfigureAwait(false);

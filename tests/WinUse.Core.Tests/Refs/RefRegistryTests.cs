@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using WinUse.Core.Refs;
 
 namespace WinUse.Core.Tests.Refs;

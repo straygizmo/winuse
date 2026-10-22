@@ -1,4 +1,4 @@
-﻿namespace WinUse.Core.Refs;
+namespace WinUse.Core.Refs;
 
 public sealed class RefRegistry
 {

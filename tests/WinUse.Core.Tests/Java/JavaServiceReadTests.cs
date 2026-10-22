@@ -1,4 +1,4 @@
-﻿using WinUse.Core.Input;
+using WinUse.Core.Input;
 using WinUse.Core.Java;
 using WinUse.Core.Refs;
 using WinUse.Core.Threading;

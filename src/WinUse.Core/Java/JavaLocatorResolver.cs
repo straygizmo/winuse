@@ -1,4 +1,4 @@
-﻿using WinUse.Core.Refs;
+using WinUse.Core.Refs;
 
 namespace WinUse.Core.Java;
 

@@ -1,4 +1,4 @@
-﻿using WinUse.Core.Config;
+using WinUse.Core.Config;
 
 namespace WinUse.Core.Tests.Config;
 

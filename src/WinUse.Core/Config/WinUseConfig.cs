@@ -1,4 +1,4 @@
-﻿namespace WinUse.Core.Config;
+namespace WinUse.Core.Config;
 
 /// <summary>Which decision-model API answers grounding and check questions.</summary>
 public enum DecisionProvider

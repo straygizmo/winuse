@@ -14,7 +14,7 @@ public sealed class AssertTools
     [Description("Assert the text of an element equals / contains / matches (regex) the expected value. Returns passed, actual and reason.")]
     public static Task<CallToolResult> AssertText(
         ToolContext ctx,
-        [Description("Element ref (u{n} or w{n}).")] string @ref,
+        [Description("Element ref (u{n}, j{n} or w{n}).")] string @ref,
         [Description("Expected text or pattern.")] string expected,
         [Description("equals, contains or regex.")] string mode = "equals") =>
         ctx.RunStepAsync("assert_text", ToolContext.Args(("ref", @ref), ("expected", expected), ("mode", mode)), async step =>
@@ -38,7 +38,7 @@ public sealed class AssertTools
     [Description("Assert that an element (ref, re-resolved through its locator) or a DOM selector exists, or does not exist with expected=false.")]
     public static Task<CallToolResult> AssertExists(
         ToolContext ctx,
-        [Description("Element ref (u{n}, w{n} or win{n}). Either ref or selector is required.")] string? @ref = null,
+        [Description("Element ref (u{n}, j{n}, w{n} or win{n}). Either ref or selector is required.")] string? @ref = null,
         [Description("CSS / Playwright selector in the connected page.")] string? selector = null,
         [Description("Expected existence.")] bool expected = true) =>
         ctx.RunStepAsync("assert_exists", ToolContext.Args(("ref", @ref), ("selector", selector), ("expected", expected)), async step =>

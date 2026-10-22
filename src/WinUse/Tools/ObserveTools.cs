@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.ComponentModel;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using WinUse.Core.Java;
 using WinUse.Core.Refs;
 using WinUse.Core.Screen;
 using WinUse.Core.Uia;
@@ -17,7 +18,7 @@ public sealed class ObserveTools
     public static Task<CallToolResult> Screenshot(
         ToolContext ctx,
         [Description("What to capture: \"screen\", \"window\" (window, ref or title; default: last observed / foreground window) or \"element\" (ref). Default: \"window\" when window or title is given, else \"screen\".")] string? target = null,
-        [Description("Window ref (win{n}) for target=window, or element ref (u{n} / w{n}) for target=element.")] string? @ref = null,
+        [Description("Window ref (win{n}) for target=window, or element ref (u{n} / j{n} / w{n}) for target=element.")] string? @ref = null,
         [Description("Window title regex for target=window.")] string? title = null,
         [Description("Downscale factor between 0.25 and 1.0.")] double scale = 1.0,
         [Description("Window ref (win{n}) or title regex to capture, like the window argument of the other tools.")] string? window = null) =>
@@ -50,9 +51,12 @@ public sealed class ObserveTools
                         step.Extra.Add(ImageContentBlock.FromBytes(png, "image/png"));
                         return new { width, height, scale = 1.0, origin = (object?)null };
                     }
-                    var rect = r.Kind == RefKind.Uia
-                        ? await ctx.Uia.GetRectAsync(r.Id)
-                        : (await ctx.ResolveWindowAsync(r.Id, null, false)).Rect;
+                    var rect = r.Kind switch
+                    {
+                        RefKind.Uia => await ctx.Uia.GetRectAsync(r.Id),
+                        RefKind.Java => await ctx.Java.GetRectAsync(r.Id),
+                        _ => (await ctx.ResolveWindowAsync(r.Id, null, false)).Rect,
+                    };
                     c = await ctx.Screen.CaptureRectAsync(rect, scale);
                     break;
                 }
@@ -110,11 +114,11 @@ public sealed class ObserveTools
     };
 
     [McpServerTool(Name = "get_ui_tree", ReadOnly = true)]
-    [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect). Use the refs with the other tools.")]
+    [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect). Use the refs with the other tools. Java Swing windows are read through Java Access Bridge and return j{n} refs (menu items are listed even while their menu is closed); java_access_bridge explains why a Java window could not be read that way.")]
     public static Task<CallToolResult> GetUiTree(
         ToolContext ctx,
         [Description("Window ref (win{n}) or title regex. Default: last observed window, else the foreground window.")] string? window = null,
-        [Description("Optional element ref (u{n}) to return only that subtree.")] string? scope = null,
+        [Description("Optional element ref (u{n} or j{n}) to return only that subtree.")] string? scope = null,
         [Description("Maximum depth to walk.")] int max_depth = 12,
         [Description("Keep only interactive elements and labelled text.")] bool interactive_only = true,
         [Description("Include offscreen elements.")] bool include_offscreen = false) =>
@@ -126,13 +130,16 @@ public sealed class ObserveTools
                 : await ctx.ResolveWindowAsync(null, window, fallback: true);
             ctx.LastWindow = w.Hwnd;
             var opt = new TreeOptions(scope, max_depth, interactive_only, include_offscreen);
+            var isJava = scope is null ? await ctx.Java.IsJavaWindowAsync(w) : ToolContext.IsJavaRef(scope);
+            Task<UiNode> Read() => isJava ? ctx.Java.GetTreeAsync(w.Hwnd, opt) : ctx.Uia.GetTreeAsync(w.Hwnd, opt);
             var tree = scope is null
-                ? await UiaService.RetryIfChildlessAsync(() => ctx.Uia.GetTreeAsync(w.Hwnd, opt), UiaService.EmptyTreeRetryDelay)
-                : await ctx.Uia.GetTreeAsync(w.Hwnd, opt);
+                ? await UiaService.RetryIfChildlessAsync(Read, UiaService.EmptyTreeRetryDelay)
+                : await Read();
             return new
             {
                 window = new { @ref = ctx.RegisterWindow(w).Id, title = w.Title, process = w.ProcessName },
                 tree,
+                java_access_bridge = !isJava && JavaService.LooksLikeJavaWindow(w) ? ctx.Java.UnavailableReason(w) : null,
             };
         });
 
@@ -154,7 +161,7 @@ public sealed class ObserveTools
     [Description("Get details of a single element by ref (UIA properties, DOM selector/text, or window info).")]
     public static Task<CallToolResult> GetElement(
         ToolContext ctx,
-        [Description("Element ref (u{n}, w{n} or win{n}).")] string @ref) =>
+        [Description("Element ref (u{n}, j{n}, w{n} or win{n}).")] string @ref) =>
         ctx.RunStepAsync("get_element", ToolContext.Args(("ref", @ref)), async step =>
         {
             var r = ctx.GetRef(@ref);
@@ -163,6 +170,8 @@ public sealed class ObserveTools
             {
                 case RefKind.Uia:
                     return new { element = (object)await ctx.Uia.GetElementAsync(r.Id) };
+                case RefKind.Java:
+                    return new { element = (object)await ctx.Java.GetElementAsync(r.Id) };
                 case RefKind.Dom:
                 {
                     var sel = ((DomLocator)r.Locator).Selector;
@@ -189,7 +198,7 @@ public sealed class ObserveTools
     [Description("Get the text of an element (UIA Value/Text pattern or name; DOM input value or innerText).")]
     public static Task<CallToolResult> GetText(
         ToolContext ctx,
-        [Description("Element ref (u{n} or w{n}).")] string @ref) =>
+        [Description("Element ref (u{n}, j{n} or w{n}).")] string @ref) =>
         ctx.RunStepAsync("get_text", ToolContext.Args(("ref", @ref)), async step =>
         {
             var r = ctx.GetRef(@ref);
@@ -200,6 +209,7 @@ public sealed class ObserveTools
     internal static Task<string> ReadTextAsync(ToolContext ctx, ElementRef r) => r.Kind switch
     {
         RefKind.Uia => ctx.Uia.GetTextAsync(r.Id),
+        RefKind.Java => ctx.Java.GetTextAsync(r.Id),
         RefKind.Dom => ctx.Web.GetTextAsync(r.Id),
         _ => throw new NotSupportedException($"Ref '{r.Id}' is not an element ref."),
     };
@@ -208,29 +218,29 @@ public sealed class ObserveTools
     [Description("Read a UIA table/grid/list view as a 2-D array of cell texts (header row first when available).")]
     public static Task<CallToolResult> GetTable(
         ToolContext ctx,
-        [Description("UIA element ref (u{n}) of the table.")] string @ref) =>
+        [Description("Element ref (u{n} or j{n}) of the table. Not yet supported for Java elements.")] string @ref) =>
         ctx.RunStepAsync("get_table", ToolContext.Args(("ref", @ref)), async step =>
         {
-            var r = RequireUia(ctx, @ref);
+            var r = RequireElement(ctx, @ref);
             step.Resolved = r.Locator;
-            return new { rows = await ctx.Uia.GetTableAsync(r.Id) };
+            return new { rows = r.Kind == RefKind.Java ? await ctx.Java.GetTableAsync(r.Id) : await ctx.Uia.GetTableAsync(r.Id) };
         });
 
     [McpServerTool(Name = "get_list_items", ReadOnly = true)]
-    [Description("List the item names of a UIA list, combo box, tab or tree.")]
+    [Description("List the item names of a UIA or Java list, combo box, tab or tree.")]
     public static Task<CallToolResult> GetListItems(
         ToolContext ctx,
-        [Description("UIA element ref (u{n}) of the list or combo box.")] string @ref) =>
+        [Description("Element ref (u{n} or j{n}) of the list or combo box.")] string @ref) =>
         ctx.RunStepAsync("get_list_items", ToolContext.Args(("ref", @ref)), async step =>
         {
-            var r = RequireUia(ctx, @ref);
+            var r = RequireElement(ctx, @ref);
             step.Resolved = r.Locator;
-            return new { items = await ctx.Uia.GetListItemsAsync(r.Id) };
+            return new { items = r.Kind == RefKind.Java ? await ctx.Java.GetListItemsAsync(r.Id) : await ctx.Uia.GetListItemsAsync(r.Id) };
         });
 
-    internal static ElementRef RequireUia(ToolContext ctx, string id)
+    internal static ElementRef RequireElement(ToolContext ctx, string id)
     {
         var r = ctx.GetRef(id);
-        return r.Kind == RefKind.Uia ? r : throw new NotSupportedException($"Ref '{id}' must be a UIA ref (u{{n}}).");
+        return r.Kind is RefKind.Uia or RefKind.Java ? r : throw new NotSupportedException($"Ref '{id}' must be a UIA or Java element ref (u{{n}} / j{{n}}).");
     }
 }

@@ -84,9 +84,9 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
     /// </summary>
     async Task<ActResult> ActVisualAsync(string intent, Observation o, ActKind kind, string? text, double minConfidence)
     {
-        if (cfg.Screenshots == ScreenshotPolicy.Off) return Fail([], "no elements (screenshots off)");
+        if (cfg.Screenshots == ScreenshotPolicy.Off) return Fail([], NoElements(o, "screenshots off"));
         var frame = await ScreenshotAsync(o).ConfigureAwait(false);
-        if (frame is null) return Fail([], "no elements");
+        if (frame is null) return Fail([], NoElements(o, null));
 
         VisualPoint? located;
         try
@@ -203,6 +203,14 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
 
     static Candidate PointCandidate(int x, int y, Observation o) =>
         new("point", "point", $"{x},{y}", null, true, false, false, null, CandidateBuilder.RegionOfPoint(x, y, o.Window.Rect), null);
+
+    /// <summary>"no elements", with the detail and the Java Access Bridge reason (when the window is a Java window) in parentheses.</summary>
+    static string NoElements(Observation o, string? detail)
+    {
+        var parts = new[] { detail, o.NoElementsReason is null ? null : $"java access bridge: {o.NoElementsReason}" }.Where(p => p is not null);
+        var joined = string.Join("; ", parts);
+        return joined.Length == 0 ? "no elements" : $"no elements ({joined})";
+    }
 
     static ActResult Fail(IReadOnlyList<(Candidate, double)> alternatives, string reason) =>
         new(false, null, 0, 0, null, alternatives, reason);
