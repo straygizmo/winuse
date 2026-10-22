@@ -17,7 +17,7 @@ public sealed class ProcessTools
     private static readonly TimeSpan WaitWindowPoll = TimeSpan.FromMilliseconds(200);
 
     [McpServerTool(Name = "process_run")]
-    [Description("Start a program. With webview_debug=true a free CDP port is passed to WebView2 and get_dom/w{n} refs become available once connected. With wait_window, waits (30 s) for a window of the started process (same pid or process name) whose title matches; if none appears, falls back to any window with a matching title and reports window.matched_by=\"title-only\".")]
+    [Description("Start a program. With webview_debug=true a free CDP port is passed to WebView2 and get_dom/w{n} refs become available once connected. With wait_window, waits (30 s) for a window of the started process (same pid or process name) whose title matches; if none appears, falls back to any window with a matching title and reports window.matched_by=\"title-only\". Java processes are started with accessibility enabled (JAVA_TOOL_OPTIONS) so their Swing windows can be read, unless WINUSE_JAVA_ACCESSIBILITY=off.")]
     public static Task<CallToolResult> ProcessRun(
         ToolContext ctx,
         [Description("Executable path.")] string path,
