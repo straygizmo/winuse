@@ -1,6 +1,6 @@
 # winuse
 
-winuse is an MCP server and CLI that lets an AI observe and operate Windows desktop apps (UI Automation, WebView2/Playwright, input, windows, processes, files). Grounding and verification checks (`act`, `find`, `check`) use a System One decision model: TypeSafe Jev or Cloudflare Clef. Sessions can be saved as JSON scenarios and replayed without AI.
+winuse is an MCP server and CLI that lets an AI observe and operate Windows desktop apps (UI Automation, Java Swing via Java Access Bridge, WebView2/Playwright, input, windows, processes, files). Grounding and verification checks (`act`, `find`, `check`) use a System One decision model: TypeSafe Jev or Cloudflare Clef. Sessions can be saved as JSON scenarios and replayed without AI.
 
 Requires Windows and the .NET 10 SDK.
 
@@ -48,6 +48,31 @@ Settings:
 
 Screenshots of the window are sent to the configured decision model. Jev requires the `TypeSafe-Danger-Zone-Images` opt-in header, which winuse adds automatically, and documents images and `box` as experimental.
 
+### Java Swing (Java Access Bridge)
+
+Swing windows (class `SunAwtFrame` / `SunAwtDialog`) show UI Automation nothing but the frame. winuse reads them through Java Access Bridge (JAB) instead and returns the same kind of tree: `j{n}` refs that `get_ui_tree`, `act`, `find`, `click`, `invoke`, `set_text`, `set_checked`, `select_item`, `get_text`, `assert_exists` and scenario replay accept like `u{n}` refs. Menu items are listed while their menu is closed and `invoke` runs them without opening it. 32-bit and 64-bit JVMs both work: JAB talks over window messages, so the 64-bit winuse reads a 32-bit Java 8 as well as a 64-bit Java 21.
+
+Two things must be in place:
+
+1. **The client DLL.** `WindowsAccessBridge-64.dll` ships with 64-bit JDK/JRE builds (Java 8+, GPLv2 + Classpath Exception). On a machine without one, fetch it from Eclipse Temurin and put it next to `winuse.exe`:
+
+   ```powershell
+   pwsh -File scripts/fetch-jab.ps1          # out\WindowsAccessBridge-64.dll + out\jab-legal\
+   pwsh -File scripts/fetch-jab.ps1 -Dev     # also tools\jdk (64-bit JDK) and tools\jre8-x86 for the integration tests
+   ```
+
+   Search order: `WINUSE_JAB_DLL`, the exe directory, `%JAVA_HOME%\bin`, JDK/JRE homes registered under `HKLM\SOFTWARE\JavaSoft`, then `PATH`.
+
+2. **Accessibility enabled in the Java app's JVM**, which is read when the JVM starts (restart the app after changing it). Neither way touches the JRE:
+   - Apps started with `process_run` get it automatically through `JAVA_TOOL_OPTIONS=-Djavax.accessibility.assistive_technologies=com.sun.java.accessibility.AccessBridge` (the JVM prints one `Picked up JAVA_TOOL_OPTIONS` line to stderr). `WINUSE_JAVA_ACCESSIBILITY=off` disables this.
+   - For apps started any other way, `winuse jab enable` writes `%USERPROFILE%\.accessibility.properties` (what `jabswitch -enable` does; no admin rights). `winuse jab disable` / `winuse jab status` undo and show it.
+
+`winuse doctor` reports where the DLL was loaded from (or why not), whether the user profile enables accessibility, and every Java window with its JVM (`jvm.dll` path and version, bitness, whether the JRE ships `JavaAccessBridge-32/64.dll`) and whether the bridge answers for it. When a Java window cannot be read, `get_ui_tree` returns `java_access_bridge` with the reason and `act` reports `no elements (java access bridge: ...)`; the window then falls back to visual grounding.
+
+Settings: `WINUSE_JAB` (`auto`, default, or `off`), `WINUSE_JAB_DLL` (path to the DLL), `WINUSE_JAVA_ACCESSIBILITY` (`on`, default, or `off`).
+
+Limits: `get_table` does not read Swing tables yet. A JRE trimmed of `jdk.accessibility` (Java 8: `bin\JavaAccessBridge-32.dll` and `lib\ext\access-bridge-32.jar`) cannot be read at all, and **a JVM on such a JRE refuses to start when accessibility is requested** (`AWTError: Assistive Technology not found`): for apps on a trimmed JRE set `WINUSE_JAVA_ACCESSIBILITY=off` before `process_run`, and do not run `winuse jab enable`. `winuse doctor` points this out for every Java window whose JRE lacks the bridge files. A Java app running elevated or as another user is out of reach (its messages are blocked and the user-profile setting does not apply).
+
 ## Register with Claude Code
 
 ```powershell
@@ -59,6 +84,7 @@ claude mcp add winuse -- <repo>\out\winuse.exe --mcp
 ```
 winuse --mcp                                          MCP server over stdio
 winuse run <scenario.json> [--heal] [--report <dir>]  replay a scenario without AI
+winuse jab enable|disable|status                      Java accessibility for this user's JVMs (see "Java Swing")
 winuse doctor                                         check the environment
 winuse --version                                      print the version
 ```
@@ -69,9 +95,11 @@ Exit codes: `0` PASS, `1` FAIL (an assertion failed, or a recorded element / `ac
 
 Replay never calls the decision model for `act`: each `act` step replays on its recorded `resolved` locator, and an `act` step without one fails (unless `--heal`). `scenario_save` therefore refuses `act` steps that did not execute. Only `check` steps (soft) ask the decision model during replay.
 
-`doctor` reports the decision model in use, where each key came from (environment or `.env`), its endpoint and a live probe, UIA window count, WebView2 runtime version and the Playwright driver.
+`doctor` reports the decision model in use, where each key came from (environment or `.env`), its endpoint and a live probe, UIA window count, Java Access Bridge status and Java windows, WebView2 runtime version and the Playwright driver.
 
 ## Tools
+
+Element refs are `u{n}` (UI Automation), `j{n}` (Java Swing via Java Access Bridge), `w{n}` (WebView2 DOM), `win{n}` (window) and `pt{n}` (a screen point from visual grounding).
 
 - Observe: `screenshot` (returns `origin {x, y}`: map an image pixel to `click(x, y)` with `screen_x = origin.x + pixel_x / scale`), `list_windows`, `get_ui_tree`, `get_dom`, `get_element`, `get_text`, `get_table`, `get_list_items`
 - Intent: `act`, `find`, `check` (see "Visual grounding" above for windows without elements)

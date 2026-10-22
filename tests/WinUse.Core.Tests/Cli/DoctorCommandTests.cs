@@ -54,4 +54,21 @@ public class DoctorCommandTests
         Assert.Contains("CLOUDFLARE_ACCOUNT_ID: not set", text);
         Assert.Contains("not configured", text);
     }
+    [Fact]
+    public async Task Doctor_ReportsJavaAccessBridge_NotFound_AndUserEnablement()
+    {
+        var text = await Run(TestConfig.Default with { JabDll = Path.Combine(Path.GetTempPath(), "no-such-dir", "WindowsAccessBridge-64.dll") },
+            new FakeJev(configured: false));
+        Assert.Contains("Java Access Bridge: not found", text);
+        Assert.Contains("fetch-jab.ps1", text);
+        Assert.Contains("Java accessibility (user):", text);
+        Assert.Contains("Java windows:", text);
+    }
+
+    [Fact]
+    public async Task Doctor_WithJabOff_SaysSo()
+    {
+        var text = await Run(TestConfig.Default with { Jab = JabMode.Off }, new FakeJev(configured: false));
+        Assert.Contains("Java Access Bridge: WINUSE_JAB=off", text);
+    }
 }

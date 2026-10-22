@@ -1,0 +1,68 @@
+using WinUse.Core.Java;
+
+namespace WinUse.Core.Tests.Java;
+
+public class JavaRoleMapTests
+{
+    [Theory]
+    [InlineData("push button", null, "Button")]
+    [InlineData("toggle button", null, "Button")]
+    [InlineData("menu bar", null, "MenuBar")]
+    [InlineData("menu", null, "MenuItem")]
+    [InlineData("menu item", null, "MenuItem")]
+    [InlineData("popup menu", null, "Menu")]
+    [InlineData("check box", null, "CheckBox")]
+    [InlineData("radio button", null, "RadioButton")]
+    [InlineData("combo box", null, "ComboBox")]
+    [InlineData("text", null, "Edit")]
+    [InlineData("password text", null, "Edit")]
+    [InlineData("label", null, "Text")]
+    [InlineData("label", "list", "ListItem")]
+    [InlineData("label", "page tab list", "TabItem")]
+    [InlineData("list", null, "List")]
+    [InlineData("tree", null, "Tree")]
+    [InlineData("unknown", "tree", "TreeItem")]
+    [InlineData("unknown", null, "Custom")]
+    [InlineData("table", null, "Table")]
+    [InlineData("page tab list", null, "Tab")]
+    [InlineData("page tab", null, "TabItem")]
+    [InlineData("tool bar", null, "ToolBar")]
+    [InlineData("slider", null, "Slider")]
+    [InlineData("spinbox", null, "Spinner")]
+    [InlineData("progress bar", null, "ProgressBar")]
+    [InlineData("scroll bar", null, "ScrollBar")]
+    [InlineData("hyperlink", null, "Hyperlink")]
+    [InlineData("frame", null, "Window")]
+    [InlineData("dialog", null, "Window")]
+    [InlineData("window", null, "Window")]
+    [InlineData("internal frame", null, "Window")]
+    [InlineData("panel", null, "Pane")]
+    [InlineData("root pane", null, "Pane")]
+    [InlineData("layered pane", null, "Pane")]
+    [InlineData("glass pane", null, "Pane")]
+    [InlineData("scroll pane", null, "Pane")]
+    [InlineData("viewport", null, "Pane")]
+    [InlineData("split pane", null, "Pane")]
+    [InlineData("desktop pane", null, "Pane")]
+    [InlineData("filler", null, "Pane")]
+    [InlineData("tool tip", null, "Pane")]
+    [InlineData("separator", null, "Pane")]
+    [InlineData("canvas", null, "Pane")]
+    [InlineData("icon", null, "Pane")]
+    [InlineData("something new", null, "Custom")]
+    public void ControlTypeOf(string role, string? parentRole, string expected) =>
+        Assert.Equal(expected, JavaRoleMap.ControlTypeOf(role, parentRole));
+
+    [Theory]
+    [InlineData("MenuBar", null, true)]
+    [InlineData("MenuItem", "MenuBar", true)]
+    [InlineData("Menu", null, false)]          // a closed context menu at the top level is not listed
+    [InlineData("Menu", "ComboBox", false)]    // a combo box's popup is not a menu
+    [InlineData("Menu", "MenuItem", true)]
+    [InlineData("CheckBox", "MenuItem", true)]
+    [InlineData("RadioButton", "Menu", true)]
+    [InlineData("CheckBox", "Pane", false)]
+    [InlineData("Button", "MenuItem", false)]
+    public void IsMenuFamily(string controlType, string? parentControlType, bool expected) =>
+        Assert.Equal(expected, JavaRoleMap.IsMenuFamily(controlType, parentControlType));
+}

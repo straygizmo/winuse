@@ -93,4 +93,15 @@ public class CandidateBuilderTests
         Assert.Equal([254, 254, 92], groups.Select(g => g.Count));
         Assert.Equal("u0", groups[0][0].Id);
     }
+    [Fact]
+    public void Build_MenuItemWithChildren_IsContainerForDescendants()
+    {
+        var r = new Rect(0, 0, 40, 20);
+        var uia = Tree(Node("MenuBar", null, r, null, null,
+            Node("MenuItem", "File", r, null, null,
+                Node("MenuItem", "Save", r))));
+        var c = CandidateBuilder.Build(uia, [], Win, null);
+        Assert.Equal("Main", c.Single(x => x.Label == "File").Container);
+        Assert.Equal("File", c.Single(x => x.Label == "Save").Container);
+    }
 }

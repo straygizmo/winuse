@@ -24,6 +24,8 @@ public static class Program
             case "--version":
                 Console.WriteLine($"winuse {Version}");
                 return 0;
+            case "jab":
+                return JabCommand.Execute(args, Console.Out);
             case "doctor":
             {
                 var cfg = LoadConfig();
@@ -77,7 +79,7 @@ public static class Program
 
     private static int Usage()
     {
-        Console.Error.WriteLine("usage: winuse --mcp | winuse run <scenario.json> [--heal] [--report <dir>] | winuse doctor | winuse --version");
+        Console.Error.WriteLine("usage: winuse --mcp | winuse run <scenario.json> [--heal] [--report <dir>] | winuse jab enable|disable|status | winuse doctor | winuse --version");
         return 2;
     }
 

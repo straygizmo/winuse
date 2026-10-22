@@ -14,7 +14,6 @@
 
 - TFM は `net10.0-windows`、`Nullable` と `ImplicitUsings` は enable。SDK は 10.0.102。
 - パッケージ: `ModelContextProtocol` 2.2.0、`FlaUI.UIA3` 5.0.0、`Microsoft.Playwright` 1.63.0。これ以外の自動化系ライブラリは追加しない。
-- 旧 RPA ツール由来の名称・クラス名・外部 exe をコードにもコメントにも持ち込まない。画像照合はフェーズ 2 で OpenCvSharp をライブラリとして使う。
 - stdio モードでは `Console.Out` に書かない。ログは stderr（`LogToStandardErrorThreshold = Trace`）と `%LOCALAPPDATA%/winuse/logs/`。
 - ツール名は英語 snake_case、ツール説明文は英語。
 - ref の形式: UIA は `u{n}`、DOM は `w{n}`、ウィンドウは `win{n}`。
@@ -93,11 +92,13 @@ docs/superpowers/spikes/        Office 接続スパイクの記録
 ### Task 1: ソリューション骨格と設定読み込み
 
 **Files:**
+
 - Create: `winuse.sln`, `.gitignore`, `src/WinUse.Core/WinUse.Core.csproj`, `src/WinUse/WinUse.csproj`, `src/WinUse/Program.cs`, `src/WinUse/app.manifest`, `tests/WinUse.Core.Tests/WinUse.Core.Tests.csproj`
 - Create: `src/WinUse.Core/Config/WinUseConfig.cs`
 - Test: `tests/WinUse.Core.Tests/Config/WinUseConfigTests.cs`
 
 **Interfaces:**
+
 - Produces: `sealed record WinUseConfig(string? JevApiKey, string JevBaseUrl, string JevModel, double MinProbability, double MinConfidence, double SatisfiedThreshold, IReadOnlyList<string> AllowedRoots, IReadOnlyList<string> KillableProcesses, string LogDirectory)`
 - Produces: `static WinUseConfig WinUseConfig.Load(string currentDirectory, string exeDirectory, IDictionary<string,string?> environment)` — `.env` は cwd → exe dir の順に読み、環境変数が `.env` より優先。
 - 既定値: `JevBaseUrl="https://api.typesafe.ai"`, `JevModel="jev-latest"`, `MinProbability=0.55`, `MinConfidence=0.35`, `SatisfiedThreshold=0.7`, `AllowedRoots=[cwd, %TEMP%]`, `LogDirectory=%LOCALAPPDATA%/winuse/logs`。環境変数名: `JEV_API_KEY`, `JEV_BASE_URL`, `JEV_MODEL`, `WINUSE_ALLOWED_ROOTS`（`;` 区切り）, `WINUSE_KILLABLE_PROCESSES`（`;` 区切り）。
@@ -170,10 +171,12 @@ git commit -m "chore: scaffold winuse solution and config loading"
 ### Task 2: STA 自動化スレッド
 
 **Files:**
+
 - Create: `src/WinUse.Core/Threading/AutomationDispatcher.cs`
 - Test: `tests/WinUse.Core.Tests/Threading/AutomationDispatcherTests.cs`
 
 **Interfaces:**
+
 - Produces: `sealed class AutomationDispatcher : IDisposable` with `Task<T> RunAsync<T>(Func<T> work, CancellationToken ct = default)`, `Task RunAsync(Action work, CancellationToken ct = default)`, `bool IsOnDispatcherThread { get; }`。内部は `ApartmentState.STA` のスレッド 1 本 + `BlockingCollection<Action>`。例外は `Task` に伝播。
 
 - [ ] **Step 1: 失敗するテストを書く**
@@ -211,10 +214,12 @@ public async Task RunAsync_PropagatesException()
 ### Task 3: ref とロケータのモデル
 
 **Files:**
+
 - Create: `src/WinUse.Core/Refs/ElementRef.cs`, `src/WinUse.Core/Refs/RefRegistry.cs`
 - Test: `tests/WinUse.Core.Tests/Refs/RefRegistryTests.cs`
 
 **Interfaces:**
+
 - Produces: `enum RefKind { Window, Uia, Dom }`
 - Produces: `abstract record Locator`; `sealed record WindowLocator(string TitleRegex, string? ProcessName, string? ClassName) : Locator`; `sealed record UiaLocator(WindowLocator Window, IReadOnlyList<UiaPathSegment> Path) : Locator`; `sealed record UiaPathSegment(string ControlType, string? AutomationId, string? Name, int Index)`; `sealed record DomLocator(WindowLocator Window, string Selector) : Locator`
 - Produces: `sealed record ElementRef(string Id, RefKind Kind, Locator Locator, object? Handle)` — `Handle` は UIA の `AutomationElement`、DOM の `IElementHandle` か selector、ウィンドウの `nint`。
@@ -254,10 +259,12 @@ public void Locator_RoundTripsThroughJson()
 ### Task 4: Win32 ウィンドウサービス
 
 **Files:**
+
 - Create: `src/WinUse.Core/Windows/NativeMethods.cs`, `src/WinUse.Core/Windows/WindowService.cs`
 - Test: `tests/WinUse.Core.Tests/Windows/WindowServiceTests.cs`（Integration）, `tests/WinUse.Core.Tests/Windows/WindowFilterTests.cs`（Unit）
 
 **Interfaces:**
+
 - Produces: `sealed record WindowInfo(nint Hwnd, string Title, string ClassName, string ProcessName, int Pid, Rect Rect, WindowState State)`; `enum WindowState { Normal, Minimized, Maximized }`; `readonly record struct Rect(int X, int Y, int Width, int Height)`
 - Produces: `sealed class WindowService(AutomationDispatcher d)` with
   - `Task<IReadOnlyList<WindowInfo>> ListAsync(string? titleRegex = null, string? processName = null)` — 可視トップレベルのみ、Z 順（前面が先）。`titleRegex` が不正な正規表現なら `Regex.Escape` してリテラル一致にフォールバック。
@@ -308,10 +315,12 @@ public async Task Notepad_CanBeFoundActivatedAndClosed()
 ### Task 5: 入力サービス（SendInput）
 
 **Files:**
+
 - Create: `src/WinUse.Core/Input/KeyChord.cs`, `src/WinUse.Core/Input/InputService.cs`
 - Test: `tests/WinUse.Core.Tests/Input/KeyChordTests.cs`（Unit）, `tests/WinUse.Core.Tests/Input/InputServiceTests.cs`（Integration）
 
 **Interfaces:**
+
 - Produces: `enum MouseButton { Left, Right, Middle }`
 - Produces: `sealed record KeyChord(IReadOnlyList<ushort> Modifiers, ushort Key)` with `static KeyChord Parse(string text)` — 区切りは `+`、大小無視。修飾: `ctrl`, `alt`, `shift`, `win`。キー: 英数 1 文字、`f1`〜`f24`, `enter`, `tab`, `esc`, `escape`, `space`, `backspace`, `delete`, `home`, `end`, `pageup`, `pagedown`, `up`, `down`, `left`, `right`, `insert`。不明なら `ArgumentException("Unknown key: ...")`。
 - Produces: `sealed class InputService(AutomationDispatcher d)` with `Task ClickAsync(int x, int y, MouseButton b = Left, int count = 1)`, `Task MoveToAsync(int x, int y)`, `Task DragAsync(int x1, int y1, int x2, int y2)`, `Task ScrollAsync(int x, int y, int deltaNotches)`（正で上）, `Task TypeTextAsync(string text, int perCharDelayMs = 0)`（`KEYEVENTF_UNICODE`）, `Task PressAsync(KeyChord chord)`。座標は物理ピクセル（スクリーン座標）。
@@ -358,11 +367,13 @@ public async Task TypeText_IntoNotepad_AppearsInClipboardViaSelectAll()
 ### Task 6: 画面キャプチャ
 
 **Files:**
+
 - Create: `src/WinUse.Core/Screen/ScreenService.cs`
 - Modify: `src/WinUse.Core/WinUse.Core.csproj`（`System.Drawing.Common` パッケージ追加）
 - Test: `tests/WinUse.Core.Tests/Screen/ScreenServiceTests.cs`（Integration）
 
 **Interfaces:**
+
 - Produces: `sealed record Capture(byte[] Png, int Width, int Height, double Scale)`
 - Produces: `sealed class ScreenService(AutomationDispatcher d)` with `Task<Capture> CaptureScreenAsync(double scale = 1.0)`（仮想スクリーン全体、物理ピクセル）, `Task<Capture> CaptureWindowAsync(nint hwnd, double scale = 1.0)`（`PrintWindow` を試し、失敗時は `GetWindowRect` 範囲の画面コピー）, `Task<Capture> CaptureRectAsync(Rect r, double scale = 1.0)`。`scale` は 0.25〜1.0 にクランプ。
 
@@ -396,10 +407,12 @@ public async Task CaptureScreen_WithHalfScale_HalvesDimensions()
 ### Task 7: プロセスサービス（WebView2 デバッグポート対応）
 
 **Files:**
+
 - Create: `src/WinUse.Core/Processes/ProcessService.cs`
 - Test: `tests/WinUse.Core.Tests/Processes/ProcessServiceTests.cs`
 
 **Interfaces:**
+
 - Produces: `sealed record RunSpec(string Path, string? Args, string? Cwd, IReadOnlyDictionary<string,string>? Env, bool WebViewDebug, bool RequireFresh)`
 - Produces: `sealed record RunResult(int Pid, int? CdpPort, string ProcessName)`
 - Produces: `sealed class ProcessService(WinUseConfig cfg)` with
@@ -445,10 +458,12 @@ public void Kill_AllowsProcessStartedByUs()
 ### Task 8: 許可ルート付きファイルサービス
 
 **Files:**
+
 - Create: `src/WinUse.Core/Files/FileService.cs`
 - Test: `tests/WinUse.Core.Tests/Files/FileServiceTests.cs`
 
 **Interfaces:**
+
 - Produces: `sealed class FileService(WinUseConfig cfg)` with `bool Exists(string path)`, `string ReadText(string path)`, `void WriteText(string path, string text)`, `void AppendText(string path, string text)`, `void Copy(string src, string dst, bool overwrite)`, `void Move(string src, string dst)`, `void Delete(string path)`（ファイルもディレクトリも）, `IReadOnlyList<string> ListDir(string path)`, `void Zip(string dir, string zipPath)`, `void Unzip(string zipPath, string dir)`。すべて `Path.GetFullPath` 後に `cfg.AllowedRoots` のいずれかの配下でなければ `UnauthorizedAccessException("Path outside allowed roots: ...")`。
 
 - [ ] **Step 1: 失敗するテスト**
@@ -488,11 +503,13 @@ public void TraversalOutsideRoot_Throws()
 ### Task 9: UIA サービス（FlaUI）
 
 **Files:**
+
 - Create: `src/WinUse.Core/Uia/UiaService.cs`, `src/WinUse.Core/Uia/UiaLocatorResolver.cs`, `src/WinUse.Core/Uia/UiNode.cs`
 - Modify: `src/WinUse.Core/WinUse.Core.csproj`（`FlaUI.UIA3` 5.0.0）
 - Test: `tests/WinUse.Core.Tests/Uia/UiaServiceTests.cs`（Integration）, `tests/WinUse.Core.Tests/Uia/InteractiveFilterTests.cs`（Unit）
 
 **Interfaces:**
+
 - Produces: `sealed record UiNode(string Ref, string ControlType, string? Name, string? AutomationId, string? Value, bool Enabled, bool Offscreen, bool? Checked, bool Focused, Rect Rect, int Depth, IReadOnlyList<UiNode> Children)`
 - Produces: `sealed record TreeOptions(string? ScopeRef = null, int MaxDepth = 12, bool InteractiveOnly = true, bool IncludeOffscreen = false)`
 - Produces: `static class InteractiveFilter` with `static bool IsInteractive(string controlType)` — true: Button, Edit, ComboBox, CheckBox, RadioButton, MenuItem, TabItem, ListItem, TreeItem, Hyperlink, Document, SplitButton, Slider, Spinner, Tab, List, Tree, Menu, MenuBar, ToolBar, Pane(子を持つ場合のみ保持), Window。Text は保持するが `IsInteractive=false`。
@@ -543,11 +560,13 @@ public async Task Calculator_InvokeButtons_ComputesSum()
 ### Task 10: WebView2 サービス（Playwright over CDP）
 
 **Files:**
+
 - Create: `src/WinUse.Core/Web/WebService.cs`, `src/WinUse.Core/Web/DomNode.cs`, `src/WinUse.Core/Web/DomCollector.js`（`EmbeddedResource`）
 - Modify: `src/WinUse.Core/WinUse.Core.csproj`（`Microsoft.Playwright` 1.63.0、`DomCollector.js` を EmbeddedResource）
 - Test: `tests/WinUse.Core.Tests/Web/WebServiceTests.cs`（Integration。CDP 対象は `msedge.exe --remote-debugging-port=<port> --user-data-dir=<temp> --no-first-run about:blank` を使う。WebView2 固有の環境変数は Task 16 の MDium シナリオで検証する）, `tests/WinUse.Core.Tests/Web/DomCollectorTests.cs`（Integration、同じ Edge に `page.SetContentAsync` でテスト HTML を流す）
 
 **Interfaces:**
+
 - Produces: `sealed record DomNode(string Ref, string Role, string? Name, string Tag, string? Value, bool Enabled, bool Focused, bool? Checked, Rect Rect, string Selector)` — `Rect` はページ座標ではなく**スクリーン物理座標**（`window.screenX/Y` + `devicePixelRatio` + `getBoundingClientRect` から算出。ウィンドウ枠のオフセットは `WindowService` の矩形と WebView2 ホストの UIA 矩形から補正する。ズレが出る場合は Task 12 の DOM 優先ルールでクリックは Playwright 経由にするため致命的ではない）
 - Produces: `sealed record PageInfo(string Id, string Url, string Title)`
 - Produces: `sealed class WebService(RefRegistry refs) : IAsyncDisposable` with
@@ -586,10 +605,12 @@ public async Task Fill_ThenGetText_RoundTrips()
 ### Task 11: Jev クライアント
 
 **Files:**
+
 - Create: `src/WinUse.Core/Jev/JevModels.cs`, `src/WinUse.Core/Jev/JevClient.cs`
 - Test: `tests/WinUse.Core.Tests/Jev/JevClientTests.cs`
 
 **Interfaces:**
+
 - Produces: `abstract record JevQuestion(string Instructions)`; `sealed record ChoiceQuestion(string Instructions, IReadOnlyDictionary<string,string?> Criteria) : JevQuestion`; `sealed record NoulQuestion(string Instructions) : JevQuestion`
 - Produces: `sealed record ChoiceAnswer(string Choice, IReadOnlyDictionary<string,double> Probabilities, double Confidence)`; `sealed record NoulAnswer(double Probability)`
 - Produces: `sealed record JevResponse(string Model, IReadOnlyDictionary<string, object> Answers, int InputTokens)` — 値は `ChoiceAnswer` か `NoulAnswer`。
@@ -644,10 +665,12 @@ public void IsConfigured_FalseWithoutKey()
 ### Task 12: Grounding（候補生成と act / find / check）
 
 **Files:**
+
 - Create: `src/WinUse.Core/Grounding/Candidate.cs`, `src/WinUse.Core/Grounding/CandidateBuilder.cs`, `src/WinUse.Core/Grounding/Grounder.cs`
 - Test: `tests/WinUse.Core.Tests/Grounding/CandidateBuilderTests.cs`, `tests/WinUse.Core.Tests/Grounding/GrounderTests.cs`
 
 **Interfaces:**
+
 - Produces: `sealed record Candidate(string Id, string Role, string Label, string? Value, bool Enabled, bool Focused, bool Editable, bool? Checked, string Region, string? Container)` — `Region` は `"top-left"`…`"bottom-right"` の 9 分割（ウィンドウ矩形基準）。`Container` は直近の祖先コンテナのラベル（二段階用）。
 - Produces: `static class CandidateBuilder` with
   - `static IReadOnlyList<Candidate> Build(UiNode uiaTree, IReadOnlyList<DomNode> dom, Rect windowRect, Rect? webViewRect)` — UIA ノードのうち `webViewRect` に含まれるものは落とし（DOM 優先）、DOM ノードを追加。`Label` は Name → Value → AutomationId → Selector の順。
@@ -730,10 +753,12 @@ public async Task CheckAsync_WhenJevUnavailable_ReportsNotAvailable()
 ### Task 13: ジャーナルとシナリオ（モデル・保存・再生）
 
 **Files:**
+
 - Create: `src/WinUse.Core/Scenarios/Journal.cs`, `src/WinUse.Core/Scenarios/Scenario.cs`, `src/WinUse.Core/Scenarios/IToolDispatcher.cs`, `src/WinUse.Core/Scenarios/ScenarioRunner.cs`
 - Test: `tests/WinUse.Core.Tests/Scenarios/JournalTests.cs`, `tests/WinUse.Core.Tests/Scenarios/ScenarioRunnerTests.cs`
 
 **Interfaces:**
+
 - Produces: `sealed record JournalEntry(string StepId, string Tool, JsonObject Args, Locator? Resolved, bool? Passed, TimeSpan Elapsed, DateTimeOffset At)`; `sealed class Journal` with `string NextId()`（`s1`, `s2`…）, `void Record(JournalEntry e)`, `IReadOnlyList<JournalEntry> Entries`, `bool TryGet(string stepId, out JournalEntry e)`
 - Produces: `sealed record ScenarioStep(string Tool, JsonObject Args, Locator? Resolved = null, bool Soft = false, double? MinProbability = null)`; `sealed record Scenario(string Name, int Version, IReadOnlyDictionary<string,string> Env, IReadOnlyList<ScenarioStep> Steps, string? Description = null)` with `static Scenario FromJournal(string name, Journal j, IEnumerable<string> stepIds, string? description)`（`check` ツールのステップは `Soft=true`, `MinProbability=0.8`）, `string ToJson()`, `static Scenario Parse(string json)`, `void Save(string path)`, `static Scenario Load(string path)`
 - Produces: `sealed record ToolInvocation(string Tool, JsonObject Args, Locator? Resolved)`; `sealed record ToolOutcome(bool Ok, bool? Passed, Locator? Resolved, JsonObject Result, string? Error, bool JevUnavailable = false)`
@@ -801,11 +826,13 @@ public async Task RunAsync_ExpandsEnvVariables_AndErrorsOnUndefined()
 ### Task 14: MCP ツール層とディスパッチャ
 
 **Files:**
+
 - Create: `src/WinUse/Tools/ToolResult.cs`, `src/WinUse/Tools/ToolContext.cs`, `src/WinUse/Tools/ObserveTools.cs`, `src/WinUse/Tools/IntentTools.cs`, `src/WinUse/Tools/InputTools.cs`, `src/WinUse/Tools/ElementTools.cs`, `src/WinUse/Tools/WindowTools.cs`, `src/WinUse/Tools/WaitTools.cs`, `src/WinUse/Tools/ProcessTools.cs`, `src/WinUse/Tools/FileTools.cs`, `src/WinUse/Tools/AssertTools.cs`, `src/WinUse/Tools/ScenarioTools.cs`, `src/WinUse/Tools/ToolDispatcher.cs`
 - Modify: `src/WinUse/WinUse.csproj`（`ModelContextProtocol` 2.2.0, `Microsoft.Extensions.Hosting`）, `src/WinUse/Program.cs`
 - Test: `tests/WinUse.Core.Tests/Tools/ToolRegistryTests.cs`（Unit）, `tests/WinUse.Core.Tests/Tools/ToolDispatcherTests.cs`（Unit、ファイル系ツールで往復）
 
 **Interfaces:**
+
 - Produces: `sealed class ToolContext`（DI シングルトン、`static ToolContext Create(WinUseConfig cfg)` で組み立て）: `WinUseConfig Config`, `AutomationDispatcher Dispatcher`, `RefRegistry Refs`, `WindowService Windows`, `InputService Input`, `ScreenService Screen`, `ProcessService Processes`, `FileService Files`, `UiaService Uia`, `WebService Web`, `IJevClient Jev`, `Grounder Grounder`, `Journal Journal`, `nint? LastWindow`。`ToolContext` は `IObservationSource` と `IActionExecutor` を実装する（Observe: 対象ウィンドウ → `Uia.GetTreeAsync` + `Web.IsConnected` なら `Web.GetDomAsync` → `CandidateBuilder.Build`。Execute: Candidate の Id が `w` 始まりなら `Web.ClickAsync/FillAsync/SelectOptionAsync`、`u` 始まりなら `Uia.InvokeAsync/SetTextAsync/SelectItemAsync/SetCheckedAsync`）。
 - Produces: `static class ToolResult` with `static string Ok(object payload, string stepId)`（`{"step_id":..., ...payload}` の JSON）, `static CallToolResult Error(string message, string stepId)`（`IsError=true`）。すべてのツールは `ToolContext.Journal` に記録し `step_id` を返す。
 - Produces: 各 `[McpServerToolType]` クラスの `[McpServerTool(Name="…")]` メソッド。ツール名と引数は設計書 §6 のとおり。`click` / `hover` / `drag` / `scroll` に ref が渡されたとき、`w` 始まりは `Web.ClickAsync` 等を使い、`u` 始まりは `Uia.GetRectAsync` の中心座標で `Input` を使う。`wait_for` は 200ms ポーリングで `window` → `Windows.WaitForAsync`、`window_closed` → `Windows.WaitClosedAsync`、`element(selector)` → `Web.ExistsAsync` または `Uia.ResolveAsync`、`text(ref, expected)` → `GetText` の部分一致、`enabled(ref)` → `GetElement().Enabled` を使う。`ToolContext` のサービスは副作用なく生成できる（UIA3Automation と Playwright は初回使用時に生成）。`screenshot` は `IEnumerable<ContentBlock>`（`ImageContentBlock.FromBytes(png, "image/png")` + 寸法の `TextContentBlock`）を返す。それ以外は `string`（JSON）または `CallToolResult`。
@@ -852,11 +879,13 @@ public async Task Dispatcher_WriteThenReadText_RoundTripsAndJournals()
 ### Task 15: CLI（run / doctor）と Claude Code 登録
 
 **Files:**
+
 - Modify: `src/WinUse/Program.cs`
 - Create: `src/WinUse/Cli/RunCommand.cs`, `src/WinUse/Cli/DoctorCommand.cs`, `README.md`
 - Test: `tests/WinUse.Core.Tests/Cli/RunCommandTests.cs`
 
 **Interfaces:**
+
 - Produces: `static class RunCommand` with `static Task<int> ExecuteAsync(string scenarioPath, bool heal, string? reportDir, ToolContext ctx)` — 非対話セッション（`Environment.UserInteractive == false` または `GetSystemMetrics(SM_REMOTESESSION)` 相当でデスクトップが無い）なら stderr にメッセージを出して 2。`Scenario.Load` → `ScenarioRunner.RunAsync` → 結果を stderr に 1 行/ステップ（`[PASS] 1 process_run (812ms)`）→ `reportDir/report.json` に `RunReport` → 終了コード。`heal` で `HealedScenario` があれば `{path}.healed.json` に保存。
 - Produces: `static class DoctorCommand` with `static Task<int> ExecuteAsync(ToolContext ctx)` — 出力: `.env` の検出パス、Jev 設定有無と疎通（`AskAsync` で `noul("Is 1+1=2?")` を投げて確率を表示）、FlaUI でデスクトップのトップレベル数、WebView2 ランタイムのバージョン（`HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}` の `pv`）。
 - Produces: `Program.cs` の引数規約: `winuse --mcp` / `winuse run <path> [--heal] [--report <dir>]` / `winuse doctor` / それ以外は usage を stderr に出して 2。
@@ -890,9 +919,11 @@ claude mcp add winuse -- C:\Users\mtmar\source\repos\winuse\out\winuse.exe --mcp
 ### Task 16: MDium サンプルシナリオ（受け入れ）
 
 **Files:**
+
 - Create: `scenarios/mdium-smoke.json`, `docs/superpowers/spikes/2026-10-19-mdium-smoke.md`
 
 **Interfaces:**
+
 - Consumes: 全ツール。MDium の exe は `C:\Users\mtmar\source\repos\mdium\src-tauri\target\release\mdium.exe`（存在しなければ `cd ../mdium && npm run tauri build`）。
 
 - [ ] **Step 1: 対話で手順を確立する** — Claude Code に winuse を登録し、次の流れを `act` / `get_dom` / `screenshot` で実施する: `process_run(path=MDIUM_EXE, webview_debug=true, wait_window="MDium")` → `get_dom` で CDP 接続とページ一覧を確認 → 新規ドキュメントを作る操作を `act` で → `type_text("winuse smoke")` → 保存操作を `act` で → `assert_text` でエディタの内容を確認 → `check("Is the document saved?")` → `window_close`。各ステップの `step_id` を控える。
@@ -906,6 +937,7 @@ claude mcp add winuse -- C:\Users\mtmar\source\repos\winuse\out\winuse.exe --mcp
 ### Task 17: Office 接続スパイク（合否に含めない）
 
 **Files:**
+
 - Create: `docs/superpowers/spikes/2026-10-19-office-cdp-spike.md`
 
 - [ ] **Step 1:** Word を終了した状態で `process_run(path="C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE", webview_debug=true, require_fresh=true, wait_window="Word")` を呼ぶ。

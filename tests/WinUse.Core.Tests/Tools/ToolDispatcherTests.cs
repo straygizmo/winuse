@@ -462,4 +462,26 @@ public sealed class ToolDispatcherTests : IDisposable
         Assert.Equal("locator not found: resolved", o.Error);
         Assert.Null(exec.LastPoint);
     }
+    private static WinUse.Core.Refs.JavaLocator JavaSave() =>
+        new(new("^WinUse Swing Fixture$", "java", "SunAwtFrame"), [new WinUse.Core.Refs.JavaPathSegment("push button", "Save", 0)]);
+
+    [Fact]
+    public async Task Dispatcher_JavaLocator_WhenBridgeUnavailable_ReturnsLocatorNotFound()
+    {
+        using var c = ToolContext.Create(TestConfig.WithRoots(tmp) with { Jab = WinUse.Core.Config.JabMode.Off });
+        var o = await new ToolDispatcher(c).InvokeAsync(new("invoke", Args(("ref", "j1")), JavaSave()), default);
+        Assert.True(o.Ok, o.Error);
+        Assert.False(o.Passed);
+        Assert.Equal("locator not found: ref", o.Error);
+    }
+
+    [Fact]
+    public async Task Dispatcher_JavaLocator_LazyTools_GetARef()
+    {
+        using var c = ToolContext.Create(TestConfig.WithRoots(tmp) with { Jab = WinUse.Core.Config.JabMode.Off });
+        var o = await new ToolDispatcher(c).InvokeAsync(new("assert_exists", Args(("ref", "j1")), JavaSave()), default);
+        Assert.True(o.Ok, o.Error);
+        Assert.False(o.Passed);
+        Assert.Equal("element not found", o.Result["reason"]!.GetValue<string>());
+    }
 }

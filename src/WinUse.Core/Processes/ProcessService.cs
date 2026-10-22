@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using WinUse.Core.Config;
+using WinUse.Core.Java;
 
 namespace WinUse.Core.Processes;
 
@@ -40,6 +41,7 @@ public sealed class ProcessService(WinUseConfig cfg)
             psi.Environment.TryGetValue(WebViewArgsVar, out var existing);
             psi.Environment[WebViewArgsVar] = string.IsNullOrWhiteSpace(existing) ? flags : existing + " " + flags;
         }
+        ApplyJavaAccessibility(psi.Environment, cfg.JavaAccessibility);
 
         if (spec.DetachStdio)
         {
@@ -69,6 +71,17 @@ public sealed class ProcessService(WinUseConfig cfg)
             proc.Dispose();
         }
         return new RunResult(pid, port, name);
+    }
+
+    /// <summary>
+    /// Starts any JVM among the children with Java Access Bridge enabled (<c>JAVA_TOOL_OPTIONS</c>), so Swing windows
+    /// can be read without touching the JRE. Non-Java processes ignore the variable. Off with WINUSE_JAVA_ACCESSIBILITY=off.
+    /// </summary>
+    internal static void ApplyJavaAccessibility(IDictionary<string, string?> env, bool enabled)
+    {
+        if (!enabled) return;
+        env.TryGetValue(JabEnablement.ToolOptionsVar, out var existing);
+        env[JabEnablement.ToolOptionsVar] = JabEnablement.ComposeToolOptions(existing);
     }
 
     public bool Exists(string processName)

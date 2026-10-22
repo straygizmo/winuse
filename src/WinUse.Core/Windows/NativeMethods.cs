@@ -147,4 +147,66 @@ internal static partial class NativeMethods
 
     [LibraryImport("user32.dll", EntryPoint = "SendMessageTimeoutW")]
     public static partial nint SendMessageTimeoutW(nint hwnd, uint msg, nint wParam, nint lParam, uint flags, uint timeoutMs, out nint result);
+    // ---- message loop (Java Access Bridge thread) ----------------------------------------------
+
+    public const uint WM_QUIT = 0x0012;
+    public const uint WM_APP = 0x8000;
+    public const uint PM_NOREMOVE = 0;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT { public int X, Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSG
+    {
+        public nint hwnd;
+        public uint message;
+        public nuint wParam;
+        public nint lParam;
+        public uint time;
+        public POINT pt;
+    }
+
+    [LibraryImport("user32.dll", EntryPoint = "PeekMessageW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool PeekMessageW(out MSG msg, nint hwnd, uint filterMin, uint filterMax, uint removeMsg);
+
+    [LibraryImport("user32.dll", EntryPoint = "GetMessageW")]
+    public static partial int GetMessageW(out MSG msg, nint hwnd, uint filterMin, uint filterMax);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool TranslateMessage(ref MSG msg);
+
+    [LibraryImport("user32.dll", EntryPoint = "DispatchMessageW")]
+    public static partial nint DispatchMessageW(ref MSG msg);
+
+    [LibraryImport("user32.dll", EntryPoint = "PostThreadMessageW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool PostThreadMessageW(uint threadId, uint msg, nint wParam, nint lParam);
+    [LibraryImport("user32.dll")]
+    public static partial uint GetDpiForWindow(nint hwnd);
+    // ---- process inspection (doctor) -----------------------------------------------------------
+
+    public const uint PROCESS_QUERY_INFORMATION = 0x0400;
+    public const uint PROCESS_VM_READ = 0x0010;
+    public const uint LIST_MODULES_ALL = 0x03;
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    public static partial nint OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint processId);
+
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool CloseHandle(nint handle);
+
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool IsWow64Process(nint process, [MarshalAs(UnmanagedType.Bool)] out bool wow64);
+
+    [LibraryImport("psapi.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool EnumProcessModulesEx(nint process, [Out] nint[]? modules, uint size, out uint needed, uint filter);
+
+    [LibraryImport("psapi.dll", EntryPoint = "GetModuleFileNameExW", StringMarshalling = StringMarshalling.Utf16)]
+    public static partial uint GetModuleFileNameExW(nint process, nint module, [Out] char[] fileName, uint size);
 }

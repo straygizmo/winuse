@@ -17,7 +17,9 @@ public sealed record Candidate(
 
 public enum ActKind { Auto, Click, Type, Select, Toggle }
 
-public sealed record Observation(WindowInfo Window, IReadOnlyList<Candidate> Candidates, IReadOnlyList<string> RecentActions);
+/// <summary><see cref="NoElementsReason"/> says why a window that should have elements (a Java window) has none.</summary>
+public sealed record Observation(WindowInfo Window, IReadOnlyList<Candidate> Candidates, IReadOnlyList<string> RecentActions,
+    string? NoElementsReason = null);
 
 /// <summary><see cref="Point"/> is set when the target was located on a screenshot (no candidates).</summary>
 public sealed record FindResult(IReadOnlyList<(Candidate Candidate, double Probability)> Ranked, double Confidence, bool Grounded,

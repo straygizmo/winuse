@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,6 +23,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\WinUse.Core\WinUse.Core.csproj" />
     <ProjectReference Include="..\..\src\WinUse\WinUse.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Java\SwingFixture.java" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

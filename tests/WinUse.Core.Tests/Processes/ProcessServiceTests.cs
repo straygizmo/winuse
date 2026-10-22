@@ -77,4 +77,45 @@ public class ProcessServiceTests
         }
         finally { svc.Kill(r.Pid.ToString()); }
     }
+    [Fact]
+    public void ApplyJavaAccessibility_SetsOrExtendsToolOptions_OnlyWhenEnabled()
+    {
+        var env = new Dictionary<string, string?>();
+        ProcessService.ApplyJavaAccessibility(env, enabled: true);
+        Assert.Equal(WinUse.Core.Java.JabEnablement.ToolOption, env["JAVA_TOOL_OPTIONS"]);
+
+        env["JAVA_TOOL_OPTIONS"] = "-Xmx1g";
+        ProcessService.ApplyJavaAccessibility(env, enabled: true);
+        Assert.Equal("-Xmx1g " + WinUse.Core.Java.JabEnablement.ToolOption, env["JAVA_TOOL_OPTIONS"]);
+
+        var off = new Dictionary<string, string?>();
+        ProcessService.ApplyJavaAccessibility(off, enabled: false);
+        Assert.Empty(off);
+    }
+
+    [Fact]
+    public void Run_PassesJavaToolOptions_ToTheChild_UnlessDisabled()
+    {
+        var dir = Directory.CreateTempSubdirectory("winuse-ps").FullName;
+        var outFile = Path.Combine(dir, "out.txt");
+        try
+        {
+            new ProcessService(TestConfig.Default).Run(new RunSpec("cmd.exe", "/c echo %JAVA_TOOL_OPTIONS% > \"" + outFile + "\"", null, null, false, false));
+            WaitFor(outFile);
+            Assert.Contains("-Djavax.accessibility.assistive_technologies=com.sun.java.accessibility.AccessBridge", File.ReadAllText(outFile));
+
+            File.Delete(outFile);
+            new ProcessService(TestConfig.Default with { JavaAccessibility = false })
+                .Run(new RunSpec("cmd.exe", "/c echo %JAVA_TOOL_OPTIONS% > \"" + outFile + "\"", null, null, false, false));
+            WaitFor(outFile);
+            Assert.DoesNotContain("assistive_technologies", File.ReadAllText(outFile));
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    private static void WaitFor(string file)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed < TimeSpan.FromSeconds(10) && (!File.Exists(file) || new FileInfo(file).Length == 0)) Thread.Sleep(50);
+    }
 }

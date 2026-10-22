@@ -2,13 +2,14 @@ using System.Text.Json.Serialization;
 
 namespace WinUse.Core.Refs;
 
-public enum RefKind { Window, Uia, Dom, Point }
+public enum RefKind { Window, Uia, Dom, Point, Java }
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]
 [JsonDerivedType(typeof(WindowLocator), "window")]
 [JsonDerivedType(typeof(UiaLocator), "uia")]
 [JsonDerivedType(typeof(DomLocator), "dom")]
 [JsonDerivedType(typeof(PointLocator), "point")]
+[JsonDerivedType(typeof(JavaLocator), "java")]
 public abstract record Locator;
 
 public sealed record WindowLocator(string TitleRegex, string? ProcessName, string? ClassName) : Locator;
@@ -18,6 +19,13 @@ public sealed record UiaPathSegment(string ControlType, string? AutomationId, st
 public sealed record UiaLocator(WindowLocator Window, IReadOnlyList<UiaPathSegment> Path) : Locator;
 
 public sealed record DomLocator(WindowLocator Window, string Selector) : Locator;
+
+/// <summary>One step down a Java Access Bridge tree: the JAB <c>role_en_US</c> (not the mapped control type), the
+/// accessible name and the index among siblings with the same role and name.</summary>
+public sealed record JavaPathSegment(string Role, string? Name, int Index);
+
+/// <summary>Locator of a Swing element read through Java Access Bridge, from the window root.</summary>
+public sealed record JavaLocator(WindowLocator Window, IReadOnlyList<JavaPathSegment> Path) : Locator;
 
 /// <summary>
 /// A screen point chosen on a screenshot (visual grounding), stored as fractions of the window rectangle so a replay

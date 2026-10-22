@@ -68,4 +68,12 @@ public class ToolHelpersTests
         Assert.Equal((foreign, "title-only"), ProcessTools.PickStartedWindow([foreign], "MDium", 9, "mdium", allowTitleOnly: true));
         Assert.Equal((null, null), ProcessTools.PickStartedWindow([Win(1, "x", "nothing")], "MDium", 9, "mdium", allowTitleOnly: true));
     }
+    [Fact]
+    public void JavaRefs_AreRecognised()
+    {
+        Assert.True(ToolContext.IsJavaRef("j3"));
+        Assert.True(ToolContext.LooksLikeRef("j3"));
+        Assert.False(ToolContext.IsUiaRef("j3"));
+        Assert.False(ToolContext.IsJavaRef("u3"));
+    }
 }
