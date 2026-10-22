@@ -287,4 +287,20 @@ public sealed class JavaIntegrationTests : IDisposable
         Assert.Contains(jvm == Jvm.Jre8x86 ? "32-bit" : "64-bit", text);
         Assert.Contains("JavaAccessBridge-", text);
     }
+
+    [Fact]
+    public async Task Doctor_ExplainsTheLegacyBridge_AndGetUiTreeReportsIt()
+    {
+        await using var s = await Session.OpenAsync(Jvm.Jre8x86Legacy, Cfg);
+        if (s is null) return;
+        var w = new StringWriter();
+        await DoctorCommand.ExecuteAsync(s.Ctx, w);
+        var text = w.ToString();
+        Assert.Contains("bridge responding, but the JVM loaded the legacy Java-side bridge", text);
+        Assert.Contains("JavaAccessBridge.dll loaded (legacy bridge", text);
+
+        var o = await s.D.InvokeAsync(new("get_ui_tree", Args(("window", Window)), null), default);
+        Assert.False(o.Ok);
+        Assert.Contains("legacy Java-side bridge", o.Error);
+    }
 }
