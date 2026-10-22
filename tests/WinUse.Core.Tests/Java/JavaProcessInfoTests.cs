@@ -13,7 +13,7 @@ public class JavaProcessInfoTests
         Assert.Null(info.JvmDllPath);
         Assert.Null(info.JavaBridgeDllPresent);
         Assert.Null(info.LoadedBridgeModule);
-        Assert.False(info.IsLegacyBridge);
+        Assert.Null(info.Layout);
     }
 
     [Fact]
@@ -32,19 +32,41 @@ public class JavaProcessInfoTests
         Assert.Equal(@"jvm: C:\app\jre\bin\client\jvm.dll (1.8.0_392), bridge not loaded, JavaAccessBridge-32.dll or legacy present, access-bridge jar missing"
             + " - this JRE has no Access Bridge: apps started by process_run with WINUSE_JAVA_ACCESSIBILITY=on fail with AWTError; set it to off",
             new JavaProcessInfo(true, @"C:\app\jre\bin\client\jvm.dll", "1.8.0_392", true, false, null).Describe());
-        Assert.Equal(@"jvm: C:\jdk\bin\server\jvm.dll (21), JavaAccessBridge-64.dll loaded, JavaAccessBridge-64.dll or legacy present, access-bridge jar present",
-            new JavaProcessInfo(false, @"C:\jdk\bin\server\jvm.dll", "21", true, true, null, "JavaAccessBridge-64.dll").Describe());
+        Assert.Equal(@"jvm: C:\jdk\bin\server\jvm.dll (21), javaaccessbridge.dll loaded (wide wire format), JavaAccessBridge-64.dll or legacy present, access-bridge jar present",
+            new JavaProcessInfo(false, @"C:\jdk\bin\server\jvm.dll", "21", true, true, null, "javaaccessbridge.dll", Modular: true).Describe());
+    }
+
+    /// <summary>Java 9+ ships the wide-format bridge under the suffix-less, lowercase name; it must not be taken for the legacy one.</summary>
+    [Fact]
+    public void Layout_Java9Plus_LowercaseModule_IsWide()
+    {
+        var info = new JavaProcessInfo(false, @"C:\jdk\bin\server\jvm.dll", "21", true, true, null, "javaaccessbridge.dll", Modular: true);
+        Assert.False(info.IsLegacyBridge);
+        Assert.Equal(JabLayout.Wide, info.Layout);
+        Assert.Contains("javaaccessbridge.dll loaded (wide wire format)", info.Describe());
     }
 
     [Fact]
-    public void Describe_ExplainsTheLegacyBridge()
+    public void Layout_Java8_LegacyModule_IsLegacy()
     {
-        var info = new JavaProcessInfo(true, @"C:\jre7\bin\client\jvm.dll", "7.0.450", true, true, null, "JavaAccessBridge.dll");
+        var info = new JavaProcessInfo(true, @"C:\jre\bin\client\jvm.dll", "1.8.0_472", true, true, null, "JavaAccessBridge.dll", Modular: false);
         Assert.True(info.IsLegacyBridge);
-        var line = info.Describe();
-        Assert.Contains("JavaAccessBridge.dll loaded (legacy bridge", line);
-        Assert.Contains("64-bit winuse cannot read its tree", line);
-        Assert.Contains("JavaAccessBridge-32.dll and access-bridge-32.jar", line);
-        Assert.DoesNotContain("AWTError", line);
+        Assert.Equal(JabLayout.Legacy, info.Layout);
+        Assert.Contains("JavaAccessBridge.dll loaded (legacy wire format)", info.Describe());
+        Assert.DoesNotContain("AWTError", info.Describe());
+    }
+
+    [Fact]
+    public void Layout_Java8_Suffix32Module_IsWide()
+    {
+        var info = new JavaProcessInfo(true, @"C:\jre\bin\client\jvm.dll", "1.8.0_472", true, true, null, "JavaAccessBridge-32.dll");
+        Assert.False(info.IsLegacyBridge);
+        Assert.Equal(JabLayout.Wide, info.Layout);
+    }
+
+    [Fact]
+    public void Layout_NoBridgeLoaded_IsNull()
+    {
+        Assert.Null(new JavaProcessInfo(true, @"C:\jre\bin\client\jvm.dll", "1.8.0_472", true, true, null).Layout);
     }
 }

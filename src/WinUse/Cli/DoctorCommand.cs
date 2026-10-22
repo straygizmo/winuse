@@ -91,7 +91,7 @@ public static class DoctorCommand
             var bits = info.Is32Bit switch { true => "32-bit", false => "64-bit", null => "?-bit" };
             var responding = java.BridgeAvailable && await java.IsJavaWindowAsync(w).ConfigureAwait(false);
             var state = responding
-                ? info.IsLegacyBridge ? "bridge responding, but the JVM loaded the legacy Java-side bridge: the 64-bit winuse cannot read its tree" : "bridge responding"
+                ? info.Layout is null ? "bridge responding" : $"bridge responding ({JavaProcessInfo.FormatName(info.Layout)} wire format)"
                 : java.BridgeAvailable ? "bridge NOT responding (accessibility not enabled when the app started?)"
                 : "bridge unavailable";
             output.WriteLine($"  \"{w.Title}\" (pid {w.Pid}, {bits}, {w.ClassName}): {state}");

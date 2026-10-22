@@ -11,19 +11,24 @@ namespace WinUse.Core.Java;
 /// </summary>
 /// <param name="LoadedBridgeModule">
 /// File name of the <c>JavaAccessBridge*.dll</c> loaded in the process (<c>JavaAccessBridge-64.dll</c>,
-/// <c>JavaAccessBridge-32.dll</c> or the legacy <c>JavaAccessBridge.dll</c>), or null when none is loaded.
+/// <c>JavaAccessBridge-32.dll</c>, Java 9+'s <c>javaaccessbridge.dll</c> or the legacy <c>JavaAccessBridge.dll</c>), or null
+/// when none is loaded.
 /// </param>
+/// <param name="Modular">True for Java 9+ (<c>&lt;jre&gt;\lib\modules</c> exists), whose suffix-less bridge DLL is the wide format.</param>
 public sealed record JavaProcessInfo(bool? Is32Bit, string? JvmDllPath, string? JvmVersion, bool? JavaBridgeDllPresent,
-    bool? AccessBridgeJarPresent, string? Error, string? LoadedBridgeModule = null)
+    bool? AccessBridgeJarPresent, string? Error, string? LoadedBridgeModule = null, bool Modular = false)
 {
     /// <summary>
-    /// The legacy Java-side bridge of 32-bit JREs (Java 7 and 8 ship it next to the <c>-32</c> one; some ship only it).
-    /// Its wire packages carry 32-bit object handles, so it answers <c>isJavaWindow</c> but drops every request from the
-    /// 64-bit client (<c>WindowsAccessBridge-64.dll</c> sends 64-bit handles and the Java side rejects the size mismatch).
+    /// The legacy Java-side bridge of 32-bit Java 7/8 JREs (shipped next to the <c>-32</c> one; some JREs ship only it).
+    /// Its wire packets carry 32-bit object handles (<see cref="JabLayout.Legacy"/>). Java 9+ uses the same file name in
+    /// lower case for its wide-format bridge, so the name alone does not identify the legacy one.
     /// </summary>
     public const string LegacyBridgeModule = "JavaAccessBridge.dll";
 
-    public bool IsLegacyBridge => string.Equals(LoadedBridgeModule, LegacyBridgeModule, StringComparison.OrdinalIgnoreCase);
+    public bool IsLegacyBridge => !Modular && string.Equals(LoadedBridgeModule, LegacyBridgeModule, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The wire format of the loaded bridge, or null when no bridge DLL is loaded (or the process could not be inspected).</summary>
+    public JabLayout? Layout => LoadedBridgeModule is null ? null : IsLegacyBridge ? JabLayout.Legacy : JabLayout.Wide;
 
     public static JavaProcessInfo Inspect(int pid)
     {
@@ -47,16 +52,18 @@ public sealed record JavaProcessInfo(bool? Is32Bit, string? JvmDllPath, string? 
             var bin = Path.GetDirectoryName(Path.GetDirectoryName(jvm));
             var jre = bin is null ? null : Path.GetDirectoryName(bin);
             bool? bridgeDll = null, jar = null;
+            var modular = false;
             if (bin is not null && jre is not null)
             {
                 var suffix = is32 == true ? "32" : "64";
                 bridgeDll = File.Exists(Path.Combine(bin, $"JavaAccessBridge-{suffix}.dll"))
                             || File.Exists(Path.Combine(bin, LegacyBridgeModule));
-                jar = File.Exists(Path.Combine(jre, "lib", "modules")) // Java 9+: jdk.accessibility is a module
+                modular = File.Exists(Path.Combine(jre, "lib", "modules")); // Java 9+: jdk.accessibility is a module
+                jar = modular
                       || File.Exists(Path.Combine(jre, "lib", "ext", $"access-bridge-{suffix}.jar"))
                       || File.Exists(Path.Combine(jre, "lib", "ext", "access-bridge.jar"));
             }
-            return new JavaProcessInfo(is32, jvm, version, bridgeDll, jar, null, bridgeModule);
+            return new JavaProcessInfo(is32, jvm, version, bridgeDll, jar, null, bridgeModule, modular);
         }
         catch (Exception ex)
         {
@@ -92,10 +99,7 @@ public sealed record JavaProcessInfo(bool? Is32Bit, string? JvmDllPath, string? 
         if (JvmDllPath is null) return "jvm: not loaded";
         var suffix = Is32Bit == true ? "32" : "64";
         var line = $"jvm: {JvmDllPath} ({JvmVersion ?? "unknown version"}), ";
-        line += LoadedBridgeModule is null ? "bridge not loaded" : $"{LoadedBridgeModule} loaded";
-        if (IsLegacyBridge)
-            line += " (legacy bridge with 32-bit object handles: it answers isJavaWindow but the 64-bit winuse cannot read its tree;"
-                    + $" a JRE with JavaAccessBridge-{suffix}.dll and access-bridge-{suffix}.jar would be readable)";
+        line += LoadedBridgeModule is null ? "bridge not loaded" : $"{LoadedBridgeModule} loaded ({FormatName(Layout)} wire format)";
         line += $", JavaAccessBridge-{suffix}.dll or legacy {Presence(JavaBridgeDllPresent)}, access-bridge jar {Presence(AccessBridgeJarPresent)}";
         if (JavaBridgeDllPresent == false || AccessBridgeJarPresent == false)
             line += " - this JRE has no Access Bridge: apps started by process_run with WINUSE_JAVA_ACCESSIBILITY=on fail with AWTError; set it to off";
@@ -103,4 +107,7 @@ public sealed record JavaProcessInfo(bool? Is32Bit, string? JvmDllPath, string? 
     }
 
     private static string Presence(bool? present) => present switch { true => "present", false => "missing", null => "unknown" };
+
+    /// <summary>"wide" / "legacy" for doctor lines; "unknown" when no bridge is loaded.</summary>
+    public static string FormatName(JabLayout? layout) => layout switch { JabLayout.Wide => "wide", JabLayout.Legacy => "legacy", _ => "unknown" };
 }

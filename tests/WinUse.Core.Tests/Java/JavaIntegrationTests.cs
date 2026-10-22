@@ -283,9 +283,9 @@ public sealed class JavaIntegrationTests : IDisposable
         var text = w.ToString();
         Assert.Contains("Java Access Bridge: loaded from", text);
         Assert.Contains("\"WinUse Swing Fixture\"", text);
-        Assert.Contains("bridge responding", text);
+        Assert.Contains("bridge responding (wide wire format)", text);
         Assert.Contains(jvm == Jvm.Jre8x86 ? "32-bit" : "64-bit", text);
-        Assert.Contains("JavaAccessBridge-", text);
+        Assert.Contains(jvm == Jvm.Jdk21x64 ? "javaaccessbridge.dll loaded (wide wire format)" : "JavaAccessBridge-32.dll loaded (wide wire format)", text);
     }
 
     [Fact]
@@ -296,8 +296,8 @@ public sealed class JavaIntegrationTests : IDisposable
         var w = new StringWriter();
         await DoctorCommand.ExecuteAsync(s.Ctx, w);
         var text = w.ToString();
-        Assert.Contains("bridge responding, but the JVM loaded the legacy Java-side bridge", text);
-        Assert.Contains("JavaAccessBridge.dll loaded (legacy bridge", text);
+        Assert.Contains("bridge responding (legacy wire format)", text);
+        Assert.Contains("JavaAccessBridge.dll loaded (legacy wire format)", text);
 
         var o = await s.D.InvokeAsync(new("get_ui_tree", Args(("window", Window)), null), default);
         Assert.False(o.Ok);
