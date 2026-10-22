@@ -50,18 +50,18 @@ Screenshots of the window are sent to the configured decision model. Jev require
 
 ### Java Swing (Java Access Bridge)
 
-Swing windows (class `SunAwtFrame` / `SunAwtDialog`) show UI Automation nothing but the frame. winuse reads them through Java Access Bridge (JAB) instead and returns the same kind of tree: `j{n}` refs that `get_ui_tree`, `act`, `find`, `click`, `invoke`, `set_text`, `set_checked`, `select_item`, `get_text`, `assert_exists` and scenario replay accept like `u{n}` refs. Menu items are listed while their menu is closed and `invoke` runs them without opening it. 32-bit and 64-bit JVMs both work: JAB talks over window messages, so the 64-bit winuse reads a 32-bit Java 8 as well as a 64-bit Java 21.
+Swing windows (class `SunAwtFrame` / `SunAwtDialog`) show UI Automation nothing but the frame. winuse reads them through Java Access Bridge (JAB) instead and returns the same kind of tree: `j{n}` refs that `get_ui_tree`, `act`, `find`, `click`, `invoke`, `set_text`, `set_checked`, `select_item`, `get_text`, `assert_exists` and scenario replay accept like `u{n}` refs. Menu items are listed while their menu is closed and `invoke` runs them without opening it. 32-bit and 64-bit JVMs both work: JAB talks over window messages, so the 64-bit winuse reads a 32-bit Java 8 as well as a 64-bit Java 21. The Java side of the bridge has shipped with the JRE since Java 7u6, and Java 7 reads the same `.accessibility.properties` and `-Djavax.accessibility.assistive_technologies` as Java 8+, so Java 7 apps are in scope too.
 
 Two things must be in place:
 
-1. **The client DLL.** `WindowsAccessBridge-64.dll` ships with 64-bit JDK/JRE builds (Java 8+, GPLv2 + Classpath Exception). On a machine without one, fetch it from Eclipse Temurin and put it next to `winuse.exe`:
+1. **The client DLL.** `WindowsAccessBridge-64.dll` (Eclipse Temurin, GPLv2 + Classpath Exception, notices in `jab-legal\`) is bundled: the build copies it from `third_party\jab\` next to `winuse.exe`, and releases ship it. Keep it there. A machine with only a 32-bit Java has no usable copy of its own: a 32-bit JRE ships `WindowsAccessBridge-32.dll` and the legacy `WindowsAccessBridge.dll`, which the 64-bit winuse cannot load (the Java app itself may stay 32-bit; the bundled DLL talks to it).
+
+   Search order: `WINUSE_JAB_DLL`, the exe directory, `%JAVA_HOME%\bin`, JDK/JRE homes registered under `HKLM\SOFTWARE\JavaSoft`, then `PATH`. `winuse doctor` says where it loaded from, or lists the places searched and any 32-bit DLLs it found instead.
 
    ```powershell
-   pwsh -File scripts/fetch-jab.ps1          # out\WindowsAccessBridge-64.dll + out\jab-legal\
+   pwsh -File scripts/fetch-jab.ps1          # refresh third_party\jab\ from the latest Temurin 21
    pwsh -File scripts/fetch-jab.ps1 -Dev     # also tools\jdk (64-bit JDK) and tools\jre8-x86 for the integration tests
    ```
-
-   Search order: `WINUSE_JAB_DLL`, the exe directory, `%JAVA_HOME%\bin`, JDK/JRE homes registered under `HKLM\SOFTWARE\JavaSoft`, then `PATH`.
 
 2. **Accessibility enabled in the Java app's JVM**, which is read when the JVM starts (restart the app after changing it). Neither way touches the JRE:
    - Apps started with `process_run` get it automatically through `JAVA_TOOL_OPTIONS=-Djavax.accessibility.assistive_technologies=com.sun.java.accessibility.AccessBridge` (the JVM prints one `Picked up JAVA_TOOL_OPTIONS` line to stderr). `WINUSE_JAVA_ACCESSIBILITY=off` disables this.

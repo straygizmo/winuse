@@ -1,13 +1,14 @@
 <#
 .SYNOPSIS
-Fetches the Java Access Bridge client DLL (WindowsAccessBridge-64.dll) from an Eclipse Temurin JRE so that winuse
-can read Swing windows on a machine without a 64-bit Java, and (with -Dev) the Java runtimes the integration tests use.
+Refreshes the bundled Java Access Bridge client DLL (third_party\jab\WindowsAccessBridge-64.dll) from an Eclipse
+Temurin JRE, and (with -Dev) fetches the Java runtimes the integration tests use.
 
 .DESCRIPTION
 Downloads the latest Temurin GA release of the given feature version from the Adoptium API.
 
-  -Dest     Where the DLL goes (default: out). WindowsAccessBridge-64.dll is placed next to winuse.exe and the
-            jdk.accessibility legal notices (GPLv2 + Classpath Exception) go to <Dest>\jab-legal\.
+  -Dest     Where the DLL goes (default: third_party\jab, which the build copies next to winuse.exe). The OpenJDK
+            license texts (GPLv2 + Classpath Exception) go to <Dest>\legal\. Update the version noted in
+            third_party\jab\README.md afterwards.
   -Version  Temurin feature version for the DLL and the development JDK (default: 21).
   -Dev      Also extract a 64-bit JDK to tools\jdk (javac for the Swing test fixture) and a 32-bit Temurin 8 JRE to
             tools\jre8-x86 (runs the fixture on a 32-bit Java 8, the typical bundled JRE). tools\ is git-ignored.
@@ -18,7 +19,7 @@ pwsh -File scripts/fetch-jab.ps1 -Dev
 #>
 [CmdletBinding()]
 param(
-    [string]$Dest = 'out',
+    [string]$Dest = 'third_party\jab',
     [string]$Version = '21',
     [switch]$Dev
 )
@@ -59,14 +60,21 @@ try {
     New-Item -ItemType Directory -Force $Dest | Out-Null
     Copy-Item $dll (Join-Path $Dest 'WindowsAccessBridge-64.dll') -Force
     $results += (Join-Path $Dest 'WindowsAccessBridge-64.dll')
-    $legal = Join-Path $jre 'legal\jdk.accessibility'
+    # legal\jdk.accessibility holds only pointers ("Please see ..\java.base\LICENSE"); copy the texts they point to.
+    $legal = Join-Path $jre 'legal\java.base'
     if (Test-Path $legal) {
-        $legalDest = Join-Path $Dest 'jab-legal'
+        $legalDest = Join-Path $Dest 'legal'
         New-Item -ItemType Directory -Force $legalDest | Out-Null
-        Copy-Item (Join-Path $legal '*') $legalDest -Force
+        foreach ($f in @('LICENSE', 'ASSEMBLY_EXCEPTION', 'ADDITIONAL_LICENSE_INFO')) {
+            Copy-Item (Join-Path $legal $f) $legalDest -Force
+        }
         $results += $legalDest
     } else {
-        Write-Warning "No legal\jdk.accessibility folder in $jre; ship the Temurin license notice yourself."
+        Write-Warning "No legal\java.base folder in $jre; ship the OpenJDK license texts yourself."
+    }
+    $release = Join-Path $jre 'release'
+    if (Test-Path $release) {
+        Write-Host ((Get-Content $release | Where-Object { $_ -like 'IMPLEMENTOR_VERSION=*' -or $_ -like 'JAVA_VERSION_DATE=*' }) -join ' ')
     }
 
     if ($Dev) {

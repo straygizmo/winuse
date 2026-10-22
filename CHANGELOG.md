@@ -5,7 +5,8 @@
 Added
 
 - Java Swing support through Java Access Bridge: Swing windows (`SunAwt*`) are read into the same element model as UIA (`j{n}` refs), so `get_ui_tree`, `act` / `find` / `check`, `click`, `invoke`, `set_text`, `set_checked`, `select_item`, `get_text`, `get_list_items`, `assert_*`, `wait_for` and scenario replay work on them. Menu items are listed and invokable while their menu is closed. 32-bit and 64-bit JVMs (tested on Temurin 8 x86 and Temurin 21 x64).
-- `scripts/fetch-jab.ps1` fetches `WindowsAccessBridge-64.dll` (and, with `-Dev`, the test JDK/JRE) from Eclipse Temurin.
+- `WindowsAccessBridge-64.dll` (Eclipse Temurin 21, GPLv2 + Classpath Exception) is bundled in `third_party\jab\` and copied next to `winuse.exe` on build and publish, so releases read Swing without a 64-bit Java on the machine. Needed in particular for apps on a 32-bit JRE (Java 7 or 8), which ships only `WindowsAccessBridge-32.dll` / the legacy `WindowsAccessBridge.dll`, neither loadable by the 64-bit winuse. `scripts/fetch-jab.ps1` refreshes the bundled DLL (and, with `-Dev`, fetches the test JDK/JRE).
+- When the DLL is missing, `doctor` (and the `java_access_bridge` reason) also lists the 32-bit client DLLs found in the searched directories and System32/SysWOW64, and says they cannot be used by a 64-bit process.
 - `winuse jab enable|disable|status` manages `%USERPROFILE%\.accessibility.properties`.
 - `winuse doctor` reports the bridge DLL, the user-profile enablement and every Java window with its JVM.
 - Settings `WINUSE_JAB`, `WINUSE_JAB_DLL`, `WINUSE_JAVA_ACCESSIBILITY`.

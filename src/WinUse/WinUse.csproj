@@ -9,6 +9,12 @@
     <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
   </ItemGroup>
 
+  <!-- Java Access Bridge client DLL (Eclipse Temurin, GPLv2 + Classpath Exception; see third_party/jab/README.md). -->
+  <ItemGroup>
+    <None Include="..\..\third_party\jab\WindowsAccessBridge-64.dll" Link="WindowsAccessBridge-64.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\third_party\jab\legal\*" Link="jab-legal\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>

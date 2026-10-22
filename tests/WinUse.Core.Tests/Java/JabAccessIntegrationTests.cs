@@ -7,7 +7,7 @@ namespace WinUse.Core.Tests.Java;
 [Collection("Desktop")]
 public class JabAccessIntegrationTests
 {
-    internal static string BridgeDll => Path.Combine(Jvms.RepoRoot, "out", JabDllLocator.FileName);
+    internal static string BridgeDll => Path.Combine(Jvms.RepoRoot, "third_party", "jab", JabDllLocator.FileName);
 
     internal static bool Ready(Jvm jvm) => Jvms.Available(jvm) && File.Exists(BridgeDll);
 
@@ -16,7 +16,7 @@ public class JabAccessIntegrationTests
     [InlineData(Jvm.Jre8x86)]
     public async Task Bridge_SeesFixtureWindow_AndReadsRootInfo(Jvm jvm)
     {
-        if (!Ready(jvm)) return; // no JVM / DLL under tools/ and out/: skip
+        if (!Ready(jvm)) return; // no JVM under tools/: skip
         var cfg = TestConfig.Default with { JabDll = BridgeDll };
         using var d = new AutomationDispatcher();
         var windows = new WindowService(d);

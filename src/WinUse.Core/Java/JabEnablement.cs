@@ -15,7 +15,7 @@ public static class JabEnablement
     private const string TechnologiesKey = "assistive_technologies";
     private const string MagnifierKey = "screen_magnifier_present";
 
-    /// <summary>%USERPROFILE%\.accessibility.properties, which every Java 8+ runtime reads at start-up.</summary>
+    /// <summary>%USERPROFILE%\.accessibility.properties, which every Java runtime since 7u6 reads at start-up.</summary>
     public static string DefaultPropertiesPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".accessibility.properties");
 
