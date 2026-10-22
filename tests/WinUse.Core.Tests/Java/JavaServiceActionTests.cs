@@ -232,7 +232,7 @@ public class JavaServiceActionTests
     }
 
     [Fact]
-    public async Task SelectItem_Combo_PressesEscape_WhenItemMissing()
+    public async Task SelectItem_Combo_ClosesPopupWithToggle_WhenItemMissing()
     {
         var combo = new FakeNode("combo box", x: 10, y: 10, w: 100, h: 24).With(actions: ["togglePopup"], hasSelection: true);
         var root = new FakeNode("frame", "F", x: 0, y: 0, w: 400, h: 300).Add(combo);
@@ -240,10 +240,54 @@ public class JavaServiceActionTests
         using (h)
         {
             await Assert.ThrowsAsync<InvalidOperationException>(() => h.Service.SelectItemAsync(Ref(tree, "ComboBox", null), "Nope"));
-            Assert.Equal(KeyChord.Parse("escape").Key, Assert.Single(h.Pressed).Key);
+            // Closing goes through the same action so it does not depend on which window has the keyboard focus.
+            Assert.Equal(2, h.Jab.Actions.Count(a => a.Node == combo && a.Action == "togglePopup"));
+            Assert.Empty(h.Pressed);
             Assert.Empty(h.Clicks);
         }
     }
+
+    [Fact]
+    public async Task GetListItems_Combo_OpensCollectsAndClosesWithToggle()
+    {
+        var (root, combo, popup) = ComboWithPopup();
+        var (h, tree) = await Up(root);
+        using (h)
+        {
+            h.Window = h.Window with { Rect = new WinUse.Core.Windows.Rect(0, 0, 400, 300) };
+            h.Jab.OnAction = TogglePopup(combo, popup);
+            Assert.Equal(["One", "Two", "Three"], await h.Service.GetListItemsAsync(Ref(tree, "ComboBox", null)));
+            Assert.Equal(2, h.Jab.Actions.Count(a => a.Node == combo && a.Action == "togglePopup"));
+            Assert.False(popup.Showing, "the popup should be closed again");
+            Assert.Empty(h.Pressed);
+        }
+    }
+
+    /// <summary>A frame with a combo box and its (closed) popup list as a sibling under the layered pane, like Swing lays them out.</summary>
+    private static (FakeNode Root, FakeNode Combo, FakeNode Popup) ComboWithPopup()
+    {
+        var combo = new FakeNode("combo box", x: 10, y: 10, w: 100, h: 24).With(actions: ["togglePopup"], hasSelection: true);
+        var popupList = new FakeNode("list", null, "enabled,visible", x: 10, y: 34, w: 100, h: 60).Add(
+            new FakeNode("label", "One", "enabled,visible", x: 10, y: 34, w: 100, h: 20),
+            new FakeNode("label", "Two", "enabled,visible", x: 10, y: 54, w: 100, h: 20),
+            new FakeNode("label", "Three", "enabled,visible", x: 10, y: 74, w: 100, h: 20));
+        var popup = new FakeNode("popup menu", null, "enabled,visible", x: 10, y: 34, w: 100, h: 60).Add(popupList);
+        var root = new FakeNode("frame", "F", x: 0, y: 0, w: 400, h: 300).Add(
+            new FakeNode("root pane", x: 0, y: 0, w: 400, h: 300).Add(
+                new FakeNode("layered pane", x: 0, y: 0, w: 400, h: 300).Add(combo, popup)));
+        return (root, combo, popup);
+    }
+
+    private static Func<FakeNode, string, bool> TogglePopup(FakeNode combo, FakeNode popup) => (n, a) =>
+    {
+        if (n == combo && a == "togglePopup")
+        {
+            var show = popup.States.Contains("showing") ? "enabled,visible" : "enabled,visible,showing";
+            void Set(FakeNode x) { x.States = show; foreach (var c in x.Children) Set(c); }
+            Set(popup);
+        }
+        return true;
+    };
 
     [Fact]
     public async Task GetListItems_ReturnsChildNames()

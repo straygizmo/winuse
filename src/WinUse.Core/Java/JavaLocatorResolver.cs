@@ -22,7 +22,7 @@ internal static class JavaLocatorResolver
                 if (jab.GetChild(cur, i) is not { } h) continue;
                 var ki = jab.GetInfo(h);
                 if (ki is null) { jab.Release(h); continue; }
-                kids.Add((h, ki, JavaTreeBuilder.NameOf(jab, h, ki)));
+                kids.Add((h, ki, JavaTreeBuilder.NameOf(jab, h, ki, JavaRoleMap.ControlTypeOf(ki.Role, info.Role))));
             }
             var next = Pick(kids, seg);
             foreach (var k in kids)

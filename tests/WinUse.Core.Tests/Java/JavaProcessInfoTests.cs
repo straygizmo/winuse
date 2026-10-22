@@ -27,7 +27,10 @@ public class JavaProcessInfoTests
     {
         Assert.Equal("jvm: (not accessible: x)", new JavaProcessInfo(null, null, null, null, null, "not accessible: x").Describe());
         Assert.Equal("jvm: not loaded", new JavaProcessInfo(false, null, null, null, null, null).Describe());
-        Assert.Equal(@"jvm: C:\app\jre\bin\client\jvm.dll (1.8.0_392), JavaAccessBridge-32.dll present, access-bridge jar missing",
+        Assert.Equal(@"jvm: C:\app\jre\bin\client\jvm.dll (1.8.0_392), JavaAccessBridge-32.dll present, access-bridge jar missing"
+            + " - this JRE has no Access Bridge: apps started by process_run with WINUSE_JAVA_ACCESSIBILITY=on fail with AWTError; set it to off",
             new JavaProcessInfo(true, @"C:\app\jre\bin\client\jvm.dll", "1.8.0_392", true, false, null).Describe());
+        Assert.EndsWith("access-bridge jar present",
+            new JavaProcessInfo(false, @"C:\jdk\bin\server\jvm.dll", "21", true, true, null).Describe());
     }
 }

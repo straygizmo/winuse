@@ -272,7 +272,7 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
             var ct = JavaRoleMap.ControlTypeOf(info.Role, ParentRoleOf(refId));
             var flags = JavaStates.Parse(info.States);
             var rect = flags.Showing ? tx.Apply(info.X, info.Y, info.Width, info.Height) : default;
-            return JavaTreeBuilder.MakeNode(jab, h, info, refId, ct, 0, [], rect);
+            return JavaTreeBuilder.MakeNode(jab, h, info, refId, ct, JavaTreeBuilder.NameOf(jab, h, info, ct), 0, [], rect);
         }).ConfigureAwait(false);
     }
 
@@ -283,7 +283,7 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
         var info = jab.GetInfo(h) ?? throw new InvalidOperationException($"Element for ref '{refId}' is gone.");
         if (info.HasText && jab.GetText(h, 4000) is { } t) return t;
         var ct = JavaRoleMap.ControlTypeOf(info.Role, ParentRoleOf(refId));
-        return JavaTreeBuilder.ReadValue(jab, h, ct) ?? JavaTreeBuilder.NameOf(jab, h, info) ?? "";
+        return JavaTreeBuilder.ReadValue(jab, h, ct) ?? JavaTreeBuilder.NameOf(jab, h, info, ct) ?? "";
     });
 
     /// <summary>The JAB role of the parent, from the ref's own path (control types of list / tab / tree items depend on it).</summary>

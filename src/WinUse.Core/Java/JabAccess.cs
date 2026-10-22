@@ -90,11 +90,12 @@ internal sealed unsafe class JabAccess(Functions f) : IJabAccess
 
     public string? GetValue(JabHandle h)
     {
-        var buf = new char[MaxStringSize];
+        // The DLL copies from a SHORT_STRING_SIZE field; asking for more would let it read past that field.
+        var buf = new char[ShortStringSize];
         fixed (char* p = buf)
         {
-            if (f.getCurrentAccessibleValueFromContext(h.VmId, h.Ac, p, (short)MaxStringSize) == 0) return null;
-            return NullIfEmpty(Str(p, MaxStringSize));
+            if (f.getCurrentAccessibleValueFromContext(h.VmId, h.Ac, p, (short)ShortStringSize) == 0) return null;
+            return NullIfEmpty(Str(p, ShortStringSize));
         }
     }
 

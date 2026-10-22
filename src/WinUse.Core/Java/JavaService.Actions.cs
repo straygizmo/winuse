@@ -153,7 +153,7 @@ public sealed partial class JavaService
         for (var i = 0; i < info.ChildrenCount; i++)
         {
             if (jab.GetChild(h, i) is not { } c) { names.Add(null); continue; }
-            try { names.Add(jab.GetInfo(c) is { } ci ? JavaTreeBuilder.NameOf(jab, c, ci) : null); }
+            try { names.Add(jab.GetInfo(c) is { } ci ? JavaTreeBuilder.NameOf(jab, c, ci, JavaRoleMap.ControlTypeOf(ci.Role, info.Role)) : null); }
             finally { jab.Release(c); }
         }
         return names;
@@ -180,7 +180,7 @@ public sealed partial class JavaService
                   ?? items.FirstOrDefault(x => x.Name is { } n && n.Contains(item, StringComparison.OrdinalIgnoreCase));
         if (hit is null)
         {
-            await Press(KeyChord.Parse("escape")).ConfigureAwait(false);
+            await TogglePopupAsync(refId, combo).ConfigureAwait(false);
             throw new InvalidOperationException($"Item '{item}' not found in ComboBox (ref {refId}).");
         }
         await ClickAt(hit.Rect.X + hit.Rect.Width / 2, hit.Rect.Y + hit.Rect.Height / 2).ConfigureAwait(false);
@@ -189,15 +189,18 @@ public sealed partial class JavaService
     private sealed record PopupItem(string? Name, Rect Rect);
 
     /// <summary>Opens the combo popup and returns the showing list items of the window (name and screen rectangle).</summary>
+    /// <summary>The combo's <c>togglePopup</c> action: opens a closed popup, closes an open one. Works whatever window has the focus.</summary>
+    private Task TogglePopupAsync(string refId, JabHandle combo) => bridge.RunAsync(jab =>
+    {
+        var actions = jab.GetActions(combo);
+        var action = actions.Contains("togglePopup") ? "togglePopup" : actions.FirstOrDefault()
+            ?? throw new NotSupportedException($"Ref '{refId}' has no action to open its popup.");
+        return jab.DoAction(combo, action);
+    });
+
     private async Task<List<PopupItem>> OpenComboPopupAsync(string refId, JabHandle combo)
     {
-        await bridge.RunAsync(jab =>
-        {
-            var actions = jab.GetActions(combo);
-            var action = actions.Contains("togglePopup") ? "togglePopup" : actions.FirstOrDefault()
-                ?? throw new NotSupportedException($"Ref '{refId}' has no action to open its popup.");
-            return jab.DoAction(combo, action);
-        }).ConfigureAwait(false);
+        await TogglePopupAsync(refId, combo).ConfigureAwait(false);
         await Task.Delay(ComboPopupDelay).ConfigureAwait(false);
 
         var loc = (JavaLocator)GetRef(refId).Locator;
@@ -230,7 +233,7 @@ public sealed partial class JavaService
         if (!JavaStates.Parse(info.States).Showing) return;
         if (parentRole == "list" && info.Role is "label" or "menu item" or "list item")
         {
-            into.Add(new PopupItem(JavaTreeBuilder.NameOf(jab, h, info), tx.Apply(info.X, info.Y, info.Width, info.Height)));
+            into.Add(new PopupItem(JavaTreeBuilder.NameOf(jab, h, info, "ListItem"), tx.Apply(info.X, info.Y, info.Width, info.Height)));
             return;
         }
         for (var i = 0; i < info.ChildrenCount && budget > 0; i++)
@@ -256,7 +259,7 @@ public sealed partial class JavaService
         if (ct != "ComboBox") return names.Select(n => n ?? "").ToArray();
 
         var items = await OpenComboPopupAsync(refId, h).ConfigureAwait(false);
-        await Press(KeyChord.Parse("escape")).ConfigureAwait(false);
+        await TogglePopupAsync(refId, h).ConfigureAwait(false);
         return items.Select(i => i.Name ?? "").ToArray();
     }
 

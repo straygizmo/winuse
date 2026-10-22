@@ -19,7 +19,7 @@ Changed
 Known issues
 
 - `get_table` does not read Swing tables yet (`get_table is not supported for Java elements yet`).
-- A JRE without the Java side of the bridge (trimmed Java 8 without `JavaAccessBridge-32.dll` / `access-bridge-32.jar`, or a `jlink` image without `jdk.accessibility`) cannot be read; `doctor` reports the missing files. A Java app running elevated or as another user is out of reach.
+- A JRE without the Java side of the bridge (trimmed Java 8 without `JavaAccessBridge-32.dll` / `access-bridge-32.jar`, or a `jlink` image without `jdk.accessibility`) cannot be read, and a JVM on such a JRE fails to start when accessibility is requested (`AWTError: Assistive Technology not found`): set `WINUSE_JAVA_ACCESSIBILITY=off` for apps on such a JRE and do not use `winuse jab enable`. `doctor` reports the missing files and this consequence. A Java app running elevated or as another user is out of reach.
 
 ## 0.1.0 - 2026-10-20
 

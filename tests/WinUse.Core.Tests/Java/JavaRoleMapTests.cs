@@ -56,7 +56,9 @@ public class JavaRoleMapTests
     [Theory]
     [InlineData("MenuBar", null, true)]
     [InlineData("MenuItem", "MenuBar", true)]
-    [InlineData("Menu", null, true)]
+    [InlineData("Menu", null, false)]          // a closed context menu at the top level is not listed
+    [InlineData("Menu", "ComboBox", false)]    // a combo box's popup is not a menu
+    [InlineData("Menu", "MenuItem", true)]
     [InlineData("CheckBox", "MenuItem", true)]
     [InlineData("RadioButton", "Menu", true)]
     [InlineData("CheckBox", "Pane", false)]

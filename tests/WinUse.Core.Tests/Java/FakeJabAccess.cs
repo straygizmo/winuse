@@ -70,6 +70,7 @@ internal sealed class FakeJabAccess(FakeNode root, nint hwnd = 0x1234) : IJabAcc
     /// <summary>Side effect of an action; return false to make the bridge report failure.</summary>
     public Func<FakeNode, string, bool>? OnAction { get; set; }
     public int LiveHandles => _live.Count;
+    public int VirtualNameCalls { get; private set; }
 
     private JabHandle NewHandle(FakeNode n)
     {
@@ -175,7 +176,11 @@ internal sealed class FakeJabAccess(FakeNode root, nint hwnd = 0x1234) : IJabAcc
 
     public int GetSelectionCount(JabHandle h) => NodeOf(h).Selected.Count;
 
-    public string? GetVirtualName(JabHandle h) => NodeOf(h).VirtualName;
+    public string? GetVirtualName(JabHandle h)
+    {
+        VirtualNameCalls++;
+        return NodeOf(h).VirtualName;
+    }
 
     public JabVersionInfo? GetVersion(int vmId) => new("fake 1.8.0", "fake", "fake");
 }

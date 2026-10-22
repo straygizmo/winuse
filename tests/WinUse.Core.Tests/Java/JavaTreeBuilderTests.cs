@@ -157,4 +157,27 @@ public class JavaTreeBuilderTests
     private static IEnumerable<UiNode> Flatten(UiNode n) => new[] { n }.Concat(n.Children.SelectMany(Flatten));
 
     private static ElementRef Get(RefRegistry refs, string id) => refs.TryGet(id, out var r) ? r : throw new KeyNotFoundException(id);
+    [Fact]
+    public void Build_ComboPopup_IsNotListedWhileClosed()
+    {
+        // Swing's JComboBox exposes its popup (role "popup menu") as a child even while closed.
+        var popup = new FakeNode("popup menu", null, "enabled,visible").Add(
+            new FakeNode("list", null, "enabled,visible").Add(new FakeNode("label", "One", "enabled,visible")));
+        var combo = new FakeNode("combo box").With(actions: ["togglePopup"], hasSelection: true).Add(popup);
+        var (tree, _, _, _, _) = Build(new FakeNode("frame", "F").Add(combo));
+        var cb = Assert.Single(tree.Children);
+        Assert.Equal("ComboBox", cb.ControlType);
+        Assert.Empty(cb.Children);
+        Assert.DoesNotContain("Menu", Flatten(tree).Select(n => n.ControlType));
+    }
+
+    [Fact]
+    public void Build_AsksForVirtualName_OnceAndNeverForPanes()
+    {
+        var root = new FakeNode("frame", "F").Add(
+            new FakeNode("panel").Add(new FakeNode("push button").With(actions: ["click"], virtualName: "Virtual")));
+        var (tree, _, jab, _, _) = Build(root);
+        Assert.Equal("Virtual", Assert.Single(tree.Children).Name);
+        Assert.Equal(1, jab.VirtualNameCalls);
+    }
 }

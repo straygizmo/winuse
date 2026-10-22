@@ -63,10 +63,11 @@ public static class JavaRoleMap
     }
 
     /// <summary>
-    /// Menu bars, menus, menu items and the check / radio items inside a menu: kept in the tree even while the menu is
-    /// closed, because they can be invoked without opening it.
+    /// Menu bars, menu items and the check / radio items inside a menu: kept in the tree even while the menu is closed,
+    /// because they can be invoked without opening it. A popup menu (<c>Menu</c>) counts only inside a menu: a combo
+    /// box's popup and a closed context menu are not menus the user can see.
     /// </summary>
     public static bool IsMenuFamily(string controlType, string? parentControlType) =>
-        controlType is "MenuBar" or "Menu" or "MenuItem"
-        || (controlType is "CheckBox" or "RadioButton" && parentControlType is "MenuItem" or "Menu");
+        controlType is "MenuBar" or "MenuItem"
+        || (controlType is "Menu" or "CheckBox" or "RadioButton" && parentControlType is "MenuBar" or "MenuItem" or "Menu");
 }

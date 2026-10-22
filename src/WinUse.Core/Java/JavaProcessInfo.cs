@@ -71,7 +71,10 @@ public sealed record JavaProcessInfo(bool? Is32Bit, string? JvmDllPath, string? 
         if (Error is not null) return $"jvm: ({Error})";
         if (JvmDllPath is null) return "jvm: not loaded";
         var suffix = Is32Bit == true ? "32" : "64";
-        return $"jvm: {JvmDllPath} ({JvmVersion ?? "unknown version"}), JavaAccessBridge-{suffix}.dll {Presence(JavaBridgeDllPresent)}, access-bridge jar {Presence(AccessBridgeJarPresent)}";
+        var line = $"jvm: {JvmDllPath} ({JvmVersion ?? "unknown version"}), JavaAccessBridge-{suffix}.dll {Presence(JavaBridgeDllPresent)}, access-bridge jar {Presence(AccessBridgeJarPresent)}";
+        if (JavaBridgeDllPresent == false || AccessBridgeJarPresent == false)
+            line += " - this JRE has no Access Bridge: apps started by process_run with WINUSE_JAVA_ACCESSIBILITY=on fail with AWTError; set it to off";
+        return line;
     }
 
     private static string Presence(bool? present) => present switch { true => "present", false => "missing", null => "unknown" };

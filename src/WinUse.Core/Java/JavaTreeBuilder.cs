@@ -30,7 +30,7 @@ internal sealed class JavaTreeBuilder(IJabAccess jab, RefRegistry refs, WindowLo
         var r = refs.Register(RefKind.Java, new JavaLocator(wloc, basePath), null);
         if (keepRoot) keep(r.Id, root);
         var children = Children(root, info, ct, basePath, 0, rect);
-        return MakeNode(jab, root, info, r.Id, ct, 0, children, rect);
+        return MakeNode(jab, root, info, r.Id, ct, NameOf(jab, root, info, ct), 0, children, rect);
     }
 
     private List<UiNode> Children(JabHandle parent, JabContextInfo parentInfo, string parentCt, IReadOnlyList<JavaPathSegment> parentPath,
@@ -48,7 +48,7 @@ internal sealed class JavaTreeBuilder(IJabAccess jab, RefRegistry refs, WindowLo
             if (info is null) { jab.Release(h); continue; }
 
             var ct = JavaRoleMap.ControlTypeOf(info.Role, parentInfo.Role);
-            var name = NameOf(jab, h, info);
+            var name = NameOf(jab, h, info, ct);
             // Never skip a sibling here: the resolver counts every child, so indexes must agree.
             var key = (info.Role, name);
             counts.TryGetValue(key, out var idx);
@@ -74,7 +74,7 @@ internal sealed class JavaTreeBuilder(IJabAccess jab, RefRegistry refs, WindowLo
                 var sub = opt.InteractiveOnly && ct == "Text"
                     ? []
                     : Children(h, info, ct, path, outDepth + 1, rect);
-                result.Add(MakeNode(jab, h, info, r.Id, ct, outDepth + 1, sub, rect));
+                result.Add(MakeNode(jab, h, info, r.Id, ct, name, outDepth + 1, sub, rect));
             }
             else if (ct == "Pane" && name is not null)
             {
@@ -84,7 +84,7 @@ internal sealed class JavaTreeBuilder(IJabAccess jab, RefRegistry refs, WindowLo
                 {
                     var r = refs.Register(RefKind.Java, new JavaLocator(wloc, path), null);
                     keep(r.Id, h);
-                    result.Add(MakeNode(jab, h, info, r.Id, ct, outDepth + 1, sub, rect));
+                    result.Add(MakeNode(jab, h, info, r.Id, ct, name, outDepth + 1, sub, rect));
                 }
                 else jab.Release(h);
             }
@@ -98,15 +98,19 @@ internal sealed class JavaTreeBuilder(IJabAccess jab, RefRegistry refs, WindowLo
         return result;
     }
 
-    /// <summary>Accessible name, else the description (tool tips of icon-only buttons), else the virtual name.</summary>
-    internal static string? NameOf(IJabAccess jab, JabHandle h, JabContextInfo info) =>
-        info.Name ?? info.Description ?? jab.GetVirtualName(h);
+    /// <summary>
+    /// Accessible name, else the description (tool tips of icon-only buttons), else the virtual name. The virtual name
+    /// is a bridge round trip that walks the container, so panes (unnamed almost always) never pay for it. The locator
+    /// resolver uses the same rule, so the (role, name) keys agree.
+    /// </summary>
+    internal static string? NameOf(IJabAccess jab, JabHandle h, JabContextInfo info, string controlType) =>
+        info.Name ?? info.Description ?? (controlType == "Pane" ? null : jab.GetVirtualName(h));
 
-    internal static UiNode MakeNode(IJabAccess jab, JabHandle h, JabContextInfo info, string refId, string ct, int depth,
+    internal static UiNode MakeNode(IJabAccess jab, JabHandle h, JabContextInfo info, string refId, string ct, string? name, int depth,
         IReadOnlyList<UiNode> children, Rect rect)
     {
         var flags = JavaStates.Parse(info.States);
-        return new UiNode(refId, ct, NameOf(jab, h, info), null, ReadValue(jab, h, ct),
+        return new UiNode(refId, ct, name, null, ReadValue(jab, h, ct),
             flags.Enabled, !flags.Showing, JavaStates.CheckedOf(flags, ct, info.Role), flags.Focused, rect, depth, children);
     }
 
@@ -120,7 +124,7 @@ internal sealed class JavaTreeBuilder(IJabAccess jab, RefRegistry refs, WindowLo
             case "ComboBox":
             {
                 if (jab.GetSelection(h, 0) is not { } sel) return null;
-                try { return jab.GetInfo(sel) is { } si ? NameOf(jab, sel, si) : null; }
+                try { return jab.GetInfo(sel) is { } si ? NameOf(jab, sel, si, JavaRoleMap.ControlTypeOf(si.Role, "combo box")) : null; }
                 finally { jab.Release(sel); }
             }
             case "Slider" or "Spinner" or "ProgressBar":

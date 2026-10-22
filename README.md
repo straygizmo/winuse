@@ -71,7 +71,7 @@ Two things must be in place:
 
 Settings: `WINUSE_JAB` (`auto`, default, or `off`), `WINUSE_JAB_DLL` (path to the DLL), `WINUSE_JAVA_ACCESSIBILITY` (`on`, default, or `off`).
 
-Limits: `get_table` does not read Swing tables yet. A JRE trimmed of `jdk.accessibility` (Java 8: `bin\JavaAccessBridge-32.dll` and `lib\ext\access-bridge-32.jar`) cannot be read at all. A Java app running elevated or as another user is out of reach (its messages are blocked and the user-profile setting does not apply).
+Limits: `get_table` does not read Swing tables yet. A JRE trimmed of `jdk.accessibility` (Java 8: `bin\JavaAccessBridge-32.dll` and `lib\ext\access-bridge-32.jar`) cannot be read at all, and **a JVM on such a JRE refuses to start when accessibility is requested** (`AWTError: Assistive Technology not found`): for apps on a trimmed JRE set `WINUSE_JAVA_ACCESSIBILITY=off` before `process_run`, and do not run `winuse jab enable`. `winuse doctor` points this out for every Java window whose JRE lacks the bridge files. A Java app running elevated or as another user is out of reach (its messages are blocked and the user-profile setting does not apply).
 
 ## Register with Claude Code
 
