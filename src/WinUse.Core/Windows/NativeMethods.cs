@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 
 namespace WinUse.Core.Windows;
 
@@ -147,4 +147,41 @@ internal static partial class NativeMethods
 
     [LibraryImport("user32.dll", EntryPoint = "SendMessageTimeoutW")]
     public static partial nint SendMessageTimeoutW(nint hwnd, uint msg, nint wParam, nint lParam, uint flags, uint timeoutMs, out nint result);
+    // ---- message loop (Java Access Bridge thread) ----------------------------------------------
+
+    public const uint WM_QUIT = 0x0012;
+    public const uint WM_APP = 0x8000;
+    public const uint PM_NOREMOVE = 0;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT { public int X, Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSG
+    {
+        public nint hwnd;
+        public uint message;
+        public nuint wParam;
+        public nint lParam;
+        public uint time;
+        public POINT pt;
+    }
+
+    [LibraryImport("user32.dll", EntryPoint = "PeekMessageW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool PeekMessageW(out MSG msg, nint hwnd, uint filterMin, uint filterMax, uint removeMsg);
+
+    [LibraryImport("user32.dll", EntryPoint = "GetMessageW")]
+    public static partial int GetMessageW(out MSG msg, nint hwnd, uint filterMin, uint filterMax);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool TranslateMessage(ref MSG msg);
+
+    [LibraryImport("user32.dll", EntryPoint = "DispatchMessageW")]
+    public static partial nint DispatchMessageW(ref MSG msg);
+
+    [LibraryImport("user32.dll", EntryPoint = "PostThreadMessageW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool PostThreadMessageW(uint threadId, uint msg, nint wParam, nint lParam);
 }
