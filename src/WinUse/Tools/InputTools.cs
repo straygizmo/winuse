@@ -11,7 +11,7 @@ public sealed class InputTools
 {
     private const int WebScrollPixelsPerNotch = 100;
 
-    [McpServerTool(Name = "click")]
+    [McpServerTool(Name = "click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
     [Description("Click an element by ref (UIA: centre of its rectangle plus offset; DOM: Playwright click) or at screen coordinates x,y (physical pixels).")]
     public static Task<CallToolResult> Click(
         ToolContext ctx,
@@ -45,7 +45,7 @@ public sealed class InputTools
             return new { x = px + offset_x, y = py + offset_y };
         });
 
-    [McpServerTool(Name = "hover")]
+    [McpServerTool(Name = "hover", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Move the mouse over an element (ref) or to screen coordinates x,y.")]
     public static Task<CallToolResult> Hover(
         ToolContext ctx,
@@ -72,7 +72,7 @@ public sealed class InputTools
             return new { x = px, y = py };
         });
 
-    [McpServerTool(Name = "drag")]
+    [McpServerTool(Name = "drag", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
     [Description("Drag with the left button from one element/point to another. Both ends must be DOM refs, or UIA refs / coordinates.")]
     public static Task<CallToolResult> Drag(
         ToolContext ctx,
@@ -102,7 +102,7 @@ public sealed class InputTools
             return new { from = new { x = x1, y = y1 }, to = new { x = x2, y = y2 } };
         });
 
-    [McpServerTool(Name = "scroll")]
+    [McpServerTool(Name = "scroll", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
     [Description("Scroll the mouse wheel over an element (ref) or at screen coordinates x,y. Native targets support up/down; DOM refs also left/right.")]
     public static Task<CallToolResult> Scroll(
         ToolContext ctx,
@@ -134,7 +134,7 @@ public sealed class InputTools
             return new { x = sx, y = sy, direction = dir, amount };
         });
 
-    [McpServerTool(Name = "type_text")]
+    [McpServerTool(Name = "type_text", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
     [Description("Type text into the focused control as Unicode keystrokes (newlines become Enter).")]
     public static Task<CallToolResult> TypeText(
         ToolContext ctx,
@@ -146,7 +146,7 @@ public sealed class InputTools
             return new { typed = text.Length };
         });
 
-    [McpServerTool(Name = "press_keys")]
+    [McpServerTool(Name = "press_keys", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
     [Description("Press a key chord such as \"ctrl+s\", \"alt+f4\", \"enter\" or \"f5\". Several chords separated by spaces are pressed in order (\"ctrl+a delete\").")]
     public static Task<CallToolResult> PressKeys(
         ToolContext ctx,

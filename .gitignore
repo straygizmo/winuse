@@ -5,4 +5,4 @@ obj/
 TestResults/
 out/
 .superpowers/
-tools/
+/tools/

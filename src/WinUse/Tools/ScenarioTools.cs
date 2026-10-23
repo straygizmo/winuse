@@ -10,7 +10,7 @@ public sealed class ScenarioTools
 {
     private const double ReportScreenshotScale = 0.5;
 
-    [McpServerTool(Name = "scenario_save")]
+    [McpServerTool(Name = "scenario_save", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Save the given journaled steps (step_id values returned by earlier tool calls), in order, as a replayable scenario JSON file.")]
     public static Task<CallToolResult> ScenarioSave(
         ToolContext ctx,
@@ -25,7 +25,7 @@ public sealed class ScenarioTools
             return Task.FromResult<object>(new { path, steps = s.Steps.Count });
         });
 
-    [McpServerTool(Name = "scenario_list", ReadOnly = true)]
+    [McpServerTool(Name = "scenario_list", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("List the scenario JSON files in a directory with their name, description and step count.")]
     public static Task<CallToolResult> ScenarioList(
         ToolContext ctx,
@@ -48,7 +48,7 @@ public sealed class ScenarioTools
             return Task.FromResult<object>(new { scenarios = list });
         });
 
-    [McpServerTool(Name = "scenario_run")]
+    [McpServerTool(Name = "scenario_run", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
     [Description("Replay a scenario file. Steps with a recorded locator are resolved deterministically; heal=true re-grounds failed act steps with the decision model (Jev or Clef) and writes <name>.healed.json. Returns per-step status and exit_code (0 pass, 1 fail, 2 error).")]
     public static Task<CallToolResult> ScenarioRun(
         ToolContext ctx,

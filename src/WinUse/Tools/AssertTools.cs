@@ -10,7 +10,7 @@ namespace WinUse.Tools;
 [McpServerToolType]
 public sealed class AssertTools
 {
-    [McpServerTool(Name = "assert_text", ReadOnly = true)]
+    [McpServerTool(Name = "assert_text", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Assert the text of an element equals / contains / matches (regex) the expected value. Returns passed, actual and reason.")]
     public static Task<CallToolResult> AssertText(
         ToolContext ctx,
@@ -34,7 +34,7 @@ public sealed class AssertTools
             return Result(step, passed, actual, passed ? null : $"text does not {(m == "equals" ? "equal" : m == "contains" ? "contain" : "match")} '{expected}'");
         });
 
-    [McpServerTool(Name = "assert_exists", ReadOnly = true)]
+    [McpServerTool(Name = "assert_exists", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Assert that an element (ref, re-resolved through its locator) or a DOM selector exists, or does not exist with expected=false.")]
     public static Task<CallToolResult> AssertExists(
         ToolContext ctx,
@@ -62,7 +62,7 @@ public sealed class AssertTools
             return Result(step, passed, actual, passed ? null : actual ? "element exists" : "element not found");
         });
 
-    [McpServerTool(Name = "assert_window", ReadOnly = true)]
+    [McpServerTool(Name = "assert_window", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Assert that a window whose title matches the regex exists (or not, with expected=false).")]
     public static Task<CallToolResult> AssertWindow(
         ToolContext ctx,
@@ -75,7 +75,7 @@ public sealed class AssertTools
             return Result(step, passed, actual, passed ? null : actual ? "window exists" : "window not found");
         });
 
-    [McpServerTool(Name = "assert_file", ReadOnly = true)]
+    [McpServerTool(Name = "assert_file", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Assert that a file exists (or not, with exists=false) and optionally contains a substring.")]
     public static Task<CallToolResult> AssertFile(
         ToolContext ctx,

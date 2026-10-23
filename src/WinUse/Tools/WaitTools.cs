@@ -12,7 +12,7 @@ public sealed class WaitTools
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(200);
 
-    [McpServerTool(Name = "wait_for", ReadOnly = true)]
+    [McpServerTool(Name = "wait_for", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Wait until a condition holds, polling every 200 ms. Conditions: window (title), window_closed (title), element (ref or selector), text (ref contains expected), enabled (ref). Returns passed=false on timeout.")]
     public static Task<CallToolResult> WaitFor(
         ToolContext ctx,

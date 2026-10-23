@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Changed
+
+- Every tool now declares all four MCP annotation hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), so hosts that confirm before destructive or open-world calls get an explicit answer per tool. Tools that act on the live desktop (`act`, `click`, `invoke`, `press_keys`, `window_close`, `process_run`, `process_kill`, `scenario_run`, ...) are open-world and, where a call could trigger anything in the target app, destructive; file tools stay inside the allowed roots and are closed-world, with `write_text`, `copy`, `move`, `delete`, `unzip` and `scenario_save` marked destructive because they can replace existing files.
+
 ## 0.2.0 - 2026-10-22
 
 Added
