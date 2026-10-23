@@ -8,7 +8,7 @@ namespace WinUse.Tools;
 [McpServerToolType]
 public sealed class ElementTools
 {
-    [McpServerTool(Name = "set_text")]
+    [McpServerTool(Name = "set_text", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Replace the text of an editable element (UIA Value pattern or select-all + typing; DOM fill).")]
     public static Task<CallToolResult> SetText(
         ToolContext ctx,
@@ -19,7 +19,7 @@ public sealed class ElementTools
             r => ctx.Web.FillAsync(r.Id, text),
             r => ctx.Java.SetTextAsync(r.Id, text));
 
-    [McpServerTool(Name = "select_item")]
+    [McpServerTool(Name = "select_item", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Select an item by its label in a list, combo box, tab or tree (UIA), or an <option> by label in a <select> (DOM).")]
     public static Task<CallToolResult> SelectItem(
         ToolContext ctx,
@@ -30,7 +30,7 @@ public sealed class ElementTools
             r => ctx.Web.SelectOptionAsync(r.Id, item),
             r => ctx.Java.SelectItemAsync(r.Id, item));
 
-    [McpServerTool(Name = "set_checked")]
+    [McpServerTool(Name = "set_checked", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Set a check box / toggle / radio button to the given state.")]
     public static Task<CallToolResult> SetChecked(
         ToolContext ctx,
@@ -41,7 +41,7 @@ public sealed class ElementTools
             r => ctx.Web.SetCheckedAsync(r.Id, @checked),
             r => ctx.Java.SetCheckedAsync(r.Id, @checked));
 
-    [McpServerTool(Name = "focus")]
+    [McpServerTool(Name = "focus", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Give keyboard focus to an element.")]
     public static Task<CallToolResult> Focus(
         ToolContext ctx,
@@ -51,7 +51,7 @@ public sealed class ElementTools
             r => ctx.Web.FocusAsync(r.Id),
             r => ctx.Java.FocusAsync(r.Id));
 
-    [McpServerTool(Name = "invoke")]
+    [McpServerTool(Name = "invoke", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
     [Description("Activate an element: UIA Invoke (or Toggle / SelectionItem, else a click at its centre); DOM click; Java click action (menu items work while the menu is closed).")]
     public static Task<CallToolResult> Invoke(
         ToolContext ctx,

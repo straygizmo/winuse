@@ -9,7 +9,7 @@ namespace WinUse.Tools;
 [McpServerToolType]
 public sealed class WindowTools
 {
-    [McpServerTool(Name = "window_activate")]
+    [McpServerTool(Name = "window_activate", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Bring a window to the foreground (restoring it when minimized).")]
     public static Task<CallToolResult> WindowActivate(
         ToolContext ctx,
@@ -22,7 +22,7 @@ public sealed class WindowTools
             return new { activated = true };
         });
 
-    [McpServerTool(Name = "window_close")]
+    [McpServerTool(Name = "window_close", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
     [Description("Ask a window to close (WM_CLOSE; the app may show a save prompt).")]
     public static Task<CallToolResult> WindowClose(
         ToolContext ctx,
@@ -31,7 +31,7 @@ public sealed class WindowTools
         OnWindow(ctx, "window_close", ToolContext.Args(("ref", @ref), ("title", title)), @ref, title, async w =>
             new { closed = await ctx.Windows.CloseAsync(w.Hwnd) });
 
-    [McpServerTool(Name = "window_set_state")]
+    [McpServerTool(Name = "window_set_state", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Set a window to normal, minimized or maximized.")]
     public static Task<CallToolResult> WindowSetState(
         ToolContext ctx,
@@ -51,7 +51,7 @@ public sealed class WindowTools
             return new { state = s.ToString().ToLowerInvariant() };
         });
 
-    [McpServerTool(Name = "window_move")]
+    [McpServerTool(Name = "window_move", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Move and resize a window (screen coordinates, physical pixels).")]
     public static Task<CallToolResult> WindowMove(
         ToolContext ctx,
@@ -69,7 +69,7 @@ public sealed class WindowTools
             return new { rect };
         });
 
-    [McpServerTool(Name = "window_exists", ReadOnly = true)]
+    [McpServerTool(Name = "window_exists", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Check whether a visible top-level window with a matching title (and process) exists.")]
     public static Task<CallToolResult> WindowExists(
         ToolContext ctx,

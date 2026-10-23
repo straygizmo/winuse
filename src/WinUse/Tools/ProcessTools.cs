@@ -16,7 +16,7 @@ public sealed class ProcessTools
     private static readonly TimeSpan WaitWindowTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan WaitWindowPoll = TimeSpan.FromMilliseconds(200);
 
-    [McpServerTool(Name = "process_run")]
+    [McpServerTool(Name = "process_run", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
     [Description("Start a program. With webview_debug=true a free CDP port is passed to WebView2 and get_dom/w{n} refs become available once connected. With wait_window, waits (30 s) for a window of the started process (same pid or process name) whose title matches; if none appears, falls back to any window with a matching title and reports window.matched_by=\"title-only\". Java processes are started with accessibility enabled (JAVA_TOOL_OPTIONS) so their Swing windows can be read, unless WINUSE_JAVA_ACCESSIBILITY=off.")]
     public static Task<CallToolResult> ProcessRun(
         ToolContext ctx,
@@ -93,7 +93,7 @@ public sealed class ProcessTools
         return allowTitleOnly && titled.Count > 0 ? (titled[0], "title-only") : (null, null);
     }
 
-    [McpServerTool(Name = "process_kill", Destructive = true)]
+    [McpServerTool(Name = "process_kill", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
     [Description("Kill a process started by winuse (by pid) or one listed in WINUSE_KILLABLE_PROCESSES (by name).")]
     public static Task<CallToolResult> ProcessKill(
         ToolContext ctx,
@@ -101,7 +101,7 @@ public sealed class ProcessTools
         ctx.RunStepAsync("process_kill", ToolContext.Args(("name_or_pid", name_or_pid)), _ =>
             Task.FromResult<object>(new { killed = ctx.Processes.Kill(name_or_pid) }));
 
-    [McpServerTool(Name = "process_exists", ReadOnly = true)]
+    [McpServerTool(Name = "process_exists", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Check whether a process with the given name is running.")]
     public static Task<CallToolResult> ProcessExists(
         ToolContext ctx,

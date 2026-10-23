@@ -13,7 +13,7 @@ namespace WinUse.Tools;
 [McpServerToolType]
 public sealed class ObserveTools
 {
-    [McpServerTool(Name = "screenshot", ReadOnly = true)]
+    [McpServerTool(Name = "screenshot", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Capture a PNG of the whole screen, a window, or a single element. Returns the image plus width/height (image pixels), scale and origin {x, y}: the virtual-screen physical pixel of image pixel (0,0). Map an image pixel to click(x, y) with screen_x = origin.x + pixel_x / scale, screen_y = origin.y + pixel_y / scale (origin is null for a DOM element capture).")]
     public static Task<CallToolResult> Screenshot(
         ToolContext ctx,
@@ -89,7 +89,7 @@ public sealed class ObserveTools
             ? (BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(16, 4)), BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(20, 4)))
             : (0, 0);
 
-    [McpServerTool(Name = "list_windows", ReadOnly = true)]
+    [McpServerTool(Name = "list_windows", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("List visible top-level windows (foreground first) with a window ref, title, class, process, pid, rect and state.")]
     public static Task<CallToolResult> ListWindows(
         ToolContext ctx,
@@ -113,7 +113,7 @@ public sealed class ObserveTools
         state = w.State.ToString().ToLowerInvariant(),
     };
 
-    [McpServerTool(Name = "get_ui_tree", ReadOnly = true)]
+    [McpServerTool(Name = "get_ui_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect). Use the refs with the other tools. Java Swing windows are read through Java Access Bridge and return j{n} refs (menu items are listed even while their menu is closed); java_access_bridge explains why a Java window could not be read that way.")]
     public static Task<CallToolResult> GetUiTree(
         ToolContext ctx,
@@ -143,7 +143,7 @@ public sealed class ObserveTools
             };
         });
 
-    [McpServerTool(Name = "get_dom", ReadOnly = true)]
+    [McpServerTool(Name = "get_dom", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("List the interactive elements of the connected WebView2 page (refs w{n}, role, name, tag, value, state, rect, selector). Requires process_run with webview_debug=true.")]
     public static Task<CallToolResult> GetDom(
         ToolContext ctx,
@@ -157,7 +157,7 @@ public sealed class ObserveTools
             return new { pages, nodes };
         });
 
-    [McpServerTool(Name = "get_element", ReadOnly = true)]
+    [McpServerTool(Name = "get_element", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Get details of a single element by ref (UIA properties, DOM selector/text, or window info).")]
     public static Task<CallToolResult> GetElement(
         ToolContext ctx,
@@ -194,7 +194,7 @@ public sealed class ObserveTools
             }
         });
 
-    [McpServerTool(Name = "get_text", ReadOnly = true)]
+    [McpServerTool(Name = "get_text", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Get the text of an element (UIA Value/Text pattern or name; DOM input value or innerText).")]
     public static Task<CallToolResult> GetText(
         ToolContext ctx,
@@ -214,7 +214,7 @@ public sealed class ObserveTools
         _ => throw new NotSupportedException($"Ref '{r.Id}' is not an element ref."),
     };
 
-    [McpServerTool(Name = "get_table", ReadOnly = true)]
+    [McpServerTool(Name = "get_table", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Read a UIA table/grid/list view as a 2-D array of cell texts (header row first when available).")]
     public static Task<CallToolResult> GetTable(
         ToolContext ctx,
@@ -226,7 +226,7 @@ public sealed class ObserveTools
             return new { rows = r.Kind == RefKind.Java ? await ctx.Java.GetTableAsync(r.Id) : await ctx.Uia.GetTableAsync(r.Id) };
         });
 
-    [McpServerTool(Name = "get_list_items", ReadOnly = true)]
+    [McpServerTool(Name = "get_list_items", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("List the item names of a UIA or Java list, combo box, tab or tree.")]
     public static Task<CallToolResult> GetListItems(
         ToolContext ctx,
