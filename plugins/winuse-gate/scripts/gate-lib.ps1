@@ -290,6 +290,42 @@ function Get-ToolPassed($Response) {
     return $false
 }
 
+# Parses a shell command for a git commit. Returns $null when it is not one, else
+# @{ Dir = where git runs; Mode = 'staged'|'worktree'; Skip = [bool] }.
+# Covers the usual forms: 'git commit ...', 'git -C <dir> commit ...', 'git -c k=v commit ...', 'cd x && git commit ...'.
+function Get-CommitPlan([string]$Command, [string]$Cwd) {
+    $m = [regex]::Match($Command, '(?:^|[\s;&|(])git((?:\s+-[Cc]\s+(?:"[^"]*"|''[^'']*''|\S+))*)\s+commit(?=\s|$)(.*)$', 'Singleline')
+    if (-not $m.Success) { return $null }
+    $dir = $Cwd
+    foreach ($opt in [regex]::Matches($m.Groups[1].Value, '-C\s+("[^"]*"|''[^'']*''|\S+)')) {
+        $value = $opt.Groups[1].Value.Trim('"', "'")
+        if ([System.IO.Path]::IsPathRooted($value)) { $dir = $value } else { $dir = Join-Path $dir $value }
+    }
+    $rest = $m.Groups[2].Value
+    $mode = 'staged'
+    if ($rest -match '(?:^|\s)(?:--all|--only|--include|--|-o|-i)(?=\s|$)' -or $rest -match '(?:^|\s)-[A-Za-z]*a[A-Za-z]*(?=\s|$)') { $mode = 'worktree' }
+    return @{ Dir = $dir; Mode = $mode; Skip = ($Command -match 'winuse-gate:\s*skip\s+\S') }
+}
+
+# Returns the staged UI files as a hashtable path -> index blob id, or 'deleted' when the commit removes them.
+function Get-StagedUiFiles([string]$Root, $Config) {
+    $d = Invoke-Git $Root @('diff', '--cached', '--name-only', '-z', '--no-renames')
+    if ($d.Code -ne 0) { throw "git diff --cached failed in $Root" }
+    $paths = @($d.Out.Split([char]0) | Where-Object { $_ -and (Test-UiPath $_ $Config) })
+    $result = @{}
+    if ($paths.Count -eq 0) { return $result }
+    $index = @{}
+    $ls = Invoke-Git $Root @('ls-files', '-s', '-z')
+    if ($ls.Code -ne 0) { throw "git ls-files failed in $Root" }
+    foreach ($entry in $ls.Out.Split([char]0)) {
+        $tab = $entry.IndexOf("`t")
+        if ($tab -lt 0) { continue }
+        $index[$entry.Substring($tab + 1)] = $entry.Split(' ')[1]
+    }
+    foreach ($p in $paths) { if ($index.ContainsKey($p)) { $result[$p] = $index[$p] } else { $result[$p] = 'deleted' } }
+    return $result
+}
+
 # Computes the gate status of the repository for one session.
 # Targets: dirty UI files whose hash differs from the session baseline (changed in this session).
 # Unverified: targets whose path|hash has no passing winuse assertion recorded.
