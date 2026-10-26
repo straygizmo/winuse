@@ -234,6 +234,62 @@ function Get-VerifiedSet([string]$StateDir) {
     return ,$set
 }
 
+# Runs $Body while holding a per-state-dir mutex, so concurrent hooks do not lose writes.
+function Invoke-WithStateLock([string]$StateDir, [scriptblock]$Body) {
+    $name = 'Local\winuse-gate-' + (Get-Sha1 $StateDir.ToLowerInvariant())
+    $mutex = New-Object System.Threading.Mutex -ArgumentList $false, $name
+    $owned = $false
+    try {
+        try { $owned = $mutex.WaitOne(10000) } catch [System.Threading.AbandonedMutexException] { $owned = $true }
+        & $Body
+    } finally {
+        if ($owned) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+    }
+}
+
+# Appends path|hash pairs to verified.json (deduplicated, newest last, capped at 500 entries).
+function Add-VerifiedEntries([string]$StateDir, [hashtable]$Files) {
+    if ($Files.Count -eq 0) { return }
+    Invoke-WithStateLock $StateDir {
+        $path = Join-Path $StateDir 'verified.json'
+        $raw = Read-JsonFile $path $null
+        $keys = @{}
+        foreach ($p in $Files.Keys) { $keys["$p|$($Files[$p])"] = $true }
+        $entries = New-Object System.Collections.Generic.List[object]
+        if ($null -ne $raw) {
+            foreach ($e in @($raw.entries)) {
+                if ($e -and -not $keys.ContainsKey("$($e.path)|$($e.hash)")) { $entries.Add(@{ path = [string]$e.path; hash = [string]$e.hash }) }
+            }
+        }
+        foreach ($p in (Sort-Ordinal @($Files.Keys))) { $entries.Add(@{ path = $p; hash = $Files[$p] }) }
+        $skip = [Math]::Max(0, $entries.Count - 500)
+        Write-JsonFile $path @{ entries = @($entries | Select-Object -Skip $skip) }
+    }
+}
+
+# True only when the tool response carries a boolean passed=true. Accepts a JSON string,
+# an object with "passed", MCP content blocks ({type,text}), "content" arrays and "structuredContent".
+function Get-ToolPassed($Response) {
+    if ($null -eq $Response) { return $false }
+    if ($Response -is [string]) {
+        try { $parsed = $Response | ConvertFrom-Json } catch { return $false }
+        if ($null -eq $parsed -or $parsed -is [string] -or $parsed -is [ValueType]) { return $false }
+        return Get-ToolPassed $parsed
+    }
+    if ($Response -is [array]) {
+        foreach ($item in $Response) { if (Get-ToolPassed $item) { return $true } }
+        return $false
+    }
+    if ($Response -is [ValueType]) { return $false }
+    $names = @($Response.PSObject.Properties | ForEach-Object { $_.Name })
+    if ($names -contains 'passed') { return ($Response.passed -is [bool]) -and $Response.passed }
+    if ($names -contains 'text') { return Get-ToolPassed ([string]$Response.text) }
+    if ($names -contains 'structuredContent' -and (Get-ToolPassed $Response.structuredContent)) { return $true }
+    if ($names -contains 'content') { return Get-ToolPassed @($Response.content) }
+    return $false
+}
+
 # Computes the gate status of the repository for one session.
 # Targets: dirty UI files whose hash differs from the session baseline (changed in this session).
 # Unverified: targets whose path|hash has no passing winuse assertion recorded.

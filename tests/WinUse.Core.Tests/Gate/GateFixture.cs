@@ -73,13 +73,16 @@ public sealed class GateFixture : IDisposable
         return stdout.Trim();
     }
 
-    /// <summary>Runs a hook script. <c>cwd</c> and <c>session_id</c> are filled in when the input lacks them.</summary>
-    public HookResult RunHook(string script, JsonObject input, string? cwd = null)
+    /// <summary>Runs a hook script. <c>cwd</c> and <c>session_id</c> are filled in when the input lacks them.
+    /// Hooks fail open and only report errors on stderr, so any stderr output fails the test unless allowed.</summary>
+    public HookResult RunHook(string script, JsonObject input, string? cwd = null, bool allowStderr = false)
     {
         input["cwd"] ??= cwd ?? Repo;
         input["session_id"] ??= "s1";
         var args = new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", Path.Combine(ScriptsDir, script), "-DataDir", DataDir };
-        return RunPowerShell(args, input.ToJsonString(new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }), cwd ?? Repo);
+        var r = RunPowerShell(args, input.ToJsonString(new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }), cwd ?? Repo);
+        if (!allowStderr && r.Stderr.Trim().Length > 0) throw new InvalidOperationException($"{script} wrote to stderr: {r.Stderr}");
+        return r;
     }
 
     /// <summary>Starts a hook script without waiting, for concurrency tests.</summary>
