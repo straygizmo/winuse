@@ -107,6 +107,15 @@ public class GateLibTests
     }
 
     [Fact]
+    public void Dirty_ManyFiles_NoDeadlock()
+    {
+        using var f = new GateFixture();
+        f.WriteConfig(GateStatus.TsxConfig);
+        for (var i = 0; i < 1000; i++) f.Write($"src/gen/file{i:D4}.tsx", i.ToString());
+        Assert.Equal(1000, GateStatus.Dirty(f).Length);
+    }
+
+    [Fact]
     public void Status_Fingerprint_ChangesWithContent()
     {
         using var f = new GateFixture();

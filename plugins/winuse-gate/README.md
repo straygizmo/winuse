@@ -8,6 +8,8 @@ A Claude Code plugin that keeps Claude from reporting UI changes as done, or com
 
 Only files whose content changed in this session count. Uncommitted edits that were already there when the session started are left alone until Claude changes them.
 
+The gate covers the repository the session runs in and every other repository or worktree Claude edits files in with its Edit / Write tools (recorded by an async hook, so editing is not slowed down).
+
 ## Requirements
 
 - Windows, Windows PowerShell 5.1 (built in) and git.
@@ -44,9 +46,11 @@ When a change truly cannot be verified with winuse, Claude tells you why and may
 
 ## Limits
 
-- Commit detection covers the usual forms (`git commit ...`, `git -C <dir> commit ...`, `cd <dir> && git commit ...`). Aliases and scripts that commit are not gated.
+- Commit detection covers the usual forms (`git commit ...`, `git -C <dir> commit ...`, `cd <dir> && git commit ...`, `Set-Location <dir>; git commit ...`, `git add ... && git commit ...`). Aliases and scripts that commit are not gated.
+- Commits that stage on their own (`-a`, `git add ... &&`, pathspecs such as `git commit -- <paths>`) are judged by every changed UI file in the work tree, so such a commit can be denied because of an unverified UI file it does not include.
 - The skip marker is read from the command line only, not from `-F <file>` messages.
-- The repository is the one of the hook's working directory.
+- Files changed in another repository through shell commands only (not the Edit / Write tools) are not noticed until Claude works in that repository.
 - The gate checks that a verification happened, not that it was thorough.
+- PowerShell must be allowed to run the hook scripts (`-ExecutionPolicy Bypass`, Full Language mode). Where a policy forbids that, the hooks only print an error and the gate is off.
 
 State is kept under the plugin data directory, never inside your repository.

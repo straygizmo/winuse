@@ -20,11 +20,12 @@ public sealed class GateFixture : IDisposable
     public string DataDir { get; }
     public static string ScriptsDir { get; } = FindScriptsDir();
 
-    public GateFixture()
+    /// <param name="dataDir">Shares another fixture's plugin data dir (several repositories in one session).</param>
+    public GateFixture(string? dataDir = null)
     {
         _root = Path.Combine(Path.GetTempPath(), "winuse-gate-" + Guid.NewGuid().ToString("N")[..8]);
         Repo = Path.Combine(_root, "repo");
-        DataDir = Path.Combine(_root, "data");
+        DataDir = dataDir ?? Path.Combine(_root, "data");
         Directory.CreateDirectory(Repo);
         Directory.CreateDirectory(DataDir);
         Git("init", "-q", "-b", "main");

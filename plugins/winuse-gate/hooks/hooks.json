@@ -15,6 +15,17 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PLUGIN_ROOT}/scripts/track-edit.ps1", "-DataDir", "${CLAUDE_PLUGIN_DATA}"],
+            "async": true
+          }
+        ]
+      },
+      {
         "matcher": "mcp__.*__(assert_text|assert_exists|assert_window|assert_file|scenario_run)",
         "hooks": [
           {

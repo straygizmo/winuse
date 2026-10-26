@@ -45,7 +45,12 @@ public class PreCommitTests
         using var f = new GateFixture();
         Assert.Equal("staged|False|C:\\work", Plan(f, "git commit -m \"x\""));
         Assert.Equal("worktree|False|C:\\work\\sub", Plan(f, "git -C sub commit -am \"x\""));
-        Assert.Equal("worktree|False|C:\\work", Plan(f, "cd a && git commit --all -m x"));
+        Assert.Equal("worktree|False|C:\\work\\a", Plan(f, "cd a && git commit --all -m x"));
+        Assert.Equal("staged|False|C:\\work\\sub", Plan(f, "Set-Location sub; git commit -m x"));
+        Assert.Equal("staged|False|D:\\other", Plan(f, "cd \"D:\\other\" && git commit -m x"));
+        Assert.Equal("staged|False|D:\\other\\sub", Plan(f, "cd D:\\other && git -C sub commit -m x"));
+        Assert.Equal("worktree|False|C:\\work", Plan(f, "git add -A && git commit -m x"));
+        Assert.Equal("worktree|False|C:\\work", Plan(f, "git add src/a.tsx; git commit -m x"));
         Assert.Equal("worktree|False|C:\\work", Plan(f, "git commit -m x -- src/a.tsx"));
         Assert.Equal("staged|False|C:\\work", Plan(f, "git -c core.editor=true commit --amend --no-edit"));
         Assert.Equal("null", Plan(f, "git status"));
@@ -89,6 +94,26 @@ public class PreCommitTests
         f.Commit("a");
         f.Write("src/a.tsx", "two");
         AssertDenied(PreCommit(f, "git commit -am x"));
+    }
+
+    [Fact]
+    public void GitAddThenCommit_Denied()
+    {
+        using var f = Started();
+        f.Write("src/a.tsx", "one");
+        AssertDenied(PreCommit(f, "git add -A && git commit -m x"));
+    }
+
+    [Fact]
+    public void CdIntoOtherRepo_UsesThatRepo()
+    {
+        using var main = Started();
+        using var other = new GateFixture(main.DataDir);
+        other.WriteConfig(GateStatus.TsxConfig);
+        other.Commit("config");
+        other.Write("src/a.tsx", "one");
+        other.Git("add", "src/a.tsx");
+        Assert.Contains("src/a.tsx", AssertDenied(PreCommit(main, $"cd \"{other.Repo}\" && git commit -m x")));
     }
 
     [Fact]

@@ -45,14 +45,16 @@ function Invoke-Git([string]$Dir, [string[]]$GitArgs, [string]$InputText = $null
     $psi.StandardOutputEncoding = $script:Utf8
     $psi.CreateNoWindow = $true
     $p = [System.Diagnostics.Process]::Start($psi)
+    # Start draining stdout/stderr before writing stdin: git answers while it reads, and a full
+    # stdout pipe would otherwise block git while we block on the stdin write.
+    $outTask = $p.StandardOutput.ReadToEndAsync()
+    $errTask = $p.StandardError.ReadToEndAsync()
     $stdin = New-Object System.IO.StreamWriter($p.StandardInput.BaseStream, $script:Utf8)
     if ($InputText) { $stdin.Write($InputText) }
     $stdin.Close()
-    $errTask = $p.StandardError.ReadToEndAsync()
-    $out = $p.StandardOutput.ReadToEnd()
     $p.WaitForExit()
     [void]$errTask.Result
-    return @{ Code = $p.ExitCode; Out = $out }
+    return @{ Code = $p.ExitCode; Out = $outTask.Result }
 }
 
 # Returns the git toplevel for $Cwd, or $null when $Cwd is not inside a repository (or git is missing).
@@ -226,6 +228,48 @@ function Save-SessionState([string]$StateDir, [string]$SessionId, $State) {
     Write-JsonFile (Get-SessionFile $StateDir $SessionId) @{ baseline = $State.Baseline; blocked = @($State.Blocked) }
 }
 
+# The session index lives at <DataDir>\sessions\<session>.json: { repos: [toplevels edited outside
+# the cwd repository], blocked: ["<root>|<fingerprint>" or "broken|<root>"] }.
+function Get-SessionIndexFile([string]$DataDir, [string]$SessionId) {
+    $dir = Join-Path (Resolve-DataDir $DataDir) 'sessions'
+    [void](New-Item -ItemType Directory -Force -Path $dir)
+    return Get-SessionFile (Split-Path -Parent $dir) $SessionId
+}
+
+function Get-SessionIndex([string]$DataDir, [string]$SessionId) {
+    $raw = Read-JsonFile (Get-SessionIndexFile $DataDir $SessionId) $null
+    if ($null -eq $raw) { return @{ Repos = @(); Blocked = @() } }
+    return @{ Repos = @($raw.repos | Where-Object { $_ }); Blocked = @($raw.blocked | Where-Object { $_ }) }
+}
+
+function Save-SessionIndex([string]$DataDir, [string]$SessionId, $Index) {
+    Write-JsonFile (Get-SessionIndexFile $DataDir $SessionId) @{ repos = @($Index.Repos); blocked = @($Index.Blocked) }
+}
+
+# Remembers that this session edited files in repository $Root.
+function Add-SessionRepo([string]$DataDir, [string]$SessionId, [string]$Root) {
+    $file = Get-SessionIndexFile $DataDir $SessionId
+    Invoke-WithStateLock $file {
+        $index = Get-SessionIndex $DataDir $SessionId
+        if (@($index.Repos | Where-Object { $_ -ieq $Root }).Count -eq 0) {
+            $index.Repos = @($index.Repos) + $Root
+            Save-SessionIndex $DataDir $SessionId $index
+        }
+    }
+}
+
+# Returns the repositories the session works in: the cwd repository first, then the other
+# repositories (worktrees) it edited files in, without duplicates.
+function Get-SessionRoots([string]$DataDir, [string]$SessionId, [string]$CwdRoot) {
+    $roots = New-Object System.Collections.Generic.List[string]
+    if ($CwdRoot) { $roots.Add($CwdRoot) }
+    foreach ($r in (Get-SessionIndex $DataDir $SessionId).Repos) {
+        if (-not (Test-Path -LiteralPath $r -PathType Container)) { continue }
+        if (@($roots | Where-Object { $_ -ieq $r }).Count -eq 0) { $roots.Add($r) }
+    }
+    return ,$roots.ToArray()
+}
+
 # Returns the verified "path|hash" pairs of the repository as a HashSet.
 function Get-VerifiedSet([string]$StateDir) {
     $set = New-Object 'System.Collections.Generic.HashSet[string]'
@@ -263,7 +307,8 @@ function Add-VerifiedEntries([string]$StateDir, [hashtable]$Files) {
             }
         }
         foreach ($p in (Sort-Ordinal @($Files.Keys))) { $entries.Add(@{ path = $p; hash = $Files[$p] }) }
-        $skip = [Math]::Max(0, $entries.Count - 500)
+        # Keep at least everything just added, even when one assertion covers more than 500 files.
+        $skip = [Math]::Max(0, $entries.Count - [Math]::Max(500, $Files.Count))
         Write-JsonFile $path @{ entries = @($entries | Select-Object -Skip $skip) }
     }
 }
@@ -296,14 +341,23 @@ function Get-ToolPassed($Response) {
 function Get-CommitPlan([string]$Command, [string]$Cwd) {
     $m = [regex]::Match($Command, '(?:^|[\s;&|(])git((?:\s+-[Cc]\s+(?:"[^"]*"|''[^'']*''|\S+))*)\s+commit(?=\s|$)(.*)$', 'Singleline')
     if (-not $m.Success) { return $null }
+    $prefix = $Command.Substring(0, $m.Index)
     $dir = $Cwd
+    # A preceding 'cd <dir>' / 'Set-Location <dir>' / 'pushd <dir>' moves the commit to that directory.
+    $cds = [regex]::Matches($prefix, '(?:^|[\s;&|(])(?:cd|chdir|pushd|Set-Location|sl)\s+("[^"]*"|''[^'']*''|[^\s;&|]+)', 'IgnoreCase')
+    if ($cds.Count -gt 0) {
+        $target = $cds[$cds.Count - 1].Groups[1].Value.Trim('"', "'")
+        if ([System.IO.Path]::IsPathRooted($target)) { $dir = $target } else { $dir = [System.IO.Path]::Combine($dir, $target) }
+    }
     foreach ($opt in [regex]::Matches($m.Groups[1].Value, '-C\s+("[^"]*"|''[^'']*''|\S+)')) {
         $value = $opt.Groups[1].Value.Trim('"', "'")
-        if ([System.IO.Path]::IsPathRooted($value)) { $dir = $value } else { $dir = Join-Path $dir $value }
+        if ([System.IO.Path]::IsPathRooted($value)) { $dir = $value } else { $dir = [System.IO.Path]::Combine($dir, $value) }
     }
     $rest = $m.Groups[2].Value
     $mode = 'staged'
     if ($rest -match '(?:^|\s)(?:--all|--only|--include|--|-o|-i)(?=\s|$)' -or $rest -match '(?:^|\s)-[A-Za-z]*a[A-Za-z]*(?=\s|$)') { $mode = 'worktree' }
+    # 'git add ... && git commit' stages after this hook runs, so judge the work tree instead of the index.
+    if ($prefix -match '(?:^|[\s;&|(])git\s+(?:-[Cc]\s+\S+\s+)*(?:add|stage|rm|mv)(?=\s|$)') { $mode = 'worktree' }
     return @{ Dir = $dir; Mode = $mode; Skip = ($Command -match 'winuse-gate:\s*skip\s+\S') }
 }
 
