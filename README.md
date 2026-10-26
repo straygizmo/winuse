@@ -122,6 +122,10 @@ In an interactive session run `/mcp add`, choose **Local**, enter `<repo>\out\wi
 }
 ```
 
+### Claude Code plugin: winuse-gate
+
+[winuse-gate](plugins/winuse-gate/README.md) makes Claude verify its UI changes with winuse before it reports them as done or commits them. Install it with `/plugin marketplace add straygizmo/winuse` and `/plugin install winuse-gate@winuse`, then add `.claude/winuse-gate.json` to the project.
+
 ## CLI
 
 ```

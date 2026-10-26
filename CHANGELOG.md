@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Added
+
+- Claude Code plugin `winuse-gate` (`plugins/winuse-gate`, listed in `.claude-plugin/marketplace.json`): hooks that block Claude's turn end once per change, and deny `git commit`, while UI files changed in the session have no passing winuse assertion, plus the `winuse-e2e` skill that tells Claude how to verify. Configured per project with `.claude/winuse-gate.json`.
+
 ## 0.2.1 - 2026-10-23
 
 Changed

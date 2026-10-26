@@ -1,0 +1,14 @@
+{
+  "name": "winuse",
+  "description": "Claude Code plugins for winuse, the Windows desktop automation MCP server",
+  "owner": {
+    "name": "straygizmo"
+  },
+  "plugins": [
+    {
+      "name": "winuse-gate",
+      "source": "./plugins/winuse-gate",
+      "description": "Keeps Claude from reporting UI changes as done, or committing them, until it has verified them in the running desktop app with winuse"
+    }
+  ]
+}
