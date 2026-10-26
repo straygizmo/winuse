@@ -190,3 +190,17 @@ AI に「何をどう確認するか」を教える。ゲートのブロック�
 ## 11. 試運転の準備で判明したこと
 
 - MDium の `.gitignore` は `.claude` をまるごと無視していたため、`.claude/winuse-gate.json` をコミットできず、新しい worktree にも入らない。`.claude/*` と `!.claude/winuse-gate.json` に変えた（MDium ブランチ `chore/winuse-gate-config`）。プラグインの README にも同じ注意を書いた。
+
+## 12. 試運転の結果（2026-10-26、MDium、別セッションで実施）
+
+| # | 項目 | 結果 |
+|---|---|---|
+| 1 | 文言 1 か所の修正を `assert_text` 1 回で完了できるか | 合格。ステータスバーの区切り文字を `assert_text` で確認した後、ブロックされずに終われた |
+| 2 | 判断を仰ぐ質問で止まれるか | 1 回ブロックされ、そのまま質問で終わり直すと通った。フックは発言の中身を判断しないので、案 A の設計どおり |
+| 3 | 「スモークをお願いします」で終わろうとするとブロックされるか | 合格 |
+| 4 | 未検証のままのコミットが拒否されるか | 合格。`git commit -am`、`cd src && git commit`（Bash）、`Set-Location src; git commit`（PowerShell）すべて拒否。`if: "Bash(git *)"` / `"PowerShell(git *)"` は複合コマンドにも反応する |
+| 5 | ブロック直後に同じ内容のまま「完了」と言うと素通りできるか | 素通りできる（抜け道は実在）。2 回目の終了を必ず通す案 A の仕組みによる |
+
+- 5 は塞がない（利用者の判断）。運用で甘さが目立ったら案 B（別の Claude による分類）に切り替える。それまではコミット前のゲートが最後の砦。
+- 試運転中に MDium の設定へ `src/shared/i18n/locales/**/*.json` を追加した（文言だけの修正もゲートの対象にするため）。
+- フック設定の実機挙動（exec 形式、`${CLAUDE_PLUGIN_ROOT}` / `${CLAUDE_PLUGIN_DATA}` の展開、SessionStart と非同期 PostToolUse の実行）は問題なかった。
