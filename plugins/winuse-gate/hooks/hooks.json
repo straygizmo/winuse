@@ -1,0 +1,79 @@
+{
+  "description": "winuse-gate: require a passing winuse assertion before UI changes are reported as done or committed",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PLUGIN_ROOT}/scripts/session-start.ps1", "-DataDir", "${CLAUDE_PLUGIN_DATA}"],
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PLUGIN_ROOT}/scripts/track-edit.ps1", "-DataDir", "${CLAUDE_PLUGIN_DATA}"],
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*__(assert_text|assert_exists|assert_window|assert_file|scenario_run)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PLUGIN_ROOT}/scripts/post-tool.ps1", "-DataDir", "${CLAUDE_PLUGIN_DATA}"],
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PLUGIN_ROOT}/scripts/stop.ps1", "-DataDir", "${CLAUDE_PLUGIN_DATA}"],
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git *)",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PLUGIN_ROOT}/scripts/pre-commit.ps1", "-DataDir", "${CLAUDE_PLUGIN_DATA}"],
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "PowerShell(git *)",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PLUGIN_ROOT}/scripts/pre-commit.ps1", "-DataDir", "${CLAUDE_PLUGIN_DATA}"],
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
