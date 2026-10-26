@@ -180,3 +180,13 @@ AI に「何をどう確認するか」を教える。ゲートのブロック�
 - 案 B（別の Claude による発言の分類）。
 - コミット時やPR前に、変更に関係する保存済みシナリオを `winuse run` で回帰させる。
 - 確認の十分さを `type: "agent"` フックで判定する。
+
+## 10. 実装で加わったこと（2026-10-26）
+
+- 最終レビューの指摘で、セッションの cwd とは別のリポジトリ（worktree など）での編集もゲートの対象にした。Edit / Write / MultiEdit / NotebookEdit の後に非同期フック（`track-edit.ps1`、`"async": true`）で編集先のリポジトリを `<DataDir>\sessions\<session>.json` に記録し、Stop と証拠の記録はそれらすべてを見る。「1 回だけブロック」の記録もここに移した。シェルコマンドだけでの編集は拾わない。
+- `git add ... && git commit` と `cd <dir> && git commit` / `Set-Location <dir>; git commit` もコミット前のゲートで判定する。
+- 設定がセッション途中で壊れたら、Stop で 1 回だけ AI に知らせて利用者へ報告させる（§4.2 の「黙って無効にしない」）。
+
+## 11. 試運転の準備で判明したこと
+
+- MDium の `.gitignore` は `.claude` をまるごと無視していたため、`.claude/winuse-gate.json` をコミットできず、新しい worktree にも入らない。`.claude/*` と `!.claude/winuse-gate.json` に変えた（MDium ブランチ `chore/winuse-gate-config`）。プラグインの README にも同じ注意を書いた。

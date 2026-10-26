@@ -38,6 +38,8 @@ Commit `.claude/winuse-gate.json` at the root of the repository you want to gate
 - `exclude` (optional): globs removed from `ui`.
 - `launch` (optional): free text that tells Claude how to start the app and find its window.
 
+If your `.gitignore` ignores `.claude` as a whole, change it to `.claude/*` plus `!.claude/winuse-gate.json`; otherwise the file cannot be committed and new worktrees start without it.
+
 Without this file the gate does nothing in that repository; Claude is told so once at session start. An invalid file turns the gate off and Claude is told to report it.
 
 ## Skipping
