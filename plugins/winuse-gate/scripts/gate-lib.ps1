@@ -123,3 +123,137 @@ function Test-UiPath([string]$Path, $Config) {
     foreach ($re in $Config.Exclude) { if ($re.IsMatch($Path)) { return $false } }
     return $true
 }
+
+# Writes text to stdout without PowerShell formatting.
+function Write-Raw([string]$Text) { [Console]::Out.Write($Text); [Console]::Out.Flush() }
+
+# Logs one line to stderr. Hooks fail open: they report and exit 0.
+function Write-GateError([string]$Message) { [Console]::Error.WriteLine("winuse-gate: $Message") }
+
+# Prints hookSpecificOutput.additionalContext for $EventName.
+function Write-HookContext([string]$EventName, [string]$Text) {
+    Write-Raw (@{ hookSpecificOutput = @{ hookEventName = $EventName; additionalContext = $Text } } | ConvertTo-Json -Compress -Depth 5)
+}
+
+# Sorts strings ordinally (culture-independent).
+function Sort-Ordinal([string[]]$Items) {
+    $arr = [string[]]@($Items)
+    [Array]::Sort($arr, [StringComparer]::Ordinal)
+    return ,$arr
+}
+
+function Get-Sha1([string]$Text) {
+    $sha = [System.Security.Cryptography.SHA1]::Create()
+    try { $bytes = $sha.ComputeHash($script:Utf8.GetBytes($Text)) } finally { $sha.Dispose() }
+    return -join ($bytes | ForEach-Object { $_.ToString('x2') })
+}
+
+# Returns every UI file that differs from HEAD as a hashtable path -> git blob id, or 'deleted'.
+# Covers modified, added, deleted and untracked (not ignored) files. Paths are repo-relative with '/'.
+function Get-DirtyUiFiles([string]$Root, $Config) {
+    $r = Invoke-Git $Root @('status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames')
+    if ($r.Code -ne 0) { throw "git status failed in $Root" }
+    $result = @{}
+    $present = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in $r.Out.Split([char]0)) {
+        if ($entry.Length -lt 4) { continue }
+        $path = $entry.Substring(3)
+        if (-not (Test-UiPath $path $Config)) { continue }
+        if (Test-Path -LiteralPath (Join-Path $Root $path) -PathType Leaf) { $present.Add($path) }
+        else { $result[$path] = 'deleted' }
+    }
+    if ($present.Count -gt 0) {
+        $h = Invoke-Git $Root @('hash-object', '--stdin-paths') (($present -join "`n") + "`n")
+        if ($h.Code -ne 0) { throw "git hash-object failed in $Root" }
+        $hashes = @($h.Out.Split("`n") | Where-Object { $_ })
+        for ($i = 0; $i -lt $present.Count; $i++) { $result[$present[$i]] = $hashes[$i].Trim() }
+    }
+    return $result
+}
+
+# Resolves the plugin data dir: the -DataDir argument, then CLAUDE_PLUGIN_DATA, then %LOCALAPPDATA%\winuse-gate.
+function Resolve-DataDir([string]$DataDir) {
+    if ($DataDir -and $DataDir -notmatch '\$\{') { return $DataDir }
+    if ($env:CLAUDE_PLUGIN_DATA) { return $env:CLAUDE_PLUGIN_DATA }
+    return Join-Path $env:LOCALAPPDATA 'winuse-gate'
+}
+
+# Returns (and creates) <DataDir>\state\<sha1 of lowercased toplevel>.
+function Get-StateDir([string]$DataDir, [string]$Root) {
+    $dir = Join-Path (Join-Path (Resolve-DataDir $DataDir) 'state') (Get-Sha1 $Root.ToLowerInvariant())
+    [void](New-Item -ItemType Directory -Force -Path (Join-Path $dir 'sessions'))
+    return $dir
+}
+
+function Read-JsonFile([string]$Path, $Default) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $Default }
+    try { return [System.IO.File]::ReadAllText($Path, $script:Utf8) | ConvertFrom-Json } catch { return $Default }
+}
+
+# Writes JSON through a temp file and an atomic replace; retries on transient IO errors.
+function Write-JsonFile([string]$Path, $Object) {
+    $json = $Object | ConvertTo-Json -Depth 10
+    $tmp = "$Path.$PID.tmp"
+    [System.IO.File]::WriteAllText($tmp, $json, $script:Utf8)
+    for ($i = 0; $i -lt 10; $i++) {
+        try { Move-Item -LiteralPath $tmp -Destination $Path -Force; return }
+        catch { Start-Sleep -Milliseconds 50 }
+    }
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    throw "could not write $Path"
+}
+
+function ConvertTo-Hashtable($Object) {
+    $h = @{}
+    if ($null -ne $Object) { foreach ($p in $Object.PSObject.Properties) { $h[$p.Name] = [string]$p.Value } }
+    return $h
+}
+
+function Get-SessionFile([string]$StateDir, [string]$SessionId) {
+    $safe = ($SessionId -replace '[^A-Za-z0-9_-]', '_')
+    if (-not $safe) { $safe = 'unknown' }
+    return Join-Path (Join-Path $StateDir 'sessions') "$safe.json"
+}
+
+# Returns @{ Exists; Baseline = hashtable path -> hash; Blocked = string[] }.
+function Get-SessionState([string]$StateDir, [string]$SessionId) {
+    $raw = Read-JsonFile (Get-SessionFile $StateDir $SessionId) $null
+    if ($null -eq $raw) { return @{ Exists = $false; Baseline = @{}; Blocked = @() } }
+    return @{ Exists = $true; Baseline = (ConvertTo-Hashtable $raw.baseline); Blocked = @($raw.blocked | Where-Object { $_ }) }
+}
+
+function Save-SessionState([string]$StateDir, [string]$SessionId, $State) {
+    Write-JsonFile (Get-SessionFile $StateDir $SessionId) @{ baseline = $State.Baseline; blocked = @($State.Blocked) }
+}
+
+# Returns the verified "path|hash" pairs of the repository as a HashSet.
+function Get-VerifiedSet([string]$StateDir) {
+    $set = New-Object 'System.Collections.Generic.HashSet[string]'
+    $raw = Read-JsonFile (Join-Path $StateDir 'verified.json') $null
+    if ($null -ne $raw) { foreach ($e in @($raw.entries)) { if ($e) { [void]$set.Add("$($e.path)|$($e.hash)") } } }
+    return ,$set
+}
+
+# Computes the gate status of the repository for one session.
+# Targets: dirty UI files whose hash differs from the session baseline (changed in this session).
+# Unverified: targets whose path|hash has no passing winuse assertion recorded.
+# Fingerprint: SHA1 of the sorted unverified path|hash lines ('' when none).
+function Get-GateStatus([string]$Root, $Config, [string]$StateDir, [string]$SessionId) {
+    $dirty = Get-DirtyUiFiles $Root $Config
+    $session = Get-SessionState $StateDir $SessionId
+    $verified = Get-VerifiedSet $StateDir
+    $targets = @{}
+    $unverified = @{}
+    foreach ($path in $dirty.Keys) {
+        $hash = $dirty[$path]
+        if ($session.Baseline.ContainsKey($path) -and $session.Baseline[$path] -eq $hash) { continue }
+        $targets[$path] = $hash
+        if (-not $verified.Contains("$path|$hash")) { $unverified[$path] = $hash }
+    }
+    $fingerprint = ''
+    if ($unverified.Count -gt 0) {
+        $lines = Sort-Ordinal @($unverified.Keys | ForEach-Object { "$_|$($unverified[$_])" })
+        $fingerprint = Get-Sha1 ($lines -join "`n")
+    }
+    return @{ Targets = $targets; Unverified = $unverified; Fingerprint = $fingerprint }
+}

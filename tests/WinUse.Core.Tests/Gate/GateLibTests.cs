@@ -67,6 +67,61 @@ public class GateLibTests
     }
 
     [Fact]
+    public void Dirty_DetectsModifiedAddedDeletedUntracked()
+    {
+        using var f = new GateFixture();
+        f.WriteConfig(GateStatus.TsxConfig);
+        f.Write(".gitignore", "src/d.tsx\n");
+        f.Write("src/a.tsx", "a1");
+        f.Write("src/b.tsx", "b1");
+        f.Commit("base");
+        f.Write("src/a.tsx", "a2");
+        f.Delete("src/b.tsx");
+        f.Write("src/c.tsx", "c1");
+        f.Write("src/d.tsx", "ignored");
+        var dirty = GateStatus.Dirty(f);
+        Assert.Equal(["src/a.tsx", "src/b.tsx", "src/c.tsx"], dirty.Select(l => l.Split('|')[0]));
+        Assert.Equal("src/b.tsx|deleted", dirty[1]);
+        Assert.Equal("src/a.tsx|" + f.Git("hash-object", "src/a.tsx"), dirty[0]);
+    }
+
+    [Fact]
+    public void Dirty_NonAsciiAndSpaces()
+    {
+        using var f = new GateFixture();
+        f.WriteConfig(GateStatus.TsxConfig);
+        f.Write("src/画面 1.tsx", "x");
+        var dirty = GateStatus.Dirty(f);
+        Assert.Equal(["src/画面 1.tsx|" + f.Git("hash-object", "src/画面 1.tsx")], dirty);
+    }
+
+    [Fact]
+    public void Dirty_UnbornHead_CountsAllUiFiles()
+    {
+        using var f = GateFixture.Unborn();
+        f.WriteConfig(GateStatus.TsxConfig);
+        f.Write("src/a.tsx", "a");
+        f.Write("src/b.tsx", "b");
+        f.Git("add", "src/a.tsx");
+        Assert.Equal(["src/a.tsx", "src/b.tsx"], GateStatus.Dirty(f).Select(l => l.Split('|')[0]));
+    }
+
+    [Fact]
+    public void Status_Fingerprint_ChangesWithContent()
+    {
+        using var f = new GateFixture();
+        f.WriteConfig(GateStatus.TsxConfig);
+        f.Write("src/a.tsx", "one");
+        var first = GateStatus.Fingerprint(f);
+        f.Write("src/a.tsx", "two");
+        var second = GateStatus.Fingerprint(f);
+        f.Write("src/a.tsx", "one");
+        Assert.NotEqual("", first);
+        Assert.NotEqual(first, second);
+        Assert.Equal(first, GateStatus.Fingerprint(f));
+    }
+
+    [Fact]
     public void RepoRoot_OutsideRepo_ReturnsNull()
     {
         using var f = new GateFixture();
