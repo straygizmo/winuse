@@ -19,6 +19,22 @@ public class RefRegistryTests
     }
 
     [Fact]
+    public void Register_Window_ReusesTheRefForTheSameHandle()
+    {
+        var reg = new RefRegistry();
+        var first = reg.Register(RefKind.Window, new WindowLocator("^Untitled - Notepad$", "notepad", null), (nint)0x1234);
+        reg.BeginSnapshot();
+        var again = reg.Register(RefKind.Window, new WindowLocator("^hello - Notepad$", "notepad", null), (nint)0x1234);
+        var other = reg.Register(RefKind.Window, new WindowLocator("^Calculator$", "calc", null), (nint)0x5678);
+        Assert.Equal("win1", first.Id);
+        Assert.Equal("win1", again.Id);
+        Assert.Equal("win2", other.Id);
+        Assert.True(reg.TryGet("win1", out var r));
+        Assert.Equal("^hello - Notepad$", ((WindowLocator)r.Locator).TitleRegex); // locator follows the current title
+        Assert.Equal((nint)0x1234, r.Handle);
+    }
+
+    [Fact]
     public void Locator_RoundTripsThroughJson()
     {
         Locator l = new DomLocator(new WindowLocator("MDium", "mdium", null), "[data-testid=\"editor\"]");

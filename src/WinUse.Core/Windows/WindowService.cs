@@ -147,6 +147,21 @@ public sealed class WindowService(AutomationDispatcher d)
     public static bool ProcessMatches(string actual, string wanted) =>
         string.Equals(StripExe(actual), StripExe(wanted), StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// The window's visible frame (DWM extended frame bounds, physical pixels): what the user sees, without the
+    /// invisible resize borders that <c>GetWindowRect</c> includes on Windows 10/11. Falls back to the raw rect.
+    /// </summary>
+    public static Rect VisibleRectOf(nint hwnd)
+    {
+        if (NativeMethods.DwmGetWindowAttribute(hwnd, NativeMethods.DWMWA_EXTENDED_FRAME_BOUNDS, out var fr, System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.RECT>()) == 0
+            && fr.Right > fr.Left && fr.Bottom > fr.Top)
+            return new Rect(fr.Left, fr.Top, fr.Right - fr.Left, fr.Bottom - fr.Top);
+        NativeMethods.GetWindowRect(hwnd, out var rc);
+        return new Rect(rc.Left, rc.Top, rc.Right - rc.Left, rc.Bottom - rc.Top);
+    }
+
+    public Task<Rect> VisibleRectAsync(nint hwnd) => d.RunAsync(() => VisibleRectOf(hwnd));
+
     private static List<WindowInfo> Enumerate()
     {
         var result = new List<WindowInfo>();

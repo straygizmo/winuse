@@ -46,6 +46,11 @@ internal static partial class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool GetWindowRect(nint hwnd, out RECT rect);
 
+    public const uint DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+
+    [LibraryImport("dwmapi.dll")]
+    public static partial int DwmGetWindowAttribute(nint hwnd, uint attribute, out RECT value, int size);
+
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool IsIconic(nint hwnd);

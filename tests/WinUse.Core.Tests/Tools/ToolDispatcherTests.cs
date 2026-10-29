@@ -276,7 +276,8 @@ public sealed class ToolDispatcherTests : IDisposable
         Assert.True(o.Ok, o.Error);
         var replayed = ctx.Journal.Entries[^1];
         var injected = replayed.Args["ref"]!.GetValue<string>();
-        Assert.NotEqual(recordedRef, injected);
+        // Window refs are stable per HWND, so re-resolving the same window hands back the recorded ref; what matters
+        // is that the injected ref was resolved from the locator and points at the foreground window.
         Assert.Equal(fg, (nint)ctx.GetRef(injected).Handle!);
     }
 

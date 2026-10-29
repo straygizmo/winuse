@@ -16,6 +16,19 @@ public sealed class RefRegistry
     {
         lock (_gate)
         {
+            // A window keeps its ref for the life of the session: re-observing the same HWND (list_windows,
+            // get_ui_tree, process_run ...) returns the ref already handed out, with the locator refreshed so a
+            // changed title still resolves. Element refs are per observation and keep numbering up.
+            if (kind == RefKind.Window && handle is not null)
+            {
+                foreach (var (id, existing) in _refs)
+                {
+                    if (existing.Kind != RefKind.Window || existing.Handle is null || !existing.Handle.Equals(handle)) continue;
+                    var refreshed = existing with { Locator = locator };
+                    _refs[id] = refreshed;
+                    return refreshed;
+                }
+            }
             _counters.TryGetValue(kind, out var n);
             _counters[kind] = ++n;
             var prefix = kind switch

@@ -90,7 +90,7 @@ public sealed class ObserveTools
             : (0, 0);
 
     [McpServerTool(Name = "list_windows", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("List visible top-level windows (foreground first) with a window ref, title, class, process, pid, rect and state.")]
+    [Description("List visible top-level windows (foreground first) with a window ref, title, class, process, pid, rect (GetWindowRect, includes the invisible resize borders), visible_rect (what is drawn on screen; use it to crop or record a window) and state. A window keeps its ref for the whole session.")]
     public static Task<CallToolResult> ListWindows(
         ToolContext ctx,
         [Description("Optional title regex filter.")] string? title_regex = null,
@@ -110,11 +110,12 @@ public sealed class ObserveTools
         process = w.ProcessName,
         pid = w.Pid,
         rect = w.Rect,
+        visible_rect = w.State == WindowState.Minimized ? w.Rect : WindowService.VisibleRectOf(w.Hwnd),
         state = w.State.ToString().ToLowerInvariant(),
     };
 
     [McpServerTool(Name = "get_ui_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect). Use the refs with the other tools. Java Swing windows are read through Java Access Bridge and return j{n} refs (menu items are listed even while their menu is closed); java_access_bridge explains why a Java window could not be read that way.")]
+    [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect); the window object carries the window's rect, visible_rect and state too. Use the refs with the other tools. Java Swing windows are read through Java Access Bridge and return j{n} refs (menu items are listed even while their menu is closed); java_access_bridge explains why a Java window could not be read that way.")]
     public static Task<CallToolResult> GetUiTree(
         ToolContext ctx,
         [Description("Window ref (win{n}) or title regex. Default: last observed window, else the foreground window.")] string? window = null,
@@ -137,7 +138,8 @@ public sealed class ObserveTools
                 : await Read();
             return new
             {
-                window = new { @ref = ctx.RegisterWindow(w).Id, title = w.Title, process = w.ProcessName },
+                window = new { @ref = ctx.RegisterWindow(w).Id, title = w.Title, process = w.ProcessName, pid = w.Pid, rect = w.Rect,
+                    visible_rect = w.State == WindowState.Minimized ? w.Rect : WindowService.VisibleRectOf(w.Hwnd), state = w.State.ToString().ToLowerInvariant() },
                 tree,
                 java_access_bridge = !isJava && JavaService.LooksLikeJavaWindow(w) ? ctx.Java.UnavailableReason(w) : null,
             };

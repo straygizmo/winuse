@@ -4,6 +4,12 @@
 
 Added
 
+- `list_windows` and `get_ui_tree` report `visible_rect` (DWM extended frame bounds: the frame the user sees, without the invisible resize borders `rect` includes) so a client can crop or record exactly one window. `get_ui_tree`'s `window` object now carries `pid`, `rect`, `visible_rect` and `state` too.
+
+Changed
+
+- A window keeps its `win{n}` ref for the whole session: observing the same HWND again (`list_windows`, `get_ui_tree`, `process_run` ...) returns the ref already handed out instead of a new number, with the stored locator refreshed to the current title. Element refs (`u{n}` ...) still number up per observation.
+
 - Claude Code plugin `winuse-gate` (`plugins/winuse-gate`, listed in `.claude-plugin/marketplace.json`): hooks that block Claude's turn end once per change, and deny `git commit`, while UI files changed in the session have no passing winuse assertion, plus the `winuse-e2e` skill that tells Claude how to verify. Configured per project with `.claude/winuse-gate.json`.
 
 ## 0.2.1 - 2026-10-23

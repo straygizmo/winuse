@@ -148,7 +148,7 @@ Replay never calls the decision model for `act`: each `act` step replays on its 
 
 Element refs are `u{n}` (UI Automation), `j{n}` (Java Swing via Java Access Bridge), `w{n}` (WebView2 DOM), `win{n}` (window) and `pt{n}` (a screen point from visual grounding).
 
-- Observe: `screenshot` (returns `origin {x, y}`: map an image pixel to `click(x, y)` with `screen_x = origin.x + pixel_x / scale`), `list_windows`, `get_ui_tree`, `get_dom`, `get_element`, `get_text`, `get_table`, `get_list_items`
+- Observe: `screenshot` (returns `origin {x, y}`: map an image pixel to `click(x, y)` with `screen_x = origin.x + pixel_x / scale`), `list_windows` (each window: `ref`, `title`, `process`, `pid`, `rect`, `visible_rect` = the frame actually drawn, without the invisible resize borders, `state`; a window keeps its `win{n}` ref for the session), `get_ui_tree` (its `window` object carries the same fields), `get_dom`, `get_element`, `get_text`, `get_table`, `get_list_items`
 - Intent: `act`, `find`, `check` (see "Visual grounding" above for windows without elements)
 - Input: `click`, `hover`, `drag`, `scroll`, `type_text`, `press_keys`
 - Element: `set_text`, `select_item`, `set_checked`, `focus`, `invoke`
