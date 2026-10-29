@@ -39,6 +39,8 @@ public sealed class FileService(WinUseConfig cfg)
 
     public string ReadText(string path) => File.ReadAllText(G(path), Utf8);
 
+    public byte[] ReadBytes(string path) => File.ReadAllBytes(G(path));
+
     public void WriteText(string path, string text)
     {
         var p = G(path);

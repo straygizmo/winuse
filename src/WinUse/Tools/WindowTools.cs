@@ -23,13 +23,24 @@ public sealed class WindowTools
         });
 
     [McpServerTool(Name = "window_close", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Ask a window to close (WM_CLOSE; the app may show a save prompt).")]
+    [Description("Ask a window to close (WM_CLOSE) and wait up to timeout_ms for it to go away. closed=true only when the window is gone; closed=false with reason \"still_open\" when it is still there, e.g. because the app opened a save prompt (foreground then describes that prompt; capture it with screenshot or read it with get_ui_tree on the same window).")]
     public static Task<CallToolResult> WindowClose(
         ToolContext ctx,
         [Description("Window ref (win{n}). Either ref or title is required.")] string? @ref = null,
-        [Description("Window title regex.")] string? title = null) =>
-        OnWindow(ctx, "window_close", ToolContext.Args(("ref", @ref), ("title", title)), @ref, title, async w =>
-            new { closed = await ctx.Windows.CloseAsync(w.Hwnd) });
+        [Description("Window title regex.")] string? title = null,
+        [Description("How long to wait for the window to go away, in milliseconds.")] int timeout_ms = 2000) =>
+        OnWindow(ctx, "window_close", ToolContext.Args(("ref", @ref), ("title", title), ("timeout_ms", timeout_ms)), @ref, title, async w =>
+        {
+            if (!await ctx.Windows.CloseAsync(w.Hwnd)) throw new InvalidOperationException($"Could not post WM_CLOSE to window '{w.Title}'.");
+            if (await ctx.Windows.WaitGoneAsync(w.Hwnd, TimeSpan.FromMilliseconds(Math.Max(0, timeout_ms)))) return new { closed = true, reason = (string?)null, foreground = (object?)null };
+            var fg = await ctx.Windows.ForegroundAsync();
+            return new
+            {
+                closed = false,
+                reason = (string?)"still_open",
+                foreground = fg is null ? null : (object?)new { title = fg.Title, class_name = fg.ClassName, process = fg.ProcessName, pid = fg.Pid, rect = fg.Rect },
+            };
+        });
 
     [McpServerTool(Name = "window_set_state", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Set a window to normal, minimized or maximized.")]

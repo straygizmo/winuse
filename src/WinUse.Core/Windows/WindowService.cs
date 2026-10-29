@@ -25,6 +25,16 @@ public sealed class WindowService(AutomationDispatcher d)
     public Task<bool> ExistsAsync(WindowLocator loc) =>
         d.RunAsync(() => Enumerate().Any(w => Matches(w, loc)));
 
+    /// <summary>The foreground window, even when it is untitled (a modal dialog), or null when there is none.</summary>
+    public Task<WindowInfo?> ForegroundAsync() => d.RunAsync<WindowInfo?>(() =>
+    {
+        var fg = NativeMethods.GetForegroundWindow();
+        return fg == 0 ? null : InfoOf(fg);
+    });
+
+    /// <summary>True while <paramref name="hwnd"/> is an existing, visible window.</summary>
+    public Task<bool> IsAliveAsync(nint hwnd) => d.RunAsync(() => NativeMethods.IsWindow(hwnd) && NativeMethods.IsWindowVisible(hwnd));
+
     public async Task<bool> ActivateAsync(nint hwnd)
     {
         // A freshly launched window may still be taking foreground itself; retry briefly.
@@ -62,6 +72,18 @@ public sealed class WindowService(AutomationDispatcher d)
 
     public Task<bool> CloseAsync(nint hwnd) =>
         d.RunAsync(() => NativeMethods.PostMessageW(hwnd, NativeMethods.WM_CLOSE, 0, 0));
+
+    /// <summary>Waits until <paramref name="hwnd"/> is destroyed or hidden; false when it is still there after <paramref name="timeout"/>.</summary>
+    public async Task<bool> WaitGoneAsync(nint hwnd, TimeSpan timeout)
+    {
+        var sw = Stopwatch.StartNew();
+        while (true)
+        {
+            if (!await IsAliveAsync(hwnd).ConfigureAwait(false)) return true;
+            if (sw.Elapsed >= timeout) return false;
+            await Task.Delay(PollInterval).ConfigureAwait(false);
+        }
+    }
 
     public Task<bool> SetStateAsync(nint hwnd, WindowState s) => d.RunAsync(() =>
     {
@@ -171,18 +193,25 @@ public sealed class WindowService(AutomationDispatcher d)
             if (NativeMethods.GetWindowTextLengthW(hwnd) == 0) return true;
             if ((NativeMethods.GetWindowLongPtrW(hwnd, NativeMethods.GWL_EXSTYLE) & NativeMethods.WS_EX_TOOLWINDOW) != 0) return true;
 
-            var title = ReadText(hwnd, NativeMethods.GetWindowTextW);
-            if (title.Length == 0) return true;
-            var cls = ReadText(hwnd, NativeMethods.GetClassNameW);
-            NativeMethods.GetWindowThreadProcessId(hwnd, out var pid);
-            NativeMethods.GetWindowRect(hwnd, out var rc);
-            var state = NativeMethods.IsIconic(hwnd) ? WindowState.Minimized
-                : NativeMethods.IsZoomed(hwnd) ? WindowState.Maximized : WindowState.Normal;
-            result.Add(new WindowInfo(hwnd, title, cls, ProcessNameOf((int)pid), (int)pid,
-                new Rect(rc.Left, rc.Top, rc.Right - rc.Left, rc.Bottom - rc.Top), state));
+            var info = InfoOf(hwnd);
+            if (info.Title.Length == 0) return true;
+            result.Add(info);
             return true;
         }, 0);
         return result;
+    }
+
+    /// <summary>Title, class, process, rect and state of any window handle (no visibility or title filtering).</summary>
+    private static WindowInfo InfoOf(nint hwnd)
+    {
+        var title = ReadText(hwnd, NativeMethods.GetWindowTextW);
+        var cls = ReadText(hwnd, NativeMethods.GetClassNameW);
+        NativeMethods.GetWindowThreadProcessId(hwnd, out var pid);
+        NativeMethods.GetWindowRect(hwnd, out var rc);
+        var state = NativeMethods.IsIconic(hwnd) ? WindowState.Minimized
+            : NativeMethods.IsZoomed(hwnd) ? WindowState.Maximized : WindowState.Normal;
+        return new WindowInfo(hwnd, title, cls, ProcessNameOf((int)pid), (int)pid,
+            new Rect(rc.Left, rc.Top, rc.Right - rc.Left, rc.Bottom - rc.Top), state);
     }
 
     private static string ReadText(nint hwnd, Func<nint, char[], int, int> read)

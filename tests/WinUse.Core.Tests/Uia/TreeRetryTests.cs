@@ -27,6 +27,21 @@ public class TreeRetryTests
         Assert.Single(tree.Children);
     }
 
+    private static UiNode Win(bool focused, params UiNode[] children) =>
+        new("u2", "Window", null, null, null, true, false, null, focused, new Rect(0, 0, 100, 100), 1, children);
+
+    [Fact]
+    public void HasEmptyFocusedWindow_OnlyForAFocusedChildlessWindow()
+    {
+        Assert.True(UiaService.HasEmptyFocusedWindow(Node(Win(true))));
+        Assert.True(UiaService.HasEmptyFocusedWindow(Node(Node(Win(true)))));        // nested
+        Assert.False(UiaService.HasEmptyFocusedWindow(Node(Win(false))));             // an unfocused empty Window (a WebView host) is normal
+        Assert.False(UiaService.HasEmptyFocusedWindow(Node(Win(true, Node()))));      // populated
+        Assert.False(UiaService.HasEmptyFocusedWindow(Node()));                       // the root itself is handled by RetryIfChildlessAsync
+        var zero = new UiNode("u2", "Window", null, null, null, true, false, null, true, new Rect(0, 0, 0, 0), 1, []);
+        Assert.False(UiaService.HasEmptyFocusedWindow(Node(zero)));
+    }
+
     [Fact]
     public async Task RootWithChildren_IsNotReread()
     {

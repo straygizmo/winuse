@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+Added
+
+- `sleep {ms}` tool and `wait_for {condition: "time"}` for a plain wait (#12).
+- Clipboard tools `clipboard_get`, `clipboard_set`, `clipboard_set_image` (PNG/JPEG/BMP/GIF under the allowed roots, put on the clipboard as CF_DIB plus PNG) and `paste_text` / `paste_image` (set the clipboard, press ctrl+v, restore the previous text), so rich editors that UIA cannot fill are reachable without a PowerShell detour (#13).
+- `click`, `hover`, `scroll` and `drag` take `window` (ref or title regex): the window is activated first and x/y are relative to its rect, i.e. the pixel of a window screenshot can be passed as is (#14).
+- `type_text` and `press_keys` take `window`: the window is activated before the input and the call fails when it does not exist or cannot take the foreground; the result reports where the input went (#15).
+- `get_ui_tree` takes `control_type` (comma-separated), `name` (regex), `compact` and `max_nodes`; matching nodes are hoisted so the output is as flat as the filter allows, `compact` drops null / default fields and prints `rect` as `x,y,w,h`, and a truncated result reports `omitted_nodes` (#17).
+- `screenshot` takes `monitor`, `method` (`auto` / `screen` / `print`) and `settle_ms`, supports `target: "virtual"`, and reports `method` and (for screen captures) `monitors` with index, rect, work area and primary flag (#10, #11, #18).
+
+Changed
+
+- `screenshot {target: "screen"}` captures the primary monitor at its native resolution with origin (0,0); the former whole-virtual-screen image is `target: "virtual"` (#18).
+- A window screenshot is copied from the screen when the window or a dialog it owns is in the foreground, so modal save prompts and WebView2 overlays are in the picture and Chromium windows no longer hand out a frame that predates the last input; PrintWindow is only used for a window that is not in the foreground (#10, #11).
+- `get_ui_tree` reads once more after a short wait when a focused child `Window` (a dialog that just opened) has no content yet (#11).
+- `window_close` waits for the window to go away (`timeout_ms`, default 2 s) and returns `closed: false` with `reason: "still_open"` and the foreground window (the save prompt) when it is still there, instead of `closed: true` for a posted WM_CLOSE (#16).
+- A window title regex that matches nothing is retried for 1.5 s before `No window matches` is raised, so the title `wait_for` just matched still resolves while an SPA re-titles its page; `wait_for` now points at the `win{n}` ref as the more reliable handle (#9).
+
 ## 0.2.2 - 2026-10-29
 
 Added

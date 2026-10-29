@@ -34,6 +34,20 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
         return await get().ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// True when the tree holds a focused <c>Window</c> node (a modal dialog that just opened) with a visible area and no
+    /// children: its content has not been populated yet and a second read is worth a short wait.
+    /// </summary>
+    public static bool HasEmptyFocusedWindow(UiNode tree)
+    {
+        foreach (var c in tree.Children)
+        {
+            if (c.ControlType == "Window" && c.Focused && c.Children.Count == 0 && c.Rect.Width > 0 && c.Rect.Height > 0) return true;
+            if (HasEmptyFocusedWindow(c)) return true;
+        }
+        return false;
+    }
+
     public async Task<UiNode> GetTreeAsync(nint hwnd, TreeOptions opt)
     {
         opt ??= new TreeOptions();

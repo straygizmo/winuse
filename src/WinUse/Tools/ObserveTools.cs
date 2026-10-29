@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.ComponentModel;
+using System.Text.RegularExpressions;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using WinUse.Core.Java;
@@ -14,28 +15,40 @@ namespace WinUse.Tools;
 public sealed class ObserveTools
 {
     [McpServerTool(Name = "screenshot", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Capture a PNG of the whole screen, a window, or a single element. Returns the image plus width/height (image pixels), scale and origin {x, y}: the virtual-screen physical pixel of image pixel (0,0). Map an image pixel to click(x, y) with screen_x = origin.x + pixel_x / scale, screen_y = origin.y + pixel_y / scale (origin is null for a DOM element capture).")]
+    [Description("Capture a PNG of a monitor, the whole virtual screen, a window, or a single element. Returns the image plus width/height (image pixels), scale, origin {x, y} (the screen pixel of image pixel (0,0): screen_x = origin.x + pixel_x / scale; null for a DOM element capture), method (\"screen\": copied from the screen, what the user sees including dialogs; \"print\": PrintWindow, used when the window is not in the foreground, which misses owned dialogs and can lag in Chromium apps) and, for screen captures, the monitor layout. To click an image pixel of a window capture, pass it to click with window and the same x,y; for other captures add origin.")]
     public static Task<CallToolResult> Screenshot(
         ToolContext ctx,
-        [Description("What to capture: \"screen\", \"window\" (window, ref or title; default: last observed / foreground window) or \"element\" (ref). Default: \"window\" when window or title is given, else \"screen\".")] string? target = null,
+        [Description("What to capture: \"screen\" (the primary monitor, or monitor), \"virtual\" (all monitors in one image), \"window\" (window, ref or title; default: last observed / foreground window) or \"element\" (ref). Default: \"window\" when window or title is given, else \"screen\".")] string? target = null,
         [Description("Window ref (win{n}) for target=window, or element ref (u{n} / j{n} / w{n}) for target=element.")] string? @ref = null,
         [Description("Window title regex for target=window.")] string? title = null,
         [Description("Downscale factor between 0.25 and 1.0.")] double scale = 1.0,
-        [Description("Window ref (win{n}) or title regex to capture, like the window argument of the other tools.")] string? window = null) =>
-        ctx.RunStepAsync("screenshot", ToolContext.Args(("target", target), ("ref", @ref), ("title", title), ("scale", scale), ("window", window)), async step =>
+        [Description("Window ref (win{n}) or title regex to capture, like the window argument of the other tools.")] string? window = null,
+        [Description("Monitor index from a previous result's monitors (target=screen). Default: the primary monitor.")] int? monitor = null,
+        [Description("Window capture method: \"auto\" (screen copy when the window or its dialog is in the foreground, else print), \"screen\" or \"print\".")] string method = "auto",
+        [Description("Wait this many milliseconds before capturing, so the app has repainted after the previous input.")] int settle_ms = 0) =>
+        ctx.RunStepAsync("screenshot", ToolContext.Args(("target", target), ("ref", @ref), ("title", title), ("scale", scale), ("window", window),
+            ("monitor", monitor), ("method", method), ("settle_ms", settle_ms)), async step =>
         {
             var (kind, windowRef, windowTitle) = NormalizeScreenshotArgs(target, @ref, title, window);
-            Capture c;
+            var captureMethod = ParseMethod(method);
+            if (settle_ms > 0) await Task.Delay(Math.Min(settle_ms, 60_000));
+            WinUse.Core.Screen.Capture c;
+            IReadOnlyList<MonitorInfo>? monitors = null;
             switch (kind)
             {
                 case "screen":
-                    c = await ctx.Screen.CaptureScreenAsync(scale);
+                    c = await ctx.Screen.CaptureScreenAsync(scale, monitor);
+                    monitors = await ctx.Screen.ListMonitorsAsync();
+                    break;
+                case "virtual":
+                    c = await ctx.Screen.CaptureVirtualScreenAsync(scale);
+                    monitors = await ctx.Screen.ListMonitorsAsync();
                     break;
                 case "window":
                 {
                     var w = await ctx.ResolveWindowAsync(windowRef, windowTitle, fallback: true);
                     if (windowRef is not null) step.Resolved = ctx.GetRef(windowRef).Locator;
-                    c = await ctx.Screen.CaptureWindowAsync(w.Hwnd, scale);
+                    c = await ctx.Screen.CaptureWindowAsync(w.Hwnd, scale, captureMethod);
                     break;
                 }
                 case "element":
@@ -49,7 +62,7 @@ public sealed class ObserveTools
                         var png = await ctx.Web.ScreenshotAsync(r.Id);
                         var (width, height) = PngSize(png);
                         step.Extra.Add(ImageContentBlock.FromBytes(png, "image/png"));
-                        return new { width, height, scale = 1.0, origin = (object?)null };
+                        return new { width, height, scale = 1.0, origin = (object?)null, method = "page" };
                     }
                     var rect = r.Kind switch
                     {
@@ -61,15 +74,23 @@ public sealed class ObserveTools
                     break;
                 }
                 default:
-                    throw new ArgumentException($"Unknown target '{target}'. Use screen, window or element.");
+                    throw new ArgumentException($"Unknown target '{target}'. Use screen, virtual, window or element.");
             }
             step.Extra.Add(ImageContentBlock.FromBytes(c.Png, "image/png"));
-            return ScreenshotPayload(c);
+            return ScreenshotPayload(c, monitors);
         });
 
-    /// <summary>Result of a screen/window/rect capture: size, scale and the virtual-screen origin of pixel (0,0).</summary>
-    public static object ScreenshotPayload(Capture c) =>
-        new { width = c.Width, height = c.Height, scale = c.Scale, origin = (object?)new { x = c.OriginX, y = c.OriginY } };
+    /// <summary>Result of a screen/window/rect capture: size, scale, the virtual-screen origin of pixel (0,0), the method and (for screen captures) the monitors.</summary>
+    public static object ScreenshotPayload(WinUse.Core.Screen.Capture c, IReadOnlyList<MonitorInfo>? monitors = null) =>
+        new
+        {
+            width = c.Width,
+            height = c.Height,
+            scale = c.Scale,
+            origin = (object?)new { x = c.OriginX, y = c.OriginY },
+            method = c.Method,
+            monitors = monitors?.Select(m => new { index = m.Index, rect = m.Rect, work_area = m.WorkArea, primary = m.Primary, device = m.Device }).ToList(),
+        };
 
     /// <summary>
     /// Effective screenshot target and window arguments. <paramref name="window"/> (a ref or title regex, like every
@@ -83,6 +104,14 @@ public sealed class ObserveTools
         if (!string.IsNullOrEmpty(window)) return (t, null, window); // ResolveWindowAsync accepts a win{n} ref in the title slot
         return (t, t == "window" ? @ref : null, title);
     }
+
+    public static CaptureMethod ParseMethod(string? method) => (method ?? "auto").ToLowerInvariant() switch
+    {
+        "" or "auto" => CaptureMethod.Auto,
+        "screen" => CaptureMethod.Screen,
+        "print" => CaptureMethod.Print,
+        _ => throw new ArgumentException($"Unknown method '{method}'. Use auto, screen or print."),
+    };
 
     private static (int Width, int Height) PngSize(byte[] png) =>
         png.Length >= 24
@@ -115,17 +144,26 @@ public sealed class ObserveTools
     };
 
     [McpServerTool(Name = "get_ui_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect); the window object carries the window's rect, visible_rect and state too. Use the refs with the other tools. Java Swing windows are read through Java Access Bridge and return j{n} refs (menu items are listed even while their menu is closed); java_access_bridge explains why a Java window could not be read that way.")]
+    [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect); the window object carries the window's rect, visible_rect and state too. Use the refs with the other tools. Narrow the output with control_type / name (matching nodes are hoisted to their nearest kept ancestor), compact (no null / default fields) and max_nodes. Java Swing windows are read through Java Access Bridge and return j{n} refs (menu items are listed even while their menu is closed); java_access_bridge explains why a Java window could not be read that way.")]
     public static Task<CallToolResult> GetUiTree(
         ToolContext ctx,
         [Description("Window ref (win{n}) or title regex. Default: last observed window, else the foreground window.")] string? window = null,
         [Description("Optional element ref (u{n} or j{n}) to return only that subtree.")] string? scope = null,
         [Description("Maximum depth to walk.")] int max_depth = 12,
         [Description("Keep only interactive elements and labelled text.")] bool interactive_only = true,
-        [Description("Include offscreen elements.")] bool include_offscreen = false) =>
+        [Description("Include offscreen elements.")] bool include_offscreen = false,
+        [Description("Comma-separated control types to keep, e.g. \"Edit,Button\" (case-insensitive). Other nodes are dropped and their matching descendants hoisted.")] string? control_type = null,
+        [Description("Regex (case-insensitive) the node name must match. Combined with control_type.")] string? name = null,
+        [Description("Omit null and default-valued fields (automationId, value, checked, enabled=true, offscreen=false, focused=false, depth) and print rect as \"x,y,w,h\".")] bool compact = false,
+        [Description("Keep at most this many nodes (document order); the result then reports omitted_nodes.")] int? max_nodes = null) =>
         ctx.RunStepAsync("get_ui_tree", ToolContext.Args(("window", window), ("scope", scope), ("max_depth", max_depth),
-            ("interactive_only", interactive_only), ("include_offscreen", include_offscreen)), async _ =>
+            ("interactive_only", interactive_only), ("include_offscreen", include_offscreen), ("control_type", control_type), ("name", name),
+            ("compact", compact), ("max_nodes", max_nodes)), async _ =>
         {
+            var nameRegex = name is null ? null : new Regex(name, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
+            var types = UiTreeShaper.ParseControlTypes(control_type);
+            if (max_nodes is < 1) throw new ArgumentOutOfRangeException(nameof(max_nodes), "max_nodes must be at least 1.");
+
             var w = scope is not null && window is null
                 ? await ctx.ResolveWindowAsync(scope, null, false)
                 : await ctx.ResolveWindowAsync(null, window, fallback: true);
@@ -136,11 +174,21 @@ public sealed class ObserveTools
             var tree = scope is null
                 ? await UiaService.RetryIfChildlessAsync(Read, UiaService.EmptyTreeRetryDelay)
                 : await Read();
+            // A modal dialog that has just appeared (focused child Window without content) may not have populated yet.
+            if (scope is null && UiaService.HasEmptyFocusedWindow(tree))
+            {
+                await Task.Delay(UiaService.EmptyTreeRetryDelay);
+                tree = await Read();
+            }
+            tree = UiTreeShaper.Filter(tree, types, nameRegex);
+            var omitted = 0;
+            if (max_nodes is { } max) (tree, omitted) = UiTreeShaper.Truncate(tree, max);
             return new
             {
                 window = new { @ref = ctx.RegisterWindow(w).Id, title = w.Title, process = w.ProcessName, pid = w.Pid, rect = w.Rect,
                     visible_rect = w.State == WindowState.Minimized ? w.Rect : WindowService.VisibleRectOf(w.Hwnd), state = w.State.ToString().ToLowerInvariant() },
-                tree,
+                tree = compact ? (object)UiTreeShaper.Compact(tree) : tree,
+                omitted_nodes = omitted > 0 ? omitted : (int?)null,
                 java_access_bridge = !isJava && JavaService.LooksLikeJavaWindow(w) ? ctx.Java.UnavailableReason(w) : null,
             };
         });
