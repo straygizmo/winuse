@@ -377,7 +377,7 @@ public sealed class ToolDispatcherTests : IDisposable
         var title = "^no-such-window-" + Guid.NewGuid().ToString("N") + "$";
         var o = await new ToolDispatcher(ctx).InvokeAsync(new("screenshot", Args(("window", title)), null), default);
         Assert.False(o.Ok);
-        Assert.Equal($"No window matches '{title}'.", o.Error);
+        Assert.StartsWith($"No window matches '{title}'", o.Error);
         Assert.Equal(title, ctx.Journal.Entries.Single().Args["window"]!.GetValue<string>());
     }
 

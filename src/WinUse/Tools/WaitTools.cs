@@ -12,12 +12,25 @@ public sealed class WaitTools
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(200);
 
+    [McpServerTool(Name = "sleep", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("Wait for a fixed time (e.g. for an animation, upload or page transition to finish) and return. Prefer wait_for when there is a condition to wait on.")]
+    public static Task<CallToolResult> Sleep(
+        ToolContext ctx,
+        [Description("How long to wait, in milliseconds (0-600000).")] int ms) =>
+        ctx.RunStepAsync("sleep", ToolContext.Args(("ms", ms)), async _ =>
+        {
+            if (ms < 0 || ms > 600_000) throw new ArgumentOutOfRangeException(nameof(ms), "ms must be between 0 and 600000.");
+            var sw = Stopwatch.StartNew();
+            await Task.Delay(ms);
+            return new { slept_ms = sw.ElapsedMilliseconds };
+        });
+
     [McpServerTool(Name = "wait_for", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Wait until a condition holds, polling every 200 ms. Conditions: window (title), window_closed (title), element (ref or selector), text (ref contains expected), enabled (ref). Returns passed=false on timeout.")]
+    [Description("Wait until a condition holds, polling every 200 ms. Conditions: window (title), window_closed (title), element (ref or selector), text (ref contains expected), enabled (ref), time (just wait timeout_ms and pass). Returns passed=false on timeout. The window condition returns the matched window's win{n} ref: pass that ref to the next tools rather than repeating the title regex, which can stop matching while a page re-titles itself.")]
     public static Task<CallToolResult> WaitFor(
         ToolContext ctx,
-        [Description("window, window_closed, element, text or enabled.")] string condition,
-        [Description("Timeout in milliseconds.")] int timeout_ms = 10000,
+        [Description("window, window_closed, element, text, enabled or time.")] string condition,
+        [Description("Timeout in milliseconds (for time: the wait itself).")] int timeout_ms = 10000,
         [Description("Window title regex (window / window_closed).")] string? title = null,
         [Description("Element ref (element / text / enabled).")] string? @ref = null,
         [Description("CSS / Playwright selector in the connected page (element).")] string? selector = null,
@@ -73,8 +86,12 @@ public sealed class WaitTools
                     }, timeout);
                     break;
                 }
+                case "time":
+                    await Task.Delay(timeout);
+                    ok = true;
+                    break;
                 default:
-                    throw new ArgumentException($"Unknown condition '{condition}'. Use window, window_closed, element, text or enabled.");
+                    throw new ArgumentException($"Unknown condition '{condition}'. Use window, window_closed, element, text, enabled or time.");
             }
             step.Passed = ok;
             return new

@@ -107,6 +107,7 @@ public static class Program
             .WithTools<ObserveTools>()
             .WithTools<IntentTools>()
             .WithTools<InputTools>()
+            .WithTools<ClipboardTools>()
             .WithTools<ElementTools>()
             .WithTools<WindowTools>()
             .WithTools<WaitTools>()

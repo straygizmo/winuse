@@ -31,6 +31,7 @@ public class ToolHelpersTests
     [InlineData(null, null, "^X", null, "window", null, "^X")]
     [InlineData("Element", "u4", null, null, "element", null, null)]
     [InlineData("screen", null, null, "^Y", "screen", null, "^Y")]       // explicit target is kept
+    [InlineData("Virtual", null, null, null, "virtual", null, null)]
     public void NormalizeScreenshotArgs_WindowDefaultsTargetToWindow(string? target, string? @ref, string? title, string? window,
         string expectedTarget, string? expectedRef, string? expectedTitle) =>
         Assert.Equal((expectedTarget, expectedRef, expectedTitle), ObserveTools.NormalizeScreenshotArgs(target, @ref, title, window));
@@ -45,6 +46,40 @@ public class ToolHelpersTests
         Assert.Equal(0.5, json["scale"]!.GetValue<double>());
         Assert.Equal(-1920, json["origin"]!["x"]!.GetValue<int>());
         Assert.Equal(50, json["origin"]!["y"]!.GetValue<int>());
+        Assert.Equal("screen", json["method"]!.GetValue<string>());
+        Assert.Null(json["monitors"]);
+    }
+
+    [Fact]
+    public void ScreenshotPayload_ListsMonitors()
+    {
+        var monitors = new[] { new WinUse.Core.Screen.MonitorInfo(0, new Rect(0, 0, 1920, 1080), new Rect(0, 0, 1920, 1040), true, @"\.\DISPLAY1") };
+        var json = System.Text.Json.Nodes.JsonNode.Parse(ToolResult.Ok(
+            ObserveTools.ScreenshotPayload(new WinUse.Core.Screen.Capture([1], 1920, 1080, 1.0, 0, 0, "print"), monitors), "s1"))!;
+        Assert.Equal("print", json["method"]!.GetValue<string>());
+        var m = json["monitors"]!.AsArray().Single()!;
+        Assert.Equal(0, m["index"]!.GetValue<int>());
+        Assert.True(m["primary"]!.GetValue<bool>());
+        Assert.Equal(1920, m["rect"]!["width"]!.GetValue<int>());
+    }
+
+    [Theory]
+    [InlineData(null, WinUse.Core.Screen.CaptureMethod.Auto)]
+    [InlineData("auto", WinUse.Core.Screen.CaptureMethod.Auto)]
+    [InlineData("Screen", WinUse.Core.Screen.CaptureMethod.Screen)]
+    [InlineData("print", WinUse.Core.Screen.CaptureMethod.Print)]
+    public void ParseMethod_AcceptsTheThreeMethods(string? input, WinUse.Core.Screen.CaptureMethod expected) =>
+        Assert.Equal(expected, ObserveTools.ParseMethod(input));
+
+    [Fact]
+    public void ParseMethod_RejectsOthers() => Assert.Throws<ArgumentException>(() => ObserveTools.ParseMethod("gdi"));
+
+    [Fact]
+    public void ToScreen_AddsTheWindowOrigin()
+    {
+        var w = new InputTools.TargetWindow(new WindowInfo(1, "t", "c", "p", 1, new Rect(100, 200, 300, 400), WindowState.Normal), "win1");
+        Assert.Equal((110, 220), InputTools.ToScreen(w, (10, 20)));
+        Assert.Equal((10, 20), InputTools.ToScreen(null, (10, 20)));
     }
 
     private static WindowInfo Win(int pid, string process, string title) =>

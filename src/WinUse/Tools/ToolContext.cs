@@ -64,6 +64,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
         Refs = new RefRegistry();
         Windows = new WindowService(Dispatcher);
         Input = new InputService(Dispatcher);
+        Clipboard = new ClipboardService(Dispatcher);
         Screen = new ScreenService(Dispatcher);
         Processes = new ProcessService(cfg);
         Files = new FileService(cfg);
@@ -93,6 +94,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
     public RefRegistry Refs { get; }
     public WindowService Windows { get; }
     public InputService Input { get; }
+    public ClipboardService Clipboard { get; }
     public ScreenService Screen { get; }
     public ProcessService Processes { get; }
     public FileService Files { get; }
@@ -260,9 +262,17 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
     }
 
     /// <summary>
+    /// How long a title regex that matches no window is retried before <see cref="ResolveWindowAsync"/> gives up: a
+    /// page that re-titles itself while it renders (an SPA after navigation) stops matching for a moment, and the title
+    /// <c>wait_for</c> just matched must still resolve in the next call.
+    /// </summary>
+    public static readonly TimeSpan TitleGrace = TimeSpan.FromMilliseconds(1500);
+
+    /// <summary>
     /// Resolves a window from a ref (<c>win{n}</c>, or the owner of an element ref), else a title regex
-    /// (a <c>win{n}</c> ref is also accepted in place of the title). With neither, falls back to
-    /// <see cref="LastWindow"/> and then the foreground window when <paramref name="fallback"/> is set.
+    /// (a <c>win{n}</c> ref is also accepted in place of the title; a regex that matches nothing is retried for
+    /// <see cref="TitleGrace"/>). With neither, falls back to <see cref="LastWindow"/> and then the foreground window
+    /// when <paramref name="fallback"/> is set.
     /// </summary>
     public async Task<WindowInfo> ResolveWindowAsync(string? refId, string? title, bool fallback)
     {
@@ -270,8 +280,8 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
         if (!string.IsNullOrEmpty(title))
         {
             if (Refs.TryGet(title, out var r) && r.Kind == RefKind.Window) return await FindWindowAsync(r).ConfigureAwait(false);
-            return (await Windows.ListAsync(title).ConfigureAwait(false)).FirstOrDefault()
-                   ?? throw new InvalidOperationException($"No window matches '{title}'.");
+            return await Windows.WaitForAsync(new WindowLocator(title, null, null), TitleGrace).ConfigureAwait(false)
+                   ?? throw new InvalidOperationException($"No window matches '{title}' (retried for {TitleGrace.TotalSeconds:0.#} s). Prefer the win{{n}} ref a previous tool returned for this window.");
         }
         if (!fallback) throw new ArgumentException("Specify a window ref or title.");
         var all = await Windows.ListAsync().ConfigureAwait(false);

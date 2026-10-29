@@ -148,16 +148,24 @@ Replay never calls the decision model for `act`: each `act` step replays on its 
 
 Element refs are `u{n}` (UI Automation), `j{n}` (Java Swing via Java Access Bridge), `w{n}` (WebView2 DOM), `win{n}` (window) and `pt{n}` (a screen point from visual grounding).
 
-- Observe: `screenshot` (returns `origin {x, y}`: map an image pixel to `click(x, y)` with `screen_x = origin.x + pixel_x / scale`), `list_windows` (each window: `ref`, `title`, `process`, `pid`, `rect`, `visible_rect` = the frame actually drawn, without the invisible resize borders, `state`; a window keeps its `win{n}` ref for the session), `get_ui_tree` (its `window` object carries the same fields), `get_dom`, `get_element`, `get_text`, `get_table`, `get_list_items`
+- Observe: `screenshot` (`target`: `screen` = the primary monitor or `monitor: <index>`, `virtual` = all monitors in one image, `window`, `element`; returns `origin {x, y}`, `method` and, for screen captures, `monitors`), `list_windows` (each window: `ref`, `title`, `process`, `pid`, `rect`, `visible_rect` = the frame actually drawn, without the invisible resize borders, `state`; a window keeps its `win{n}` ref for the session), `get_ui_tree` (its `window` object carries the same fields; `control_type`, `name`, `compact` and `max_nodes` cut the output down), `get_dom`, `get_element`, `get_text`, `get_table`, `get_list_items`
 - Intent: `act`, `find`, `check` (see "Visual grounding" above for windows without elements)
-- Input: `click`, `hover`, `drag`, `scroll`, `type_text`, `press_keys`
+- Input: `click`, `hover`, `drag`, `scroll` (with `window`, x/y are relative to that window and it is activated first), `type_text`, `press_keys` (with `window`, that window is activated first so the keys cannot land elsewhere)
+- Clipboard: `clipboard_get`, `clipboard_set`, `clipboard_set_image`, `paste_text`, `paste_image` (the way into rich editors such as CodeMirror or Monaco that UIA cannot fill: `paste_text` sets the clipboard, presses ctrl+v and restores the previous text; read an editor back with `press_keys "ctrl+a ctrl+c"` + `clipboard_get`)
 - Element: `set_text`, `select_item`, `set_checked`, `focus`, `invoke`
-- Window: `window_activate`, `window_close`, `window_set_state`, `window_move`, `window_exists`
-- Wait: `wait_for`
+- Window: `window_activate`, `window_close` (waits `timeout_ms`, default 2 s; `closed: false, reason: "still_open"` plus the foreground window when a save prompt keeps it open), `window_set_state`, `window_move`, `window_exists`
+- Wait: `wait_for` (conditions `window`, `window_closed`, `element`, `text`, `enabled`, `time`), `sleep`
 - Process: `process_run`, `process_kill`, `process_exists`
 - File: `file_exists`, `read_text`, `write_text`, `append_text`, `copy`, `move`, `delete`, `list_dir`, `zip`, `unzip`
 - Assert: `assert_text`, `assert_exists`, `assert_window`, `assert_file`
 - Scenario: `scenario_save`, `scenario_list`, `scenario_run`
+
+### Screenshots, coordinates and dialogs
+
+- `screenshot` of a window copies it from the screen when the window, or a dialog it owns, is in the foreground (`method: "screen"`): the image is what the user sees, including modal save prompts and WebView2 overlays, and never a stale frame. A window that is not in the foreground is read with PrintWindow (`method: "print"`), which misses owned dialogs and can lag behind in Chromium apps; activate the window or pass `method: "screen"` to get the live picture, and `settle_ms` to let the app repaint after an input first.
+- To click a pixel of a window screenshot, pass the same `window` and the pixel as `x, y` to `click` / `hover` / `scroll` / `drag`: the window rect is resolved at click time, so no origin arithmetic is needed. Without `window`, x/y are screen coordinates (`screen_x = origin.x + pixel_x / scale`).
+- A modal dialog is an owned, usually untitled window: `list_windows` does not list it, but `get_ui_tree` of the owning window shows it as a focused child `Window` with its buttons, and `window_close` reports it under `foreground`.
+- A title regex that matches nothing is retried for 1.5 s before a tool fails (single-page apps re-title themselves while they render). The `win{n}` ref that `wait_for` or `list_windows` returned is still the more reliable way to name a window.
 
 ## Scenario JSON
 
