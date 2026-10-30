@@ -83,6 +83,12 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
     public static ToolContext Create(WinUseConfig cfg, ILoggerFactory? loggerFactory = null) =>
         new(cfg, loggerFactory ?? NullLoggerFactory.Instance, null, null, null, null, null);
 
+    /// <summary>The server's package version (<c>Version</c> in Directory.Build.props), reported in results so a caller can tell what the server can do.</summary>
+    public static string ServerVersion { get; } =
+        (typeof(ToolContext).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion
+         ?? typeof(ToolContext).Assembly.GetName().Version?.ToString() ?? "unknown").Split('+')[0];
+
     /// <summary>Overload with replaceable collaborators (model, observation, execution, capture, Java Access Bridge), mainly for tests.</summary>
     public static ToolContext Create(WinUseConfig cfg, ILoggerFactory? loggerFactory, IJevClient? jev,
         IObservationSource? observation = null, IActionExecutor? executor = null, IWindowCapture? capture = null, IJabBridge? jab = null) =>
@@ -210,19 +216,64 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
 
     public ElementRef RegisterWindow(WindowInfo w) => Refs.Register(RefKind.Window, LocatorOf(w), w.Hwnd);
 
-    /// <summary>Centre (screen pixels) of a UIA element ref or a window ref.</summary>
+    /// <summary>
+    /// Centre (screen pixels) of the on-screen part of a UIA / Java element ref, or of a window ref. A Java element that is
+    /// scrolled out of its viewport or lies beyond the window's edge has no on-screen part: the error says where it is.
+    /// </summary>
     public async Task<(int X, int Y)> CenterOfAsync(ElementRef r)
     {
         if (r.Kind == RefKind.Point) return await PointOfAsync(r).ConfigureAwait(false);
-        var rect = r.Kind switch
+        Rect rect;
+        switch (r.Kind)
         {
-            RefKind.Uia => await Uia.GetRectAsync(r.Id).ConfigureAwait(false),
-            RefKind.Java => await Java.GetRectAsync(r.Id).ConfigureAwait(false),
-            RefKind.Window => (await FindWindowAsync(r).ConfigureAwait(false)).Rect,
-            _ => throw new NotSupportedException($"Ref '{r.Id}' has no screen rectangle."),
-        };
+            case RefKind.Uia:
+                rect = await Uia.GetRectAsync(r.Id).ConfigureAwait(false);
+                break;
+            case RefKind.Java:
+            {
+                var v = await Java.GetVisibilityAsync(r.Id).ConfigureAwait(false);
+                if (v.NotClickableReason(r.Id) is { } reason) throw new InvalidOperationException(reason);
+                rect = v.VisibleRect;
+                break;
+            }
+            case RefKind.Window:
+                rect = (await FindWindowAsync(r).ConfigureAwait(false)).Rect;
+                break;
+            default:
+                throw new NotSupportedException($"Ref '{r.Id}' has no screen rectangle.");
+        }
         if (rect.Width <= 0 || rect.Height <= 0) throw new InvalidOperationException($"Ref '{r.Id}' has no visible area.");
         return (rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
+    }
+
+    /// <summary>
+    /// Checks that a mouse click at (<paramref name="x"/>, <paramref name="y"/>) would land on a window of the process that
+    /// owns the ref (a popup or dialog of the same process counts), and throws, before anything is clicked, when it would
+    /// hit another process's window (the taskbar after the screen shrank, a window covering the target) or no window at all.
+    /// Returns the window under the point for the result.
+    /// </summary>
+    public async Task<object?> EnsureClickLandsOnOwnerAsync(ElementRef r, int x, int y)
+    {
+        var loc = r.Locator switch
+        {
+            UiaLocator u => u.Window,
+            JavaLocator j => j.Window,
+            WindowLocator wl => wl,
+            PointLocator pl => pl.Window,
+            _ => null,
+        };
+        if (loc is null) return null;
+        var owner = await Windows.FindWithFallbackAsync(loc).ConfigureAwait(false);
+        if (owner is null) return null;
+        var hit = await Windows.RootWindowAtAsync(x, y).ConfigureAwait(false);
+        if (hit is null)
+            throw new InvalidOperationException($"The click point ({x},{y}) for ref '{r.Id}' is on no window (outside every monitor?); nothing was clicked. Observe the window again: it may have moved or shrunk.");
+        if (hit.Pid != owner.Pid)
+            throw new InvalidOperationException(
+                $"The click point ({x},{y}) for ref '{r.Id}' is on '{hit.Title}' ({hit.ProcessName}, pid {hit.Pid}), not on a window of {owner.ProcessName} (pid {owner.Pid}); "
+                + "nothing was clicked. The element is covered, or its window moved or shrank (a screen resolution change, a scrolled view): observe again, "
+                + "scroll it into view or move the window, then click the fresh ref. Use x,y to click a point regardless.");
+        return new { title = hit.Title, process = hit.ProcessName, pid = hit.Pid };
     }
 
     /// <summary>The screen point of a point ref: the handle captured at registration, else the locator applied to the live window.</summary>

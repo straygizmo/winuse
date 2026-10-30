@@ -15,6 +15,23 @@ namespace WinUse.Core.Java;
 public sealed record JavaTreeResult(UiNode Root, bool NodeLimitReached, int NodeLimit, bool DepthLimitReached, int UnreadableNodes);
 
 /// <summary>
+/// Where a Swing element is on screen: <paramref name="Rect"/> as Java reports it, <paramref name="VisibleRect"/> the part
+/// inside its window and scroll viewports (<paramref name="Clip"/>; empty when the element is scrolled out of view or
+/// beyond the window's edge), <paramref name="Showing"/> the Swing state and <paramref name="Visible"/> whether any pixel of
+/// it is on screen.
+/// </summary>
+public sealed record JavaVisibility(Rect Rect, Rect VisibleRect, Rect? Clip, bool Showing, bool Visible)
+{
+    /// <summary>Why the element cannot be clicked, for an error message; null when it can.</summary>
+    public string? NotClickableReason(string refId) =>
+        !Showing ? $"Ref '{refId}' is not showing (its menu, tab or container is closed)."
+        : Rect.IsEmpty ? $"Ref '{refId}' has no visible area."
+        : !Visible ? $"Ref '{refId}' at {Rect} lies outside the on-screen area {Clip} of its window / scroll viewport (scrolled out of view, "
+                     + "or the window shrank or moved): scroll it into view or resize the window first. Nothing was clicked."
+        : null;
+}
+
+/// <summary>
 /// Reads and operates Swing windows through Java Access Bridge with the same public surface as <see cref="UiaService"/>.
 /// Owns every Java object handle behind a <c>j{n}</c> ref and releases them two observations later; a ref whose handle
 /// is gone is re-resolved through its locator, so a released handle is never touched again.
@@ -52,6 +69,9 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
     internal Func<int, int, Task> ClickAt { get; set; } = (x, y) => input.ClickAsync(x, y);
 
     internal Func<KeyChord, Task> Press { get; set; } = input.PressAsync;
+
+    /// <summary>The top-level window under a screen point (what a mouse click there would hit); null when there is none.</summary>
+    internal Func<int, int, Task<WindowInfo?>> WindowAt { get; set; } = windows.RootWindowAtAsync;
 
     // ---- bridge facts (doctor) ------------------------------------------------------------------
 
@@ -191,7 +211,9 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
             var builder = new JavaTreeBuilder(jab, refs, wloc, opt, tx, (id, h) => Own(id, h, snapshot));
             try
             {
-                var tree = builder.BuildRoot(root, basePath, keepRoot: scope is null);
+                // A scope inside a scroll pane is clipped by the viewports above it, which the walk below cannot see.
+                var clip = scope is { } s ? JavaTreeBuilder.ClipOf(jab, s, tx) : null;
+                var tree = builder.BuildRoot(root, basePath, keepRoot: scope is null, clip);
                 if (builder.Truncated)
                     _log.LogWarning("Java tree of window 0x{Hwnd:X} truncated at {Max} nodes", hwnd, JavaTreeBuilder.MaxNodes);
                 if (builder.UnreadableNodes > 0)
@@ -328,13 +350,36 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
         {
             var info = jab.GetInfo(h) ?? throw new InvalidOperationException($"Element for ref '{refId}' is gone.");
             var ct = JavaRoleMap.ControlTypeOf(info.Role, ParentRoleOf(refId));
-            var flags = JavaStates.Parse(info.States);
-            var rect = flags.Showing ? tx.Apply(info.X, info.Y, info.Width, info.Height) : default;
-            return JavaTreeBuilder.MakeNode(jab, h, info, refId, ct, JavaTreeBuilder.NameOf(jab, h, info, ct), 0, [], rect);
+            var v = VisibilityOf(jab, h, info, tx);
+            return JavaTreeBuilder.MakeNode(jab, h, info, refId, ct, JavaTreeBuilder.NameOf(jab, h, info, ct), 0, [], v.Visible ? v.VisibleRect : v.Rect,
+                visible: v.Visible);
         }).ConfigureAwait(false);
     }
 
-    public async Task<Rect> GetRectAsync(string refId) => (await GetElementAsync(refId).ConfigureAwait(false)).Rect;
+    /// <summary>The on-screen part of the element (clipped to its window and scroll viewports); empty when none of it is on screen.</summary>
+    public async Task<Rect> GetRectAsync(string refId) => (await GetVisibilityAsync(refId).ConfigureAwait(false)).VisibleRect;
+
+    /// <summary>Where the element is and how much of it is on screen (see <see cref="JavaVisibility"/>).</summary>
+    public async Task<JavaVisibility> GetVisibilityAsync(string refId)
+    {
+        var tx = await TransformForAsync(refId).ConfigureAwait(false);
+        return await WithAsync(refId, (jab, h) =>
+        {
+            var info = jab.GetInfo(h) ?? throw new InvalidOperationException($"Element for ref '{refId}' is gone.");
+            return VisibilityOf(jab, h, info, tx);
+        }).ConfigureAwait(false);
+    }
+
+    /// <summary>Bridge thread: the element's rectangle clipped to the area its window and viewports leave.</summary>
+    private static JavaVisibility VisibilityOf(IJabAccess jab, JabHandle h, JabContextInfo info, JavaTransform tx)
+    {
+        var showing = JavaStates.Parse(info.States).Showing;
+        if (!showing) return new JavaVisibility(default, default, null, false, false);
+        var rect = tx.Apply(info.X, info.Y, info.Width, info.Height);
+        var clip = JavaTreeBuilder.ClipOf(jab, h, tx);
+        var (visibleRect, clippedOut) = JavaTreeBuilder.Clip(rect, clip);
+        return new JavaVisibility(rect, clippedOut ? new Rect(rect.X, rect.Y, 0, 0) : visibleRect, clip, true, !clippedOut && !rect.IsEmpty);
+    }
 
     public Task<string> GetTextAsync(string refId) => WithAsync(refId, (jab, h) =>
     {

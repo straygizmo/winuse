@@ -265,25 +265,34 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
 
     // ---- actions ------------------------------------------------------------------------------
 
-    public async Task SetTextAsync(string refId, string text)
+    /// <summary>
+    /// Sets the text of a field and reports the path taken: <see cref="TextEntryPath.ValuePattern"/> (the Value pattern took
+    /// it, no key events) or <see cref="TextEntryPath.Keyboard"/> (focus, select all, type). The text itself is never reported.
+    /// </summary>
+    public async Task<string> SetTextAsync(string refId, string text, TextEntryMethod method = TextEntryMethod.Auto)
     {
         ArgumentNullException.ThrowIfNull(text);
         var el = await LiveAsync(refId).ConfigureAwait(false);
-        var done = await d.RunAsync(() =>
+        if (method != TextEntryMethod.Keyboard)
         {
-            try
+            var done = await d.RunAsync(() =>
             {
-                var vp = el.Patterns.Value.PatternOrDefault;
-                if (vp is not null && !vp.IsReadOnly.ValueOrDefault)
+                try
                 {
-                    vp.SetValue(text);
-                    return true;
+                    var vp = el.Patterns.Value.PatternOrDefault;
+                    if (vp is not null && !vp.IsReadOnly.ValueOrDefault)
+                    {
+                        vp.SetValue(text);
+                        return true;
+                    }
                 }
-            }
-            catch { }
-            return false;
-        }).ConfigureAwait(false);
-        if (done) return;
+                catch { }
+                return false;
+            }).ConfigureAwait(false);
+            if (done) return TextEntryPath.ValuePattern;
+            if (method == TextEntryMethod.Api)
+                throw new NotSupportedException($"Ref '{refId}' has no writable Value pattern; use method \"keyboard\".");
+        }
 
         var loc = (UiaLocator)GetRef(refId).Locator;
         var w = await windows.FindAsync(loc.Window).ConfigureAwait(false);
@@ -293,6 +302,7 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
         await _input.PressAsync(KeyChord.Parse("ctrl+a")).ConfigureAwait(false);
         if (text.Length == 0) await _input.PressAsync(KeyChord.Parse("delete")).ConfigureAwait(false);
         else await _input.TypeTextAsync(text, 0).ConfigureAwait(false);
+        return TextEntryPath.Keyboard;
     }
 
     public Task SelectItemAsync(string refId, string item) => WithAsync(refId, el =>
@@ -338,25 +348,30 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
         return true;
     });
 
-    public async Task InvokeAsync(string refId)
+    /// <summary>
+    /// Invoke, Toggle or SelectionItem pattern, else a click at the element's centre; <see cref="InvokeMethod.Mouse"/> clicks
+    /// right away, <see cref="InvokeMethod.Action"/> never clicks. Reports which path was taken.
+    /// </summary>
+    public async Task<InvokeResult> InvokeAsync(string refId, InvokeMethod method = InvokeMethod.Auto)
     {
         var el = await LiveAsync(refId).ConfigureAwait(false);
         // Fall through only when a pattern is unsupported; exceptions from a supported pattern propagate
         // so the action is never performed twice.
-        var rect = await d.RunAsync(() =>
+        var (rect, action) = await d.RunAsync(() =>
         {
             if (!IsAlive(el)) throw new InvalidOperationException($"Element for ref '{refId}' is gone.");
-            if (el.Patterns.Invoke.PatternOrDefault is { } inv) { inv.Invoke(); return (Rect?)null; }
-            if (el.Patterns.Toggle.PatternOrDefault is { } tg) { tg.Toggle(); return null; }
-            if (el.Patterns.SelectionItem.PatternOrDefault is { } si) { si.Select(); return null; }
-            return RectOf(el);
+            if (method == InvokeMethod.Mouse) return (RectOf(el), (string?)null);
+            if (el.Patterns.Invoke.PatternOrDefault is { } inv) { inv.Invoke(); return ((Rect?)null, (string?)"Invoke"); }
+            if (el.Patterns.Toggle.PatternOrDefault is { } tg) { tg.Toggle(); return (null, "Toggle"); }
+            if (el.Patterns.SelectionItem.PatternOrDefault is { } si) { si.Select(); return (null, "SelectionItem"); }
+            if (method == InvokeMethod.Action) throw new NotSupportedException($"Ref '{refId}' supports no Invoke, Toggle or SelectionItem pattern.");
+            return (RectOf(el), null);
         }).ConfigureAwait(false);
-        if (rect is { } r)
-        {
-            if (r.Width <= 0 || r.Height <= 0)
-                throw new InvalidOperationException($"Ref '{refId}' cannot be invoked and has no clickable area.");
-            await _input.ClickAsync(r.X + r.Width / 2, r.Y + r.Height / 2).ConfigureAwait(false);
-        }
+        if (rect is not { } r) return InvokeResult.Did("action", action);
+        if (r.Width <= 0 || r.Height <= 0)
+            throw new InvalidOperationException($"Ref '{refId}' cannot be invoked and has no clickable area.");
+        await _input.ClickAsync(r.X + r.Width / 2, r.Y + r.Height / 2).ConfigureAwait(false);
+        return InvokeResult.Did("mouse");
     }
 
     public Task FocusAsync(string refId) => WithAsync(refId, el => { el.Focus(); return true; });

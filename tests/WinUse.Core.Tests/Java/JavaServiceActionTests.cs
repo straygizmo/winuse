@@ -1,6 +1,7 @@
 using WinUse.Core.Input;
 using WinUse.Core.Java;
 using WinUse.Core.Uia;
+using WinUse.Core.Windows;
 
 namespace WinUse.Core.Tests.Java;
 
@@ -15,16 +16,90 @@ public class JavaServiceActionTests
     private static string Ref(UiNode tree, string type, string? name) => JavaServiceHarness.Find(tree, type, name)!.Ref;
 
     [Fact]
-    public async Task Invoke_UsesClickAction()
+    public async Task Invoke_PushButton_ClicksWithTheMouse_ByDefault()
+    {
+        // The click action of a button runs on the event thread of the JVM and returns only when it is done, so a button that
+        // opens a modal dialog would hold the bridge until the dialog closes: visible buttons are clicked like a user does.
+        var (h, tree) = await Up();
+        using (h)
+        {
+            var r = await h.Service.InvokeAsync(Ref(tree, "Button", "Increment"));
+            Assert.Equal(("mouse", InvokeResult.Done), (r.Method, r.Outcome));
+            Assert.Equal((160, 172), Assert.Single(h.Clicks));
+            Assert.Empty(h.Jab.Actions);
+        }
+    }
+
+    [Fact]
+    public async Task Invoke_MethodAction_UsesClickAction()
     {
         var (h, tree) = await Up();
         using (h)
         {
-            await h.Service.InvokeAsync(Ref(tree, "Button", "Increment"));
+            var r = await h.Service.InvokeAsync(Ref(tree, "Button", "Increment"), InvokeMethod.Action);
+            Assert.Equal(("action", "click", InvokeResult.Done), (r.Method, r.Action, r.Outcome));
             var (node, action) = Assert.Single(h.Jab.Actions);
             Assert.Equal("Increment", node.Name);
             Assert.Equal("click", action);
             Assert.Empty(h.Clicks);
+        }
+    }
+
+    [Fact]
+    public async Task Invoke_PushButton_FallsBackToTheAction_WhenAnotherProcessCoversThePoint()
+    {
+        var (h, tree) = await Up();
+        using (h)
+        {
+            h.Service.WindowAt = (_, _) => Task.FromResult<WindowInfo?>(new WindowInfo(0x99, "Taskbar", "Shell_TrayWnd", "explorer", 4, new Rect(0, 0, 10, 10), WindowState.Normal));
+            var r = await h.Service.InvokeAsync(Ref(tree, "Button", "Increment"));
+            Assert.Equal("action", r.Method);
+            Assert.Empty(h.Clicks);
+            Assert.Single(h.Jab.Actions);
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Service.InvokeAsync(Ref(tree, "Button", "Increment"), InvokeMethod.Mouse));
+            Assert.Contains("explorer", ex.Message);
+        }
+    }
+
+    [Fact]
+    public async Task Invoke_ActionTimesOut_ReportsUnknownOutcome_WithTheDialogNote()
+    {
+        var (h, tree) = await Up();
+        using (h)
+        {
+            h.Jab.ActionOutcome = (_, _) => JabActionOutcome.Timeout;
+            var r = await h.Service.InvokeAsync(Ref(tree, "MenuItem", "Save"));
+            Assert.Equal(("action", "click", InvokeResult.Unknown), (r.Method, r.Action, r.Outcome));
+            Assert.Contains("modal dialog", r.Note);
+            Assert.Contains("Do not repeat", r.Note);
+        }
+    }
+
+    [Fact]
+    public async Task Invoke_ScrolledOutButton_UsesTheAction_AndMouseRefuses()
+    {
+        var viewport = new FakeNode("viewport", x: 0, y: 0, w: 200, h: 100).Add(
+            new FakeNode("panel", x: 0, y: 0, w: 200, h: 300).Add(
+                new FakeNode("push button", "Below", x: 10, y: 150, w: 80, h: 24).With(actions: ["click"])));
+        var root = new FakeNode("frame", "F", x: 0, y: 0, w: 400, h: 300).Add(viewport);
+        var (h, tree) = await Up(root);
+        using (h)
+        {
+            h.Window = h.Window with { Rect = new Rect(0, 0, 400, 300) };
+            // Not in the default tree (offscreen); listed with include_offscreen.
+            Assert.Null(JavaServiceHarness.Find(tree, "Button", "Below"));
+            var all = await h.Service.GetTreeAsync(JavaServiceHarness.Hwnd, new TreeOptions(IncludeOffscreen: true));
+            var below = JavaServiceHarness.Find(all, "Button", "Below")!;
+            Assert.True(below.Offscreen);
+            Assert.Equal(new Rect(10, 150, 80, 24), below.Rect);
+
+            var r = await h.Service.InvokeAsync(below.Ref);
+            Assert.Equal("action", r.Method);
+            Assert.Empty(h.Clicks);
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Service.InvokeAsync(below.Ref, InvokeMethod.Mouse));
+            Assert.Contains("outside the on-screen area", ex.Message);
+            Assert.Contains("Nothing was clicked", ex.Message);
         }
     }
 
@@ -48,7 +123,7 @@ public class JavaServiceActionTests
         var (h, tree) = await Up();
         using (h)
         {
-            await h.Service.InvokeAsync(Ref(tree, "TabItem", "Second"));
+            Assert.Equal("selection", (await h.Service.InvokeAsync(Ref(tree, "TabItem", "Second"))).Method);
             Assert.Empty(h.Jab.Actions);
             var (parent, index) = Assert.Single(h.Jab.Selections);
             Assert.Equal("page tab list", parent.Role);
@@ -65,7 +140,8 @@ public class JavaServiceActionTests
         using (h)
         {
             h.Window = h.Window with { Rect = new WinUse.Core.Windows.Rect(0, 0, 400, 300) };
-            await h.Service.InvokeAsync(Ref(tree, "Hyperlink", "Docs"));
+            var r = await h.Service.InvokeAsync(Ref(tree, "Hyperlink", "Docs"));
+            Assert.Equal("mouse", r.Method);
             Assert.Equal((60, 30), Assert.Single(h.Clicks));
         }
     }
@@ -77,7 +153,7 @@ public class JavaServiceActionTests
         using (h)
         {
             h.Jab.OnAction = (_, _) => false;
-            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Service.InvokeAsync(Ref(tree, "Button", "Increment")));
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Service.InvokeAsync(Ref(tree, "Button", "Increment"), InvokeMethod.Action));
             Assert.Contains("click", ex.Message);
         }
     }
@@ -91,7 +167,7 @@ public class JavaServiceActionTests
             var old = Ref(tree, "Button", "Increment");
             await h.TreeAsync();
             await h.TreeAsync(); // the first snapshot's handles are released now
-            await h.Service.InvokeAsync(old); // the fake throws on use-after-release
+            await h.Service.InvokeAsync(old, InvokeMethod.Action); // the fake throws on use-after-release
             var (node, action) = Assert.Single(h.Jab.Actions);
             Assert.Equal("Increment", node.Name);
             Assert.Equal("click", action);
@@ -99,13 +175,40 @@ public class JavaServiceActionTests
     }
 
     [Fact]
-    public async Task SetText_UsesSetTextContents()
+    public async Task SetText_UsesSetTextContents_AndSaysSo()
     {
         var (h, tree) = await Up();
         using (h)
         {
-            await h.Service.SetTextAsync(Ref(tree, "Edit", "Name"), "world");
+            Assert.Equal(TextEntryPath.AccessibleText, await h.Service.SetTextAsync(Ref(tree, "Edit", "Name"), "world"));
             Assert.Equal("world", h.Jab.Root.Find("text", "Name")!.Text);
+            Assert.Empty(h.Pressed);
+        }
+    }
+
+    [Fact]
+    public async Task SetText_MethodKeyboard_TypesEvenWhenTheApiWouldWork()
+    {
+        var (h, tree) = await Up();
+        using (h)
+        {
+            var typed = new List<string>();
+            h.Service.TypeText = t => { typed.Add(t); return Task.CompletedTask; };
+            Assert.Equal(TextEntryPath.Keyboard, await h.Service.SetTextAsync(Ref(tree, "Edit", "Name"), "world", TextEntryMethod.Keyboard));
+            Assert.Equal("hello", h.Jab.Root.Find("text", "Name")!.Text); // untouched by the API
+            Assert.Equal("world", Assert.Single(typed));
+            Assert.Contains(h.Jab.Focused, n => n.Name == "Name");
+        }
+    }
+
+    [Fact]
+    public async Task SetText_MethodApi_FailsInsteadOfTyping_WhenRejected()
+    {
+        var (h, tree) = await Up();
+        using (h)
+        {
+            h.Jab.Root.Find("text", "Name")!.RejectSetText = true;
+            await Assert.ThrowsAsync<NotSupportedException>(() => h.Service.SetTextAsync(Ref(tree, "Edit", "Name"), "world", TextEntryMethod.Api));
             Assert.Empty(h.Pressed);
         }
     }
@@ -119,7 +222,7 @@ public class JavaServiceActionTests
             h.Jab.Root.Find("text", "Name")!.RejectSetText = true;
             var typed = new List<string>();
             h.Service.TypeText = t => { typed.Add(t); return Task.CompletedTask; };
-            await h.Service.SetTextAsync(Ref(tree, "Edit", "Name"), "world");
+            Assert.Equal(TextEntryPath.Keyboard, await h.Service.SetTextAsync(Ref(tree, "Edit", "Name"), "world"));
             Assert.Contains(h.Jab.Focused, n => n.Name == "Name");
             var chord = Assert.Single(h.Pressed);
             Assert.Equal(KeyChord.Parse("ctrl+a").Key, chord.Key);

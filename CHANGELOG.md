@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.6 - unreleased
+
+Added
+
+- `invoke` reports how it acted: `method` (`action`, `mouse`, `selection`), the accessibility `action` name when one ran, and `outcome`: `done` when the target confirmed it, `unknown` when the request was delivered but never answered. On a Swing element that is the signature of an action that opened a modal dialog (it returns only when the dialog closes), so the result then carries `note`, `foreground` and `new_windows` (the windows the app opened meanwhile) instead of a misleading `Action 'click' failed`. `method: "action"` / `"mouse"` force one path.
+- `set_text` reports `method`: `value_pattern` (UIA) or `accessible_text` (Java) when the accessibility API took the text, `keyboard` when the field was focused and the text typed (key listeners such as upper-casing run), `fill` for the DOM. `method: "keyboard"` forces typing, `method: "api"` fails instead of falling back. The text itself is never in the result.
+- `window_close` separates the request from the effect: `close_requested`, `closed`, `window_exists_after_request`, `process_alive` (when the window is gone), `new_windows` (windows the same process opened after the request, with refs: the exit confirmation or save prompt), `foreground` and a `hint` saying how to answer the prompt and wait for the window.
+- `get_ui_tree` carries `backend` (`java_access_bridge` or `uia`) and `server_version` in every result, and a Java tree always states `node_limit_reached`, `depth_limit_reached` and `unreadable_nodes` (`false` / `0` when the walk was complete), so a complete tree from this version is distinguishable from an older server that did not report them.
+- Java elements are clipped to the on-screen area their window and scroll viewports leave: `rect` is the visible part, an element scrolled out of view or lying beyond the window's edge (a layout that did not follow a resolution change) is `offscreen: true`, listed only with `include_offscreen` and with its full rect so a caller knows where to scroll. `click`, `invoke` and `get_element` resolve the same visibility at call time: a click on such an element is refused with the reason and nothing is clicked.
+- `click` on a ref checks, before clicking, that the resolved point lies on a window of the process that owns the ref (popups and dialogs of the same process count); a point on another process's window (the taskbar or the Start button after the screen shrank, a window covering the target) or on no window fails with the reason, and the result names the window under the point as `lands_on`. Coordinates (`x`, `y`) are clicked as given.
+- `java_access_bridge_diagnostics` carries `blocked_by_action_at` and the `timeout` reason explains it when an `invoke` that never returned is what blocks the JVM's bridge: a modal dialog is up, read it with a screenshot or the UIA tree, operate or close it, and the Java tree is readable again.
+
+Changed
+
+- `invoke` on a visible Swing push button clicks it with the mouse instead of running its `click` action (after bringing the window to the front and checking that the point belongs to the app). A button's action runs on the JVM's event thread and answers only when it returns, so a button that opens a modal dialog held the Java Access Bridge for the whole life of the dialog, which then could only be driven blind. Menu items, check boxes, tabs and everything else keep using the accessibility action; `method: "action"` restores it for buttons, and the mouse path falls back to the action when the button is not on screen or covered.
+
 ## 0.2.5 - 2026-10-30
 
 Added

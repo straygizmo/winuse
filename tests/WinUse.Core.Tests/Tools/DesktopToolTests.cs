@@ -92,9 +92,13 @@ public sealed class DesktopToolTests : IDisposable
         var o = await Run(WindowTools.WindowClose(ctx, title: Exact(win.Title)));
         Assert.True(o.Ok, o.Error);
         var result = o.Result["result"]!;
+        Assert.True(result["close_requested"]!.GetValue<bool>());
         Assert.False(result["closed"]!.GetValue<bool>());
+        Assert.True(result["window_exists_after_request"]!.GetValue<bool>());
         Assert.Equal("still_open", result["reason"]!.GetValue<string>());
         Assert.NotNull(result["foreground"]);
+        Assert.NotNull(result["new_windows"]);
+        Assert.Contains("still there", result["hint"]!.GetValue<string>());
         Assert.True(await ctx.Windows.IsAliveAsync(win.Hwnd));
     }
 
@@ -106,7 +110,10 @@ public sealed class DesktopToolTests : IDisposable
         var o = await Run(WindowTools.WindowClose(ctx, title: Exact(win.Title)));
         Assert.True(o.Ok, o.Error);
         Assert.True(o.Result["result"]!["closed"]!.GetValue<bool>(), o.Result.ToJsonString());
+        Assert.False(o.Result["result"]!["window_exists_after_request"]!.GetValue<bool>());
         Assert.Null(o.Result["result"]!["reason"]);
+        Assert.Null(o.Result["result"]!["hint"]);
+        Assert.NotNull(o.Result["result"]!["process_alive"]);
         Assert.False(await ctx.Windows.IsAliveAsync(win.Hwnd));
     }
 

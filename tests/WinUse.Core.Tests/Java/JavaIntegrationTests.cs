@@ -307,7 +307,11 @@ public sealed class JavaIntegrationTests : IDisposable
         await using var s = await Session.OpenAsync(jvm, Cfg);
         if (s is null) return;
         var r = await s.Tree();
-        Assert.Null(r["node_limit_reached"]);
+        Assert.False(r["node_limit_reached"]!.GetValue<bool>());
+        Assert.False(r["depth_limit_reached"]!.GetValue<bool>());
+        Assert.Equal(0, r["unreadable_nodes"]!.GetValue<int>());
+        Assert.Equal("java_access_bridge", r["backend"]!.GetValue<string>());
+        Assert.Equal(ToolContext.ServerVersion, r["server_version"]!.GetValue<string>());
         var table = Find(r["tree"]!, "Table", n => n == "Connections");
         Assert.NotNull(table);
         Assert.Empty(table!["children"]?.AsArray() ?? []);

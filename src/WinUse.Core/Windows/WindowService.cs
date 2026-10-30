@@ -32,6 +32,18 @@ public sealed class WindowService(AutomationDispatcher d)
         return fg == 0 ? null : InfoOf(fg);
     });
 
+    /// <summary>
+    /// The top-level window under a screen point (the root of whatever child window is hit, so a WebView2 or UWP content
+    /// window resolves to the frame that hosts it), or null when no window is there.
+    /// </summary>
+    public Task<WindowInfo?> RootWindowAtAsync(int x, int y) => d.RunAsync<WindowInfo?>(() =>
+    {
+        var hit = NativeMethods.WindowFromPoint(new NativeMethods.POINT { X = x, Y = y });
+        if (hit == 0) return null;
+        var root = NativeMethods.GetAncestor(hit, NativeMethods.GA_ROOT);
+        return InfoOf(root == 0 ? hit : root);
+    });
+
     /// <summary>True while <paramref name="hwnd"/> is an existing, visible window.</summary>
     public Task<bool> IsAliveAsync(nint hwnd) => d.RunAsync(() => NativeMethods.IsWindow(hwnd) && NativeMethods.IsWindowVisible(hwnd));
 

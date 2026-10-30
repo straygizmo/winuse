@@ -89,6 +89,11 @@ internal static partial class NativeMethods
     public static partial nint GetForegroundWindow();
 
     [LibraryImport("user32.dll")]
+    public static partial nint WindowFromPoint(POINT point);
+
+    public const uint GA_ROOT = 2;
+
+    [LibraryImport("user32.dll")]
     public static partial int GetSystemMetrics(int index);
 
     [LibraryImport("user32.dll")]

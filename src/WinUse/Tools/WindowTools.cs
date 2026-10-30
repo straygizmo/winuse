@@ -23,7 +23,7 @@ public sealed class WindowTools
         });
 
     [McpServerTool(Name = "window_close", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Ask a window to close (WM_CLOSE) and wait up to timeout_ms for it to go away. closed=true only when the window is gone; closed=false with reason \"still_open\" when it is still there, e.g. because the app opened a save prompt (foreground then describes that prompt; capture it with screenshot or read it with get_ui_tree on the same window).")]
+    [Description("Ask a window to close (WM_CLOSE) and wait up to timeout_ms for it to go away. The result separates the request from the effect: close_requested is true once WM_CLOSE was posted; closed is true and window_exists_after_request false only when the window is gone (process_alive then says whether its process is still running). Otherwise closed is false with reason \"still_open\", window_exists_after_request true, and the windows the app opened in the meantime (an exit confirmation, a save prompt) are listed in new_windows with refs (same process only), the current foreground window in foreground, and hint says what to do: read the prompt with get_ui_tree on its ref (or on the same window, where a modal dialog appears as a focused child Window), answer it, then wait_for window_closed.")]
     public static Task<CallToolResult> WindowClose(
         ToolContext ctx,
         [Description("Window ref (win{n}). Either ref or title is required.")] string? @ref = null,
@@ -31,14 +31,24 @@ public sealed class WindowTools
         [Description("How long to wait for the window to go away, in milliseconds.")] int timeout_ms = 2000) =>
         OnWindow(ctx, "window_close", ToolContext.Args(("ref", @ref), ("title", title), ("timeout_ms", timeout_ms)), @ref, title, async w =>
         {
+            var before = (await ctx.Windows.ListAsync()).Where(x => x.Pid == w.Pid).Select(x => x.Hwnd).ToHashSet();
             if (!await ctx.Windows.CloseAsync(w.Hwnd)) throw new InvalidOperationException($"Could not post WM_CLOSE to window '{w.Title}'.");
-            if (await ctx.Windows.WaitGoneAsync(w.Hwnd, TimeSpan.FromMilliseconds(Math.Max(0, timeout_ms)))) return new { closed = true, reason = (string?)null, foreground = (object?)null };
-            var fg = await ctx.Windows.ForegroundAsync();
+            var gone = await ctx.Windows.WaitGoneAsync(w.Hwnd, TimeSpan.FromMilliseconds(Math.Max(0, timeout_ms)));
+            var opened = (await ctx.Windows.ListAsync()).Where(x => x.Pid == w.Pid && !before.Contains(x.Hwnd)).ToList();
+            var fg = gone ? null : await ctx.Windows.ForegroundAsync();
             return new
             {
-                closed = false,
-                reason = (string?)"still_open",
-                foreground = fg is null ? null : (object?)new { title = fg.Title, class_name = fg.ClassName, process = fg.ProcessName, pid = fg.Pid, rect = fg.Rect },
+                close_requested = true,
+                closed = gone,
+                window_exists_after_request = !gone,
+                reason = gone ? null : "still_open",
+                process_alive = gone ? ctx.Processes.IsAlive(w.Pid) : (bool?)null,
+                foreground = fg is null ? null : ObserveTools.WindowJson(ctx.RegisterWindow(fg).Id, fg),
+                new_windows = opened.Select(x => ObserveTools.WindowJson(ctx.RegisterWindow(x).Id, x)).ToList(),
+                hint = gone ? null
+                    : opened.Count > 0 || (fg is not null && fg.Pid == w.Pid && fg.Hwnd != w.Hwnd)
+                        ? "The window is still there and the app opened another window after the close request: most likely a confirmation or save prompt. Read it with get_ui_tree (its ref from new_windows / foreground, or this window, where a modal dialog is a focused child Window), answer it, then wait_for {condition: \"window_closed\"} on this window."
+                        : "The window is still there after the timeout and no new window appeared: the app may be busy or ignore WM_CLOSE. Take a screenshot, or retry with a longer timeout_ms.",
             };
         });
 

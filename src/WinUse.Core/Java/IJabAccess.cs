@@ -10,6 +10,22 @@ public sealed record JabContextInfo(
 
 public sealed record JabVersionInfo(string VmVersion, string JavaDllVersion, string WindowsDllVersion);
 
+/// <summary>How <see cref="IJabAccess.DoAction"/> ended.</summary>
+public enum JabActionOutcome
+{
+    /// <summary>The JVM ran the action and reported success.</summary>
+    Done,
+    /// <summary>The JVM answered that the action failed (unknown action name, or the component refused it).</summary>
+    Failed,
+    /// <summary>
+    /// The JVM did not answer within the request timeout. The action was delivered and most likely ran; a Swing action that
+    /// opens a modal dialog returns (and answers) only when the dialog closes.
+    /// </summary>
+    Timeout,
+    /// <summary>The request could not be delivered or the JVM wrote no answer: the action did not run.</summary>
+    Unreachable,
+}
+
 /// <summary>
 /// What <c>getAccessibleTableInfo</c> / <c>getAccessibleTableColumnHeader</c> return: the dimensions and the
 /// <c>AccessibleTable</c> object (<see cref="Table"/>) that <see cref="IJabAccess.GetTableCell"/> addresses cells through.
@@ -28,10 +44,16 @@ public interface IJabAccess
     JabHandle? GetContextFromHwnd(nint hwnd);
     JabContextInfo? GetInfo(JabHandle h);
     JabHandle? GetChild(JabHandle h, int index);
+    /// <summary>The parent context (owned by the caller), or null for a top-level window's context.</summary>
+    JabHandle? GetParent(JabHandle h);
     void Release(JabHandle h);
     IReadOnlyList<string> GetActions(JabHandle h);
-    /// <returns>false when the bridge reports that the action failed</returns>
-    bool DoAction(JabHandle h, string action);
+    /// <summary>
+    /// Runs one accessible action. The JVM runs it on its event thread and answers when it returns, so an action that opens a
+    /// modal dialog answers only when the dialog closes: the call then ends in <see cref="JabActionOutcome.Timeout"/> although
+    /// the action did run (and the JVM's bridge stays blocked until the dialog is gone).
+    /// </summary>
+    JabActionOutcome DoAction(JabHandle h, string action);
     /// <returns>null when the object has no AccessibleText</returns>
     string? GetText(JabHandle h, int maxChars);
     string? GetValue(JabHandle h);

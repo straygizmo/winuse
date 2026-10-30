@@ -93,6 +93,62 @@ public class JavaTreeBuilderTests
     }
 
     [Fact]
+    public void Build_ClipsToTheViewport_AndDropsWhatIsScrolledOut()
+    {
+        // The viewport of a scroll pane shows y 50..150 of a 300-high panel: one button inside, one half out, one fully out.
+        var panel = new FakeNode("panel", x: 0, y: 50, w: 200, h: 300).Add(
+            new FakeNode("push button", "In", x: 10, y: 60, w: 80, h: 20).With(actions: ["click"]),
+            new FakeNode("push button", "Half", x: 10, y: 140, w: 80, h: 20).With(actions: ["click"]),
+            new FakeNode("push button", "Out", x: 10, y: 200, w: 80, h: 20).With(actions: ["click"]));
+        var scroll = new FakeNode("scroll pane", x: 0, y: 50, w: 220, h: 100).Add(
+            new FakeNode("viewport", x: 0, y: 50, w: 200, h: 100).Add(panel));
+        var root = new FakeNode("frame", "F", x: 0, y: 0, w: 400, h: 300).Add(scroll);
+
+        var (tree, _, _, _, _) = Build(root);
+        Assert.Equal(["In", "Half"], tree.Children.Select(c => c.Name));
+        Assert.Equal(new Rect(10, 60, 80, 20), Find(tree, "Button", "In")!.Rect);
+        Assert.Equal(new Rect(10, 140, 80, 10), Find(tree, "Button", "Half")!.Rect); // the visible half
+        Assert.False(Find(tree, "Button", "Half")!.Offscreen);
+
+        var (all, _, _, _, _) = Build(root, new TreeOptions(IncludeOffscreen: true));
+        var outside = Find(all, "Button", "Out")!;
+        Assert.True(outside.Offscreen);
+        Assert.Equal(new Rect(10, 200, 80, 20), outside.Rect); // the full rectangle says where to scroll to
+    }
+
+    [Fact]
+    public void Build_ClipsToTheWindow_WhenTheLayoutOverflowsIt()
+    {
+        // The window shrank (a resolution change) and the layout did not follow: a button sits below the bottom edge.
+        var root = new FakeNode("frame", "F", x: 0, y: 0, w: 1022, h: 718).Add(
+            new FakeNode("panel", x: 0, y: 0, w: 1022, h: 1040).Add(
+                new FakeNode("push button", "START", x: 11, y: 720, w: 80, h: 19).With(actions: ["click"]),
+                new FakeNode("push button", "STOP", x: 11, y: 600, w: 80, h: 19).With(actions: ["click"])));
+        var (tree, _, _, _, _) = Build(root);
+        Assert.Equal(["STOP"], tree.Children.Select(c => c.Name));
+        var (all, _, _, _, _) = Build(root, new TreeOptions(IncludeOffscreen: true));
+        Assert.True(Find(all, "Button", "START")!.Offscreen);
+    }
+
+    [Fact]
+    public void ClipOf_WalksUpThroughViewports_ToTheWindow_AndReleasesEveryHandle()
+    {
+        var button = new FakeNode("push button", "In", x: 10, y: 60, w: 80, h: 20).With(actions: ["click"]);
+        var root = new FakeNode("frame", "F", x: 0, y: 0, w: 400, h: 300).Add(
+            new FakeNode("viewport", x: 0, y: 50, w: 200, h: 100).Add(
+                new FakeNode("panel", x: 0, y: 50, w: 200, h: 300).Add(button)));
+        var jab = new FakeJabAccess(root);
+        var rootHandle = jab.GetContextFromHwnd(jab.Hwnd)!.Value;
+        var vp = jab.GetChild(rootHandle, 0)!.Value;
+        var panel = jab.GetChild(vp, 0)!.Value;
+        var h = jab.GetChild(panel, 0)!.Value;
+        var live = jab.LiveHandles;
+        Assert.Equal(new Rect(0, 50, 200, 100), JavaTreeBuilder.ClipOf(jab, h, new JavaTransform(1, 0, 0)));
+        Assert.Equal(live, jab.LiveHandles);
+        Assert.Null(JavaTreeBuilder.ClipOf(jab, rootHandle, new JavaTransform(1, 0, 0))); // the window itself has no ancestor
+    }
+
+    [Fact]
     public void Build_StopsAtMaxNodes()
     {
         var list = new FakeNode("list").With(hasSelection: true);

@@ -84,6 +84,14 @@ public sealed class ProcessService(WinUseConfig cfg)
         env[JabEnablement.ToolOptionsVar] = JabEnablement.ComposeToolOptions(existing);
     }
 
+    /// <summary>True while a process with this id is running.</summary>
+    public bool IsAlive(int pid)
+    {
+        try { using var p = Process.GetProcessById(pid); return !p.HasExited; }
+        catch (ArgumentException) { return false; }
+        catch (InvalidOperationException) { return false; }
+    }
+
     public bool Exists(string processName)
     {
         var procs = Process.GetProcessesByName(StripExe(processName));

@@ -33,7 +33,8 @@ internal sealed class JavaServiceHarness : IDisposable
             DpiScale = _ => 1.0,
             ClickAt = (x, y) => { Clicks.Add((x, y)); return Task.CompletedTask; },
             Press = k => { Pressed.Add(k); return Task.CompletedTask; },
-            Activate = _ => Task.CompletedTask,
+            Activate = _ => Task.FromResult(true),
+            WindowAt = (_, _) => Task.FromResult<WindowInfo?>(null),
         };
     }
 
@@ -98,6 +99,31 @@ public class JavaServiceReadTests
         Assert.Equal("hello", el.Value);
         Assert.Equal(edit.Ref, el.Ref);
         Assert.Equal(new Rect(200, 160, 100, 24), await h.Service.GetRectAsync(edit.Ref));
+    }
+
+    [Fact]
+    public async Task GetRect_IsTheOnScreenPart_AndVisibilityExplainsAScrolledOutElement()
+    {
+        var root = new FakeNode("frame", "WinUse Swing Fixture", x: 100, y: 100, w: 640, h: 480).Add(
+            new FakeNode("viewport", x: 100, y: 150, w: 200, h: 100).Add(
+                new FakeNode("panel", x: 100, y: 150, w: 200, h: 400).Add(
+                    new FakeNode("combo box", "Half", x: 110, y: 240, w: 80, h: 20).With(actions: ["togglePopup"], hasSelection: true),
+                    new FakeNode("combo box", "Out", x: 110, y: 300, w: 80, h: 20).With(actions: ["togglePopup"], hasSelection: true))));
+        using var h = new JavaServiceHarness(root);
+        var tree = await h.Service.GetTreeAsync(JavaServiceHarness.Hwnd, new TreeOptions(IncludeOffscreen: true));
+        var half = JavaServiceHarness.Find(tree, "ComboBox", "Half")!;
+        var outside = JavaServiceHarness.Find(tree, "ComboBox", "Out")!;
+
+        Assert.Equal(new Rect(110, 240, 80, 10), await h.Service.GetRectAsync(half.Ref));
+        var v = await h.Service.GetVisibilityAsync(outside.Ref);
+        Assert.True(v.Showing);
+        Assert.False(v.Visible);
+        Assert.True(v.VisibleRect.IsEmpty);
+        Assert.Equal(new Rect(110, 300, 80, 20), v.Rect);
+        Assert.Equal(new Rect(100, 150, 200, 100), v.Clip);
+        Assert.Contains("outside the on-screen area", v.NotClickableReason(outside.Ref));
+        Assert.True((await h.Service.GetElementAsync(outside.Ref)).Offscreen);
+        Assert.Null((await h.Service.GetVisibilityAsync(half.Ref)).NotClickableReason(half.Ref));
     }
 
     [Fact]
