@@ -14,6 +14,10 @@ public class JabPacketTests
         [JabPacketKind.AddSelection, 24, 12], [JabPacketKind.ClearSelection, 16, 8], [JabPacketKind.GetSelection, 32, 16],
         [JabPacketKind.GetSelectionCount, 24, 12], [JabPacketKind.SetText, 2072, 2060], [JabPacketKind.GetVirtualName, 2072, 2060],
         [JabPacketKind.RequestFocus, 16, 8], [JabPacketKind.MemoryMappedFileCreated, 260, 260],
+        // vmID + ac + AccessibleTableInfo { 2 objects, 2 ints, 2 objects }: 8 + 8 + 40 wide, 4 + 4 + 24 legacy
+        [JabPacketKind.GetTableInfo, 56, 32], [JabPacketKind.GetTableRowHeader, 56, 32], [JabPacketKind.GetTableColumnHeader, 56, 32],
+        // vmID + table + row + column + AccessibleTableCellInfo { object, 5 ints, jboolean }: 24 + 32 wide, 16 + 28 legacy
+        [JabPacketKind.GetTableCellInfo, 56, 44],
     ];
 
     [Theory, MemberData(nameof(Sizes))]
@@ -36,6 +40,21 @@ public class JabPacketTests
         Assert.Equal(4, legacy.Offset(JabPackets.GetChild.Ac));
         Assert.Equal(12, legacy.Offset(JabPackets.GetChild.Result));
         Assert.Equal(4, JabPackets.For(JabPacketKind.IsJavaWindow, JabLayout.Wide).Offset(JabPackets.IsJavaWindow.Result));
+    }
+
+    [Fact]
+    public void TableCellInfo_NestedStructOffsets_MatchTheCHeader()
+    {
+        var wide = JabPackets.For(JabPacketKind.GetTableCellInfo, JabLayout.Wide);
+        Assert.Equal(24, wide.Offset(JabPackets.GetTableCellInfo.Context));
+        Assert.Equal(32, wide.Offset(JabPackets.GetTableCellInfo.Index));
+        Assert.Equal(52, wide.Offset(JabPackets.GetTableCellInfo.Selected));
+        var legacy = JabPackets.For(JabPacketKind.GetTableCellInfo, JabLayout.Legacy);
+        Assert.Equal(16, legacy.Offset(JabPackets.GetTableCellInfo.Context));
+        Assert.Equal(40, legacy.Offset(JabPackets.GetTableCellInfo.Selected));
+        var info = JabPackets.For(JabPacketKind.GetTableInfo, JabLayout.Wide);
+        Assert.Equal(32, info.Offset(JabPackets.GetTableInfo.RowCount));
+        Assert.Equal(48, info.Offset(JabPackets.GetTableInfo.Table));
     }
 
     [Fact]

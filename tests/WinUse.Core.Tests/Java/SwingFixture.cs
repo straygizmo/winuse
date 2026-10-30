@@ -76,7 +76,8 @@ internal sealed class SwingFixture : IDisposable
     public WindowInfo Window { get; private set; } = null!;
     public int Pid => _proc?.Id ?? 0;
 
-    public static async Task<SwingFixture> LaunchAsync(WindowService windows, Jvm jvm)
+    /// <param name="accessibility">False to start the JVM without the Access Bridge (a window the bridge cannot read).</param>
+    public static async Task<SwingFixture> LaunchAsync(WindowService windows, Jvm jvm, bool accessibility = true)
     {
         var java = Jvms.JavaExe(jvm) ?? throw new InvalidOperationException($"{jvm} is not installed under tools/");
         var classDir = Compile();
@@ -87,7 +88,8 @@ internal sealed class SwingFixture : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        psi.ArgumentList.Add("-Djavax.accessibility.assistive_technologies=com.sun.java.accessibility.AccessBridge");
+        if (accessibility) psi.ArgumentList.Add("-Djavax.accessibility.assistive_technologies=com.sun.java.accessibility.AccessBridge");
+        else psi.Environment.Remove("JAVA_TOOL_OPTIONS"); // process_run may have put the flag there for this process
         if (jvm == Jvm.Jre8x86Legacy) psi.ArgumentList.Add("-Djava.ext.dirs=" + Jvms.LegacyExtDir());
         psi.ArgumentList.Add("-cp");
         psi.ArgumentList.Add(classDir);

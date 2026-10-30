@@ -132,4 +132,33 @@ public class ScenarioRunnerTests
         }
         finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
     }
+
+    [Fact]
+    public async Task RunAsync_SecretStepStillHoldingThePlaceholder_IsErrorAndNothingIsDispatched()
+    {
+        var d = new FakeDispatcher();
+        var args = Args(("ref", "u1"), ("text", ScenarioRunner.SecretPlaceholder));
+        args["secret"] = true;
+        var s = new Scenario("t", 1, NoEnv, [new("set_text", args), new("click", Args())]);
+        var r = await new ScenarioRunner(d, null, null).RunAsync(s, false, default);
+        Assert.Equal(StepStatus.Error, r.Steps[0].Status);
+        Assert.Contains("secret text was not recorded", r.Steps[0].Message);
+        Assert.Contains("${NAME}", r.Steps[0].Message);
+        Assert.Equal(2, r.ExitCode);
+        Assert.Single(r.Steps);
+        Assert.Empty(d.All);
+    }
+
+    [Fact]
+    public async Task RunAsync_SecretStepWithAVariable_IsExpandedAndDispatched()
+    {
+        var d = new FakeDispatcher();
+        var args = Args(("ref", "u1"), ("text", "${PW}"));
+        args["secret"] = true;
+        var s = new Scenario("t", 1, new Dictionary<string, string> { ["PW"] = "hunter2" }, [new("set_text", args)]);
+        var r = await new ScenarioRunner(d, null, null).RunAsync(s, false, default);
+        Assert.Equal(StepStatus.Pass, r.Steps[0].Status);
+        Assert.Equal("hunter2", d.Last!.Args["text"]!.GetValue<string>());
+        Assert.True(d.Last.Args["secret"]!.GetValue<bool>());
+    }
 }

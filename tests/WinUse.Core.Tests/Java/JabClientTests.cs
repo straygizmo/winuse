@@ -17,11 +17,18 @@ public class JabClientTests
         public HashSet<nint> Alive { get; } = [];
         public List<(int Start, int End)> TextRanges { get; } = [];
 
+        public Dictionary<int, string?> Modules { get; } = new();
+        public Dictionary<int, string?> InspectErrors { get; } = new();
+        public string? HandshakeFailure { get; set; }
+        public const nint ClientHwnd = 0xC1;
+
         public JabClientServices Services => new(
-            OpenChannel: hwnd => Channels.TryGetValue(hwnd, out var c) ? c : null,
-            Inspect: pid => new JabJvmProbe(Layouts.TryGetValue(pid, out var l) ? l : null, Bits.TryGetValue(pid, out var b) ? b : null),
+            OpenChannel: hwnd => Channels.TryGetValue(hwnd, out var c) ? new JabChannelOpen(c) : new JabChannelOpen(null, HandshakeFailure),
+            Inspect: pid => new JabJvmProbe(Layouts.TryGetValue(pid, out var l) ? l : null, Bits.TryGetValue(pid, out var b) ? b : null,
+                Modules.TryGetValue(pid, out var m) ? m : null, InspectErrors.TryGetValue(pid, out var e) ? e : null),
             PidOf: hwnd => (int)hwnd * 10,
-            IsWindow: hwnd => Alive.Contains(hwnd));
+            IsWindow: hwnd => Alive.Contains(hwnd),
+            ClientHwnd: () => ClientHwnd);
 
         public FakeJabChannel Add(nint hwnd, JabLayout layout, int vmId, Func<JabPacketKind, JabPacket, bool>? handler = null, bool detectable = true)
         {
@@ -356,5 +363,191 @@ public class JabClientTests
         client.Connect(HwndC, 300); // no channel: handshake fails, event still fired
         Assert.Equal([(HwndC, 300)], seen);
         Assert.Empty(client.Jvms);
+    }
+
+    // ---- diagnosis ------------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void Diagnose_NoHello_WithoutBridgeDll_SaysAccessibilityNotEnabled()
+    {
+        var rig = new Rig();
+        rig.Add(HwndA, JabLayout.Wide, VmA);
+        var client = new JabClient(rig.Services);
+        client.Connect(HwndA, VmA);
+        var d = client.Diagnose(0x999, 4242);
+        Assert.Equal(JabStage.NoHello, d.Stage);
+        Assert.Equal(4242, d.JvmPid);
+        Assert.False(d.JvmConnected);
+        Assert.Equal(Rig.ClientHwnd, d.ClientWindow);
+        Assert.Null(d.BridgeModule);
+        Assert.Contains("no JavaAccessBridge*.dll loaded", d.Reason);
+        Assert.Contains("winuse jab enable", d.Reason);
+        Assert.Contains("1 other JVM(s) are connected", d.Reason);
+        Assert.Equal([(int)HwndA * 10], d.ConnectedJvms.Select(j => j.Pid));
+        Assert.Null(d.ConnectedJvms[0].LastFailure);
+        Assert.Equal(4000, d.TimeoutMs);
+    }
+
+    [Fact]
+    public void Diagnose_NoHello_WithBridgeDllLoaded_SaysTheHelloNeverArrived()
+    {
+        var rig = new Rig();
+        rig.Modules[4242] = "JavaAccessBridge-64.dll";
+        rig.Layouts[4242] = JabLayout.Wide;
+        rig.Bits[4242] = false;
+        var d = new JabClient(rig.Services).Diagnose(0x999, 4242);
+        Assert.Equal(JabStage.NoHello, d.Stage);
+        Assert.Equal("JavaAccessBridge-64.dll", d.BridgeModule);
+        Assert.Equal("wide", d.WireFormat);
+        Assert.False(d.Is32Bit);
+        Assert.Contains("never announced itself", d.Reason);
+        Assert.Contains("no JVM is connected", d.Reason);
+        Assert.Empty(d.ConnectedJvms);
+    }
+
+    [Fact]
+    public void Diagnose_InspectionError_SaysTheJvmIsOutOfReach()
+    {
+        var rig = new Rig();
+        rig.InspectErrors[4242] = "not accessible (error 5; running elevated or as another user?)";
+        var d = new JabClient(rig.Services).Diagnose(0x999, 4242);
+        Assert.Equal(JabStage.NoHello, d.Stage);
+        Assert.Contains("could not be inspected (not accessible (error 5", d.Reason);
+        Assert.Contains("elevated", d.Reason);
+    }
+
+    [Fact]
+    public void Diagnose_HandshakeFailed_ReportsTheFailedStep()
+    {
+        var rig = new Rig { HandshakeFailure = "the JVM did not take the memory-mapped file announcement (WM_COPYDATA) within 4000 ms" };
+        rig.Alive.Add(HwndC);
+        var client = new JabClient(rig.Services);
+        client.Connect(HwndC, 300); // no channel for HwndC: the handshake fails
+        Assert.Empty(client.Jvms);
+        var d = client.Diagnose(0x999, (int)HwndC * 10);
+        Assert.Equal(JabStage.HandshakeFailed, d.Stage);
+        Assert.False(d.JvmConnected);
+        Assert.Contains("announced itself", d.Reason);
+        Assert.Contains("WM_COPYDATA", d.Reason);
+    }
+
+    [Fact]
+    public void Diagnose_Timeout_WhenTheConnectedJvmStopsAnswering()
+    {
+        var rig = new Rig();
+        var a = rig.Add(HwndA, JabLayout.Wide, VmA);
+        var client = new JabClient(rig.Services);
+        client.Connect(HwndA, VmA);
+        a.Outcome = JabExchange.Timeout;
+        Assert.False(client.IsJavaWindow(HwndA));
+        var d = client.Diagnose(HwndA, (int)HwndA * 10);
+        Assert.Equal(JabStage.Timeout, d.Stage);
+        Assert.True(d.JvmConnected);
+        Assert.Equal("wide", d.WireFormat);
+        Assert.Contains("did not answer IsJavaWindow within 4000 ms", d.Reason);
+        Assert.Contains("event thread", d.Reason);
+        Assert.StartsWith("Timeout on IsJavaWindow at ", d.ConnectedJvms.Single().LastFailure);
+
+        // A later answer clears the failure.
+        a.Outcome = null;
+        Assert.True(client.IsJavaWindow(HwndA));
+        Assert.Null(client.Diagnose(HwndA, (int)HwndA * 10).ConnectedJvms.Single().LastFailure);
+    }
+
+    [Fact]
+    public void Diagnose_NoAnswer_PointsAtTheWireFormat()
+    {
+        var rig = new Rig();
+        var a = rig.Add(HwndA, JabLayout.Wide, VmA);
+        var client = new JabClient(rig.Services);
+        client.Connect(HwndA, VmA);
+        a.Outcome = JabExchange.NoAnswer;
+        Assert.False(client.IsJavaWindow(HwndA));
+        var d = client.Diagnose(HwndA, (int)HwndA * 10);
+        Assert.Equal(JabStage.NoAnswer, d.Stage);
+        Assert.Contains("wrote no answer", d.Reason);
+        Assert.Contains("wire format (wide)", d.Reason);
+    }
+
+    [Fact]
+    public void Diagnose_SendFailed_WhenTheJvmWindowIsGoneMidCall()
+    {
+        var rig = new Rig();
+        var a = rig.Add(HwndA, JabLayout.Wide, VmA);
+        var client = new JabClient(rig.Services);
+        client.Connect(HwndA, VmA);
+        a.Outcome = JabExchange.SendFailed;
+        Assert.False(client.IsJavaWindow(HwndA));
+        Assert.Equal(JabStage.SendFailed, client.Diagnose(HwndA, (int)HwndA * 10).Stage);
+    }
+
+    [Fact]
+    public void Diagnose_NotOwned_WhenTheJvmAnswersButDisownsTheWindow()
+    {
+        var rig = new Rig();
+        rig.Add(HwndA, JabLayout.Legacy, VmA);
+        var client = new JabClient(rig.Services);
+        client.Connect(HwndA, VmA);
+        Assert.False(client.IsJavaWindow(HwndB));
+        var d = client.Diagnose(HwndB, (int)HwndA * 10);
+        Assert.Equal(JabStage.NotOwned, d.Stage);
+        Assert.True(d.JvmConnected);
+        Assert.Contains("legacy wire format", d.Reason);
+        Assert.Contains($"0x{HwndB:X}", d.Reason);
+    }
+
+    // ---- tables ---------------------------------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(JabLayout.Wide)]
+    [InlineData(JabLayout.Legacy)]
+    public void GetTableInfo_KeepsTheTableObject_ReleasesTheOthers_AndCellsRoundTrip(JabLayout layout)
+    {
+        var rig = new Rig();
+        var released = new List<long>();
+        rig.Add(HwndA, layout, VmA, (kind, p) =>
+        {
+            switch (kind)
+            {
+                case JabPacketKind.GetTableInfo when p.ReadObj(GetTableInfo.Ac) == 0x5000:
+                    p.WriteObj(GetTableInfo.Caption, 0x11);
+                    p.WriteObj(GetTableInfo.Summary, 0);
+                    p.WriteI32(GetTableInfo.RowCount, 2);
+                    p.WriteI32(GetTableInfo.ColumnCount, 3);
+                    p.WriteObj(GetTableInfo.Context, 0x13);
+                    p.WriteObj(GetTableInfo.Table, 0x14);
+                    break;
+                case JabPacketKind.GetTableColumnHeader when p.ReadObj(GetTableInfo.Ac) == 0x5000:
+                    p.WriteI32(GetTableInfo.RowCount, 1);
+                    p.WriteI32(GetTableInfo.ColumnCount, 3);
+                    p.WriteObj(GetTableInfo.Table, 0x24);
+                    break;
+                case JabPacketKind.GetTableCellInfo when p.ReadObj(GetTableCellInfo.Table) == 0x14:
+                    p.WriteObj(GetTableCellInfo.Context, 0x100 + p.ReadI32(GetTableCellInfo.Row) * 10 + p.ReadI32(GetTableCellInfo.Column));
+                    p.WriteI32(GetTableCellInfo.RowExtent, 1);
+                    p.WriteI32(GetTableCellInfo.ColumnExtent, 1);
+                    break;
+                case JabPacketKind.ReleaseObject:
+                    released.Add(p.ReadObj(ReleaseObject.Object));
+                    break;
+            }
+            return true;
+        });
+        var client = new JabClient(rig.Services);
+        client.Connect(HwndA, VmA);
+        var ac = new JabHandle(VmA, 0x5000);
+
+        var t = client.GetTableInfo(ac)!;
+        Assert.Equal((2, 3, 0x14L), (t.RowCount, t.ColumnCount, t.Table.Ac));
+        Assert.Equal([0x11L, 0x13L], released); // caption and the duplicate context ref; a null summary is not released
+        Assert.Equal(VmA, t.Table.VmId);
+
+        var header = client.GetTableColumnHeader(ac)!;
+        Assert.Equal((1, 3, 0x24L), (header.RowCount, header.ColumnCount, header.Table.Ac));
+
+        var cell = client.GetTableCell(t.Table, 1, 2);
+        Assert.Equal(new JabHandle(VmA, 0x100 + 12), cell);
+        Assert.Null(client.GetTableCell(new JabHandle(VmA, 0x77), 0, 0));
+        Assert.Null(client.GetTableInfo(new JabHandle(VmA, 0x6000)));
     }
 }

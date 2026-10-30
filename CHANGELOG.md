@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+Added
+
+- `get_table` reads Swing tables (`JTable`) through the Java Access Bridge table interface: header row first, then every cell (text, numbers, boolean cells as `true` / `false`); `max_rows` caps the data rows and the result carries `row_count` and `omitted_rows` for UIA grids as well. An empty table gives `row_count: 0`.
+- `get_ui_tree` on a Java window the bridge cannot read returns `java_access_bridge_diagnostics` next to the `java_access_bridge` reason: `stage` (`client_unavailable`, `no_hello`, `handshake_failed`, `timeout`, `send_failed`, `no_answer`, `not_owned`), `jvm_pid`, `jvm_connected`, `bridge_module`, `wire_format`, `bitness`, `client_window`, `timeout_ms` and `connected_jvms` with the last failed request of each. The reason string names the JVM pid and the step that failed instead of a generic "not responding"; `winuse doctor` prints the same reason.
+- `get_ui_tree` reports `node_limit_reached: true` and `node_limit: 5000` when the Java tree walk stopped at its internal bridge round-trip limit (previously only a log warning).
+- `get_ui_tree` takes `include_values: false`: no element value is read, so field contents stay out of the result and the log.
+- `set_text`, `type_text`, `paste_text` and `clipboard_set` take `secret: true`: the text is used but the log, the journal and saved scenarios hold `"***"`. Replaying such a step fails with `secret text was not recorded` until the scenario names the value as `${NAME}`.
+
+Changed
+
+- A Swing table is one `Table` node in the interactive tree; its cells are no longer listed there (read them with `get_table`, or scope the tree to the table ref, where they appear with the table's rectangle since the bridge reports no position for a cell).
+
 ## 0.2.3 - 2026-10-30
 
 Added

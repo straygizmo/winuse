@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using WinUse.Core.Input;
 using WinUse.Core.Refs;
+using WinUse.Core.Uia;
 using WinUse.Core.Windows;
 
 namespace WinUse.Core.Java;
@@ -263,6 +264,79 @@ public sealed partial class JavaService
         return items.Select(i => i.Name ?? "").ToArray();
     }
 
-    public Task<string[][]> GetTableAsync(string refId) =>
-        Task.FromException<string[][]>(new NotSupportedException("get_table is not supported for Java elements yet"));
+    /// <summary>
+    /// Reads a Swing table (role <c>table</c>) through the table interface of the bridge: the column header as the first
+    /// row when the table has one, then the text of every cell, <paramref name="maxRows"/> data rows at most (null: all).
+    /// </summary>
+    public async Task<TableReadResult> GetTableAsync(string refId, int? maxRows = null)
+    {
+        var h = await LiveAsync(refId).ConfigureAwait(false);
+        return await bridge.RunAsync(jab =>
+        {
+            var info = jab.GetInfo(h) ?? throw new InvalidOperationException($"Element for ref '{refId}' is gone.");
+            var table = jab.GetTableInfo(h)
+                ?? throw new NotSupportedException($"Ref '{refId}' ({info.Role}) is not a table: get_table needs the ref of a Swing table (JTable).");
+            try
+            {
+                var rows = new List<string[]>();
+                if (ReadHeader(jab, h, table.ColumnCount) is { } header) rows.Add(header);
+                var limit = maxRows is { } m ? Math.Min(Math.Max(m, 0), table.RowCount) : table.RowCount;
+                for (var r = 0; r < limit; r++)
+                {
+                    var row = new string[table.ColumnCount];
+                    for (var c = 0; c < table.ColumnCount; c++) row[c] = CellText(jab, table.Table, r, c);
+                    rows.Add(row);
+                }
+                return new TableReadResult(rows.ToArray(), table.RowCount, table.RowCount - limit);
+            }
+            finally
+            {
+                jab.Release(table.Table);
+            }
+        }).ConfigureAwait(false);
+    }
+
+    /// <summary>The header cells of a table, or null when it has no column header or the header cells carry no text.</summary>
+    private static string[]? ReadHeader(IJabAccess jab, JabHandle table, int columns)
+    {
+        if (jab.GetTableColumnHeader(table) is not { } header) return null;
+        try
+        {
+            if (header.RowCount <= 0 || header.ColumnCount <= 0) return null;
+            var n = Math.Min(columns, header.ColumnCount);
+            var row = new string[columns];
+            var any = false;
+            for (var c = 0; c < n; c++)
+            {
+                row[c] = CellText(jab, header.Table, header.RowCount - 1, c);
+                any |= row[c].Length > 0;
+            }
+            for (var c = n; c < columns; c++) row[c] = "";
+            return any ? row : null;
+        }
+        finally
+        {
+            jab.Release(header.Table);
+        }
+    }
+
+    /// <summary>The text of a cell: its accessible name (the rendered text), else its text, else its checked state or value.</summary>
+    private static string CellText(IJabAccess jab, JabHandle table, int row, int column)
+    {
+        if (jab.GetTableCell(table, row, column) is not { } cell) return "";
+        try
+        {
+            if (jab.GetInfo(cell) is not { } ci) return "";
+            if (!string.IsNullOrEmpty(ci.Name)) return ci.Name;
+            if (ci.HasText && jab.GetText(cell, 500) is { Length: > 0 } t) return t;
+            var ct = JavaRoleMap.ControlTypeOf(ci.Role, "table");
+            if (JavaStates.CheckedOf(JavaStates.Parse(ci.States), ct, ci.Role) is { } on) return on ? "true" : "false";
+            return (ci.HasValue ? jab.GetValue(cell) : null) ?? ci.Description ?? "";
+        }
+        finally
+        {
+            jab.Release(cell);
+        }
+    }
 }
+

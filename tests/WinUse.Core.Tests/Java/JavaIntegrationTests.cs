@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using WinUse.Cli;
 using WinUse.Core.Config;
@@ -62,11 +63,11 @@ public sealed class JavaIntegrationTests : IDisposable
         public ToolDispatcher D = null!;
         public SwingFixture Fixture = null!;
 
-        public static async Task<Session?> OpenAsync(Jvm jvm, WinUseConfig cfg, IJevClient? jev = null)
+        public static async Task<Session?> OpenAsync(Jvm jvm, WinUseConfig cfg, IJevClient? jev = null, bool accessibility = true)
         {
             if (!JabAccessIntegrationTests.Ready(jvm)) return null;
             var ctx = ToolContext.Create(cfg, null, jev);
-            var fixture = await SwingFixture.LaunchAsync(ctx.Windows, jvm);
+            var fixture = await SwingFixture.LaunchAsync(ctx.Windows, jvm, accessibility);
             return new Session { Ctx = ctx, D = new ToolDispatcher(ctx), Fixture = fixture };
         }
 
@@ -75,6 +76,10 @@ public sealed class JavaIntegrationTests : IDisposable
         {
             var resolved = args["ref"] is JsonValue v && v.TryGetValue<string>(out var id) && ToolContext.LooksLikeRef(id)
                 ? Ctx.GetRef(id).Locator : null;
+            // The other ref arguments (scope, ...) travel the same way, under resolved_refs.
+            foreach (var name in ToolContext.RefArgNames.Where(n => n != "ref"))
+                if (args[name] is JsonValue rv && rv.TryGetValue<string>(out var rid) && ToolContext.LooksLikeRef(rid) && Ctx.Refs.TryGet(rid, out var r))
+                    ((args[ToolContext.ResolvedRefsKey] ??= new JsonObject()).AsObject())[name] = JsonSerializer.SerializeToNode(r.Locator, typeof(WinUse.Core.Refs.Locator));
             var o = await D.InvokeAsync(new(tool, args, resolved), default);
             Assert.True(o.Ok, $"{tool}: {o.Error}");
             return o.Result;
@@ -294,5 +299,82 @@ public sealed class JavaIntegrationTests : IDisposable
             Jvm.Jre8x86 => "JavaAccessBridge-32.dll loaded (wide wire format)",
             _ => "JavaAccessBridge.dll loaded (legacy wire format)",
         }, text);
+    }
+
+    [Theory] [MemberData(nameof(Jvms_))]
+    public async Task Tree_ShowsTheTableAsOneNode_AndScopedToIt_TheCells(Jvm jvm)
+    {
+        await using var s = await Session.OpenAsync(jvm, Cfg);
+        if (s is null) return;
+        var r = await s.Tree();
+        Assert.Null(r["node_limit_reached"]);
+        var table = Find(r["tree"]!, "Table", n => n == "Connections");
+        Assert.NotNull(table);
+        Assert.Empty(table!["children"]?.AsArray() ?? []);
+        Assert.Null(Find(r["tree"]!, "Text", n => n == "alpha"));
+
+        var scoped = await s.Call("get_ui_tree", Args(("scope", table["ref"]!.GetValue<string>()), ("interactive_only", false)));
+        var alpha = Find(scoped["tree"]!, "Text", n => n == "alpha");
+        Assert.True(alpha is not null, scoped.ToJsonString());
+        Assert.False(alpha!["offscreen"]!.GetValue<bool>());
+        // The bridge reports no position for a cell: it carries the table's rectangle.
+        Assert.Equal(table["rect"]!.ToJsonString(), alpha["rect"]!.ToJsonString());
+    }
+
+    [Theory] [MemberData(nameof(Jvms_))]
+    public async Task GetTable_ReadsHeaderAndCells(Jvm jvm)
+    {
+        await using var s = await Session.OpenAsync(jvm, Cfg);
+        if (s is null) return;
+        var id = await s.RefOf("Table", "Connections");
+        var r = await s.Call("get_table", Args(("ref", id)));
+        var rows = r["rows"]!.AsArray().Select(row => row!.AsArray().Select(c => c!.GetValue<string>()).ToArray()).ToArray();
+        Assert.Equal(["Name", "Port", "Active"], rows[0]);
+        Assert.Equal(["alpha", "8080", "true"], rows[1]);
+        Assert.Equal(["beta", "9090", "false"], rows[2]);
+        Assert.Equal(3, rows.Length);
+        Assert.Equal(2, r["row_count"]!.GetValue<int>());
+        Assert.Null(r["omitted_rows"]);
+
+        var one = await s.Call("get_table", Args(("ref", id), ("max_rows", 1)));
+        Assert.Equal(2, one["rows"]!.AsArray().Count);
+        Assert.Equal(1, one["omitted_rows"]!.GetValue<int>());
+    }
+
+    [Theory] [MemberData(nameof(Jvms_))]
+    public async Task GetUiTree_WithoutValues_LeavesTheEditValueNull(Jvm jvm)
+    {
+        await using var s = await Session.OpenAsync(jvm, Cfg);
+        if (s is null) return;
+        var r = await s.Tree(Args(("include_values", false)));
+        var edit = Find(r["tree"]!, "Edit", n => n == "Name");
+        Assert.NotNull(edit);
+        Assert.Null(edit!["value"]?.GetValue<string>());
+    }
+
+    /// <summary>A JVM started without the bridge: the diagnosis names the pid and says no hello arrived, not just "not responding".</summary>
+    [Fact]
+    public async Task GetUiTree_JvmWithoutAccessibility_ReportsNoHelloDiagnosis()
+    {
+        if (JabEnablement.IsEnabled(JabEnablement.DefaultPropertiesPath)) return; // the user profile would enable the bridge anyway
+        await using var s = await Session.OpenAsync(Jvm.Jdk21x64, Cfg, accessibility: false);
+        if (s is null) return;
+        var r = await s.Tree();
+        var reason = r["java_access_bridge"]!.GetValue<string>();
+        Assert.Contains($"JVM pid {s.Fixture.Pid}", reason);
+        Assert.Contains("no JavaAccessBridge*.dll loaded", reason);
+        var d = r["java_access_bridge_diagnostics"]!;
+        Assert.Equal("no_hello", d["stage"]!.GetValue<string>());
+        Assert.Equal(s.Fixture.Pid, d["jvm_pid"]!.GetValue<int>());
+        Assert.False(d["jvm_connected"]!.GetValue<bool>());
+        Assert.Null(d["bridge_module"]);
+        Assert.Equal("64-bit", d["bitness"]!.GetValue<string>());
+        Assert.StartsWith("0x", d["client_window"]!.GetValue<string>());
+        Assert.Equal(4000, d["timeout_ms"]!.GetValue<int>());
+        Assert.Empty(d["connected_jvms"]!.AsArray());
+
+        var w = new StringWriter();
+        await DoctorCommand.ExecuteAsync(s.Ctx, w);
+        Assert.Contains("bridge NOT responding: JVM pid " + s.Fixture.Pid, w.ToString());
     }
 }

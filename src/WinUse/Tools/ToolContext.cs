@@ -172,6 +172,16 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
 
     public static bool LooksLikeRef(string s) => AnyRefPattern.IsMatch(s);
 
+    /// <summary>Description of the <c>secret</c> argument of the text-entry tools.</summary>
+    public const string SecretArg = "true when the text is a password or other secret: the journal, the log and saved scenarios then hold \"" + SecretPlaceholder
+        + "\" instead of the text. A saved scenario step with secret=true must be given the real value as ${NAME} (scenario env or environment variable) before it can be replayed.";
+
+    /// <summary>What the journal stores in place of a secret text argument.</summary>
+    public const string SecretPlaceholder = "***";
+
+    /// <summary>The value the journal records for a text argument: the placeholder when it is a secret.</summary>
+    public static string Journaled(string text, bool secret) => secret ? SecretPlaceholder : text;
+
     /// <summary>Builds the journaled argument object, skipping null values.</summary>
     public static JsonObject Args(params (string Key, object? Value)[] values)
     {

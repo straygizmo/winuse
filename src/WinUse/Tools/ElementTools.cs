@@ -9,12 +9,13 @@ namespace WinUse.Tools;
 public sealed class ElementTools
 {
     [McpServerTool(Name = "set_text", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Replace the text of an editable element (UIA Value pattern or select-all + typing; DOM fill).")]
+    [Description("Replace the text of an editable element (UIA Value pattern or select-all + typing; DOM fill). With secret=true the text is kept out of the log, the journal and saved scenarios.")]
     public static Task<CallToolResult> SetText(
         ToolContext ctx,
         [Description("Element ref (u{n}, j{n} or w{n}).")] string @ref,
-        [Description("The new text.")] string text) =>
-        OnRef(ctx, "set_text", ToolContext.Args(("ref", @ref), ("text", text)), @ref,
+        [Description("The new text.")] string text,
+        [Description(ToolContext.SecretArg)] bool secret = false) =>
+        OnRef(ctx, "set_text", ToolContext.Args(("ref", @ref), ("text", ToolContext.Journaled(text, secret)), ("secret", secret ? true : null)), @ref,
             r => ctx.Uia.SetTextAsync(r.Id, text),
             r => ctx.Web.FillAsync(r.Id, text),
             r => ctx.Java.SetTextAsync(r.Id, text));

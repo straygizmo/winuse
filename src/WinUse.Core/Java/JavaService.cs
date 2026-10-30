@@ -8,6 +8,12 @@ using WinUse.Core.Windows;
 namespace WinUse.Core.Java;
 
 /// <summary>
+/// A Java window tree and whether the walk hit the node limit: <paramref name="NodeLimitReached"/> means elements past
+/// the first <paramref name="NodeLimit"/> bridge round trips are missing from <paramref name="Root"/>.
+/// </summary>
+public sealed record JavaTreeResult(UiNode Root, bool NodeLimitReached, int NodeLimit);
+
+/// <summary>
 /// Reads and operates Swing windows through Java Access Bridge with the same public surface as <see cref="UiaService"/>.
 /// Owns every Java object handle behind a <c>j{n}</c> ref and releases them two observations later; a ref whose handle
 /// is gone is re-resolved through its locator, so a released handle is never touched again.
@@ -19,6 +25,7 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
     private readonly object _gate = new();
     private readonly Dictionary<string, (int Snapshot, JabHandle Handle)> _owned = new();
     private readonly Dictionary<nint, string?> _probeReason = new();
+    private readonly Dictionary<nint, JabWindowDiagnosis?> _probeDiagnosis = new();
     private bool _everSeenJava;
     private int _disposed;
 
@@ -74,7 +81,8 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
         if (!LooksLikeJavaWindow(w)) return false;
         if (!bridge.IsAvailable)
         {
-            Record(w.Hwnd, bridge.UnavailableReason ?? "unavailable");
+            var reason = bridge.UnavailableReason ?? "unavailable";
+            Record(w.Hwnd, reason, new JabWindowDiagnosis(JabStage.ClientUnavailable, reason, w.Pid, 0, null, null, null, false, 0, []));
             return false;
         }
         var attempts = _everSeenJava ? 1 : ProbeRetries;
@@ -83,13 +91,15 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
             if (await bridge.RunAsync(j => j.IsJavaWindow(w.Hwnd)).ConfigureAwait(false))
             {
                 _everSeenJava = true;
-                Record(w.Hwnd, null);
+                Record(w.Hwnd, null, null);
                 return true;
             }
             if (i + 1 < attempts) await Task.Delay(ProbeRetryDelay).ConfigureAwait(false);
         }
-        Record(w.Hwnd, "bridge not responding (accessibility not enabled when the app started? run: winuse doctor)");
-        _log.LogWarning("Java window 0x{Hwnd:X} '{Title}' does not answer through Java Access Bridge; falling back to UIA", w.Hwnd, w.Title);
+        var diagnosis = await bridge.RunAsync(j => j.Diagnose(w.Hwnd, w.Pid)).ConfigureAwait(false);
+        Record(w.Hwnd, diagnosis.Reason, diagnosis);
+        _log.LogWarning("Java window 0x{Hwnd:X} (pid {Pid}) does not answer through Java Access Bridge ({Stage}); falling back to UIA: {Reason}",
+            w.Hwnd, w.Pid, diagnosis.Stage, diagnosis.Reason);
         return false;
     }
 
@@ -117,14 +127,34 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
         lock (_gate) return _probeReason.TryGetValue(w.Hwnd, out var r) ? r : bridge.UnavailableReason;
     }
 
-    private void Record(nint hwnd, string? reason)
+    /// <summary>The diagnosis behind <see cref="UnavailableReason"/>; null for non-Java windows and for windows the bridge reads.</summary>
+    public JabWindowDiagnosis? Diagnosis(WindowInfo w)
     {
-        lock (_gate) _probeReason[hwnd] = reason;
+        if (!LooksLikeJavaWindow(w)) return null;
+        lock (_gate)
+        {
+            if (_probeDiagnosis.TryGetValue(w.Hwnd, out var d)) return d;
+            return bridge.UnavailableReason is { } reason
+                ? new JabWindowDiagnosis(JabStage.ClientUnavailable, reason, w.Pid, 0, null, null, null, false, 0, [])
+                : null;
+        }
+    }
+
+    private void Record(nint hwnd, string? reason, JabWindowDiagnosis? diagnosis)
+    {
+        lock (_gate)
+        {
+            _probeReason[hwnd] = reason;
+            _probeDiagnosis[hwnd] = diagnosis;
+        }
     }
 
     // ---- tree -----------------------------------------------------------------------------------
 
-    public async Task<UiNode> GetTreeAsync(nint hwnd, TreeOptions opt)
+    public async Task<UiNode> GetTreeAsync(nint hwnd, TreeOptions opt) => (await GetTreeWithStatusAsync(hwnd, opt).ConfigureAwait(false)).Root;
+
+    /// <summary>The tree plus whether the walk stopped at <see cref="JavaTreeBuilder.MaxNodes"/> bridge round trips.</summary>
+    public async Task<JavaTreeResult> GetTreeWithStatusAsync(nint hwnd, TreeOptions opt)
     {
         opt ??= new TreeOptions();
         EnsureAvailable();
@@ -163,7 +193,7 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
                 var tree = builder.BuildRoot(root, basePath, keepRoot: scope is null);
                 if (builder.Truncated)
                     _log.LogWarning("Java tree of window 0x{Hwnd:X} truncated at {Max} nodes", hwnd, JavaTreeBuilder.MaxNodes);
-                return tree;
+                return new JavaTreeResult(tree, builder.Truncated, JavaTreeBuilder.MaxNodes);
             }
             finally
             {

@@ -144,7 +144,7 @@ public sealed class ObserveTools
     };
 
     [McpServerTool(Name = "get_ui_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect); the window object carries the window's rect, visible_rect and state too. Use the refs with the other tools. Narrow the output with control_type / name (matching nodes are hoisted to their nearest kept ancestor), compact (no null / default fields) and max_nodes. Java Swing windows are read through Java Access Bridge and return j{n} refs (menu items are listed even while their menu is closed); java_access_bridge explains why a Java window could not be read that way.")]
+    [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect); the window object carries the window's rect, visible_rect and state too. Use the refs with the other tools. Narrow the output with control_type / name (matching nodes are hoisted to their nearest kept ancestor), compact (no null / default fields) and max_nodes; include_values=false leaves every value unread (and out of the log). Java Swing windows are read through Java Access Bridge and return j{n} refs (menu items are listed even while their menu is closed; a table is one Table node, read its cells with get_table or scope the tree to it); node_limit_reached: true means the Java walk stopped at node_limit elements and the tree is incomplete (use scope, control_type or max_depth). java_access_bridge explains why a Java window could not be read that way and java_access_bridge_diagnostics carries the facts (stage, jvm_pid, bridge_module, connected_jvms, timeout_ms).")]
     public static Task<CallToolResult> GetUiTree(
         ToolContext ctx,
         [Description("Window ref (win{n}) or title regex. Default: last observed window, else the foreground window.")] string? window = null,
@@ -155,10 +155,11 @@ public sealed class ObserveTools
         [Description("Comma-separated control types to keep, e.g. \"Edit,Button\" (case-insensitive). Other nodes are dropped and their matching descendants hoisted.")] string? control_type = null,
         [Description("Regex (case-insensitive) the node name must match. Combined with control_type.")] string? name = null,
         [Description("Omit null and default-valued fields (automationId, value, checked, enabled=true, offscreen=false, focused=false, depth) and print rect as \"x,y,w,h\".")] bool compact = false,
-        [Description("Keep at most this many nodes (document order); the result then reports omitted_nodes.")] int? max_nodes = null) =>
+        [Description("Keep at most this many nodes (document order); the result then reports omitted_nodes.")] int? max_nodes = null,
+        [Description("false: do not read element values (edit field text, combo selection, slider value); value is null everywhere and no field content reaches the log. Use for forms with credentials.")] bool include_values = true) =>
         ctx.RunStepAsync("get_ui_tree", ToolContext.Args(("window", window), ("scope", scope), ("max_depth", max_depth),
             ("interactive_only", interactive_only), ("include_offscreen", include_offscreen), ("control_type", control_type), ("name", name),
-            ("compact", compact), ("max_nodes", max_nodes)), async _ =>
+            ("compact", compact), ("max_nodes", max_nodes), ("include_values", include_values ? null : false)), async _ =>
         {
             var nameRegex = name is null ? null : new Regex(name, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
             var types = UiTreeShaper.ParseControlTypes(control_type);
@@ -168,9 +169,15 @@ public sealed class ObserveTools
                 ? await ctx.ResolveWindowAsync(scope, null, false)
                 : await ctx.ResolveWindowAsync(null, window, fallback: true);
             ctx.LastWindow = w.Hwnd;
-            var opt = new TreeOptions(scope, max_depth, interactive_only, include_offscreen);
+            var opt = new TreeOptions(scope, max_depth, interactive_only, include_offscreen, include_values);
             var isJava = scope is null ? await ctx.Java.IsJavaWindowAsync(w) : ToolContext.IsJavaRef(scope);
-            Task<UiNode> Read() => isJava ? ctx.Java.GetTreeAsync(w.Hwnd, opt) : ctx.Uia.GetTreeAsync(w.Hwnd, opt);
+            JavaTreeResult? javaResult = null;
+            async Task<UiNode> Read()
+            {
+                if (!isJava) return await ctx.Uia.GetTreeAsync(w.Hwnd, opt);
+                javaResult = await ctx.Java.GetTreeWithStatusAsync(w.Hwnd, opt);
+                return javaResult.Root;
+            }
             var tree = scope is null
                 ? await UiaService.RetryIfChildlessAsync(Read, UiaService.EmptyTreeRetryDelay)
                 : await Read();
@@ -183,15 +190,41 @@ public sealed class ObserveTools
             tree = UiTreeShaper.Filter(tree, types, nameRegex);
             var omitted = 0;
             if (max_nodes is { } max) (tree, omitted) = UiTreeShaper.Truncate(tree, max);
+            var limitReached = javaResult is { NodeLimitReached: true };
+            var diagnosis = !isJava && JavaService.LooksLikeJavaWindow(w) ? ctx.Java.Diagnosis(w) : null;
             return new
             {
                 window = new { @ref = ctx.RegisterWindow(w).Id, title = w.Title, process = w.ProcessName, pid = w.Pid, rect = w.Rect,
                     visible_rect = w.State == WindowState.Minimized ? w.Rect : WindowService.VisibleRectOf(w.Hwnd), state = w.State.ToString().ToLowerInvariant() },
                 tree = compact ? (object)UiTreeShaper.Compact(tree) : tree,
                 omitted_nodes = omitted > 0 ? omitted : (int?)null,
+                node_limit_reached = limitReached ? true : (bool?)null,
+                node_limit = limitReached ? javaResult!.NodeLimit : (int?)null,
                 java_access_bridge = !isJava && JavaService.LooksLikeJavaWindow(w) ? ctx.Java.UnavailableReason(w) : null,
+                java_access_bridge_diagnostics = diagnosis is null ? null : DiagnosisJson(diagnosis),
             };
         });
+
+    /// <summary>The diagnosis as the tool result carries it: facts about the JVM and the connection, no window or element data.</summary>
+    internal static object DiagnosisJson(JabWindowDiagnosis d) => new
+    {
+        stage = d.Stage,
+        jvm_pid = d.JvmPid,
+        jvm_connected = d.JvmConnected,
+        bridge_module = d.BridgeModule,
+        wire_format = d.WireFormat,
+        bitness = d.Is32Bit switch { true => "32-bit", false => "64-bit", _ => (string?)null },
+        client_window = d.ClientWindow == 0 ? null : $"0x{d.ClientWindow:X}",
+        timeout_ms = d.TimeoutMs > 0 ? d.TimeoutMs : (int?)null,
+        connected_jvms = d.ConnectedJvms.Select(j => new
+        {
+            pid = j.Pid,
+            wire_format = j.WireFormat,
+            wire_format_assumed = j.WireFormatAssumed ? true : (bool?)null,
+            bitness = j.Is32Bit switch { true => "32-bit", false => "64-bit", _ => (string?)null },
+            last_failure = j.LastFailure,
+        }).ToList(),
+    };
 
     [McpServerTool(Name = "get_dom", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("List the interactive elements of the connected WebView2 page (refs w{n}, role, name, tag, value, state, rect, selector). Requires process_run with webview_debug=true.")]
@@ -265,15 +298,18 @@ public sealed class ObserveTools
     };
 
     [McpServerTool(Name = "get_table", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Read a UIA table/grid/list view as a 2-D array of cell texts (header row first when available).")]
+    [Description("Read a UIA table/grid/list view or a Swing table (JTable) as a 2-D array of cell texts (header row first when available), plus row_count (data rows in the table) and omitted_rows when max_rows cut the result. An empty Swing table gives rows: [] (or the header alone) with row_count: 0.")]
     public static Task<CallToolResult> GetTable(
         ToolContext ctx,
-        [Description("Element ref (u{n} or j{n}) of the table. Not yet supported for Java elements.")] string @ref) =>
-        ctx.RunStepAsync("get_table", ToolContext.Args(("ref", @ref)), async step =>
+        [Description("Element ref (u{n} or j{n}) of the table.")] string @ref,
+        [Description("Read at most this many data rows (the header row does not count). Default: all.")] int? max_rows = null) =>
+        ctx.RunStepAsync("get_table", ToolContext.Args(("ref", @ref), ("max_rows", max_rows)), async step =>
         {
             var r = RequireElement(ctx, @ref);
             step.Resolved = r.Locator;
-            return new { rows = r.Kind == RefKind.Java ? await ctx.Java.GetTableAsync(r.Id) : await ctx.Uia.GetTableAsync(r.Id) };
+            if (max_rows is < 0) throw new ArgumentOutOfRangeException(nameof(max_rows), "max_rows must be 0 or more.");
+            var t = r.Kind == RefKind.Java ? await ctx.Java.GetTableAsync(r.Id, max_rows) : await ctx.Uia.GetTableAsync(r.Id, max_rows);
+            return new { rows = t.Rows, row_count = t.RowCount, omitted_rows = t.OmittedRows > 0 ? t.OmittedRows : (int?)null };
         });
 
     [McpServerTool(Name = "get_list_items", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]

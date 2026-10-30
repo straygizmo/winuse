@@ -37,6 +37,12 @@ public sealed class ScenarioRunner(IToolDispatcher dispatcher, Func<Task<byte[]>
                 exit = 2;
                 break;
             }
+            if (SecretNotProvided(args) is { } missing)
+            {
+                reports.Add(new StepReport(i, step.Tool, StepStatus.Error, missing, sw.Elapsed, null, null));
+                exit = 2;
+                break;
+            }
 
             var (before, beforeError) = await CaptureAsync(i, "before");
             var outcome = await dispatcher.InvokeAsync(new ToolInvocation(step.Tool, args, step.Resolved, IsReplay: true), ct);
@@ -110,6 +116,20 @@ public sealed class ScenarioRunner(IToolDispatcher dispatcher, Func<Task<byte[]>
         {
             return (null, $"screenshot failed: {ex.Message}");
         }
+    }
+
+    /// <summary>What the journal stores in place of a secret text argument (the same placeholder the tools write).</summary>
+    public const string SecretPlaceholder = "***";
+
+    /// <summary>
+    /// A step recorded with <c>secret: true</c> carries the placeholder instead of its text; replaying it would type the
+    /// placeholder, so the step is refused until the scenario names the real value as a variable.
+    /// </summary>
+    private static string? SecretNotProvided(JsonObject args)
+    {
+        if (args["secret"] is not JsonValue sv || !sv.TryGetValue<bool>(out var secret) || !secret) return null;
+        if (args["text"] is not JsonValue tv || !tv.TryGetValue<string>(out var text) || text != SecretPlaceholder) return null;
+        return "secret text was not recorded: replace \"text\": \"" + SecretPlaceholder + "\" with \"${NAME}\" and provide NAME in the scenario env or as an environment variable";
     }
 
     private static JsonNode? Expand(JsonNode? node, IReadOnlyDictionary<string, string> env)

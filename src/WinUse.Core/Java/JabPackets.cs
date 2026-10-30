@@ -8,7 +8,7 @@ public enum JabPacketKind
 {
     IsJavaWindow, GetContextFromHwnd, GetContextInfo, GetChild, GetParent, ReleaseObject, GetVersion, GetActions, DoActions,
     GetTextInfo, GetTextRange, GetValue, AddSelection, ClearSelection, GetSelection, GetSelectionCount, SetText, GetVirtualName,
-    RequestFocus, MemoryMappedFileCreated,
+    RequestFocus, MemoryMappedFileCreated, GetTableInfo, GetTableCellInfo, GetTableRowHeader, GetTableColumnHeader,
 }
 
 /// <summary>
@@ -52,6 +52,10 @@ internal static class JabPackets
     public static class GetVirtualName { public const int VmId = 0, Ac = 1, Name = 2, Len = 3; }
     public static class RequestFocus { public const int VmId = 0, Ac = 1; }
     public static class MemoryMappedFileCreated { public const int BridgeWindow = 0, Filename = 1; }
+    /// <summary>Also the layout of <see cref="JabPacketKind.GetTableRowHeader"/> / <see cref="JabPacketKind.GetTableColumnHeader"/>: the nested <c>AccessibleTableInfo</c> flattened.</summary>
+    public static class GetTableInfo { public const int VmId = 0, Ac = 1, Caption = 2, Summary = 3, RowCount = 4, ColumnCount = 5, Context = 6, Table = 7; }
+    /// <summary>The nested <c>AccessibleTableCellInfo</c> flattened.</summary>
+    public static class GetTableCellInfo { public const int VmId = 0, Table = 1, Row = 2, Column = 3, Context = 4, Index = 5, CellRow = 6, CellColumn = 7, RowExtent = 8, ColumnExtent = 9, Selected = 10; }
 
     /// <summary>Byte offsets inside the <c>AccessibleContextInfo</c> blob (same in both formats).</summary>
     public static class ContextInfo
@@ -132,6 +136,13 @@ internal static class JabPackets
             JabPacketKind.GetVirtualName => JabPacketLayout.Build(0x1700, layout, I(), O(), W(MaxStringSize), I()),
             JabPacketKind.RequestFocus => JabPacketLayout.Build(0x1701, layout, I(), O()),
             JabPacketKind.MemoryMappedFileCreated => JabPacketLayout.Build(0x11000, layout, I(), new JabField(Chars, MemoryMappedNameSize)),
+            // AccessibleTableInfo { JOBJECT64 caption, summary; jint rowCount, columnCount; JOBJECT64 accessibleContext, accessibleTable }
+            // starts at an Obj-aligned offset in both formats, so flattening it keeps every offset and the struct size.
+            JabPacketKind.GetTableInfo => JabPacketLayout.Build(0x1200, layout, I(), O(), O(), O(), I(), I(), O(), O()),
+            // AccessibleTableCellInfo { JOBJECT64 accessibleContext; jint index, row, column, rowExtent, columnExtent; jboolean isSelected }
+            JabPacketKind.GetTableCellInfo => JabPacketLayout.Build(0x1201, layout, I(), O(), I(), I(), O(), I(), I(), I(), I(), I(), new JabField(Bool8)),
+            JabPacketKind.GetTableRowHeader => JabPacketLayout.Build(0x1202, layout, I(), O(), O(), O(), I(), I(), O(), O()),
+            JabPacketKind.GetTableColumnHeader => JabPacketLayout.Build(0x1203, layout, I(), O(), O(), O(), I(), I(), O(), O()),
             _ => throw new ArgumentOutOfRangeException(nameof(kind)),
         };
     }

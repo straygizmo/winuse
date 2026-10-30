@@ -84,7 +84,7 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
         {
             var r = refs.Register(RefKind.Uia, new UiaLocator(wloc, path), el);
             var children = Children(el, path, 0, 0);
-            return MakeNode(r.Id, el, 0, children, withValue: true);
+            return MakeNode(r.Id, el, 0, children, withValue: true, readValues: opt.ReadValues);
         }
 
         private List<UiNode> Children(AutomationElement parent, IReadOnlyList<UiaPathSegment> parentPath, int realDepth, int outDepth)
@@ -119,7 +119,7 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
                     var sub = opt.InteractiveOnly && type == "Text"
                         ? new List<UiNode>()
                         : Children(k, path, realDepth + 1, outDepth + 1);
-                    result.Add(MakeNode(r.Id, k, outDepth + 1, sub, withValue: false));
+                    result.Add(MakeNode(r.Id, k, outDepth + 1, sub, withValue: false, readValues: opt.ReadValues));
                 }
                 else if (type == "Pane")
                 {
@@ -128,7 +128,7 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
                     if (sub.Count > 0)
                     {
                         var r = refs.Register(RefKind.Uia, new UiaLocator(wloc, path), k);
-                        result.Add(MakeNode(r.Id, k, outDepth + 1, sub, withValue: false));
+                        result.Add(MakeNode(r.Id, k, outDepth + 1, sub, withValue: false, readValues: opt.ReadValues));
                     }
                 }
                 else
@@ -141,10 +141,10 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
         }
     }
 
-    private static UiNode MakeNode(string refId, AutomationElement el, int depth, IReadOnlyList<UiNode> children, bool withValue)
+    private static UiNode MakeNode(string refId, AutomationElement el, int depth, IReadOnlyList<UiNode> children, bool withValue, bool readValues = true)
     {
         var type = UiaLocatorResolver.TypeOf(el);
-        var readValue = withValue || type is "Edit" or "ComboBox" or "Slider" or "Spinner";
+        var readValue = readValues && (withValue || type is "Edit" or "ComboBox" or "Slider" or "Spinner");
         string? value = null;
         if (readValue)
         {
@@ -363,7 +363,10 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
 
     // ---- collections --------------------------------------------------------------------------
 
-    public Task<string[][]> GetTableAsync(string refId) => WithAsync(refId, el =>
+    public async Task<string[][]> GetTableAsync(string refId) => (await GetTableAsync(refId, null).ConfigureAwait(false)).Rows;
+
+    /// <summary>The table as rows of cell text (header first when the Table pattern lists one), <paramref name="maxRows"/> data rows at most (null: all).</summary>
+    public Task<TableReadResult> GetTableAsync(string refId, int? maxRows) => WithAsync(refId, el =>
     {
         var rows = new List<string[]>();
         var grid = el.Patterns.Grid.PatternOrDefault;
@@ -376,7 +379,8 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
             }
             catch { }
             int rc = grid.RowCount.ValueOrDefault, cc = grid.ColumnCount.ValueOrDefault;
-            for (var r = 0; r < rc; r++)
+            var limit = maxRows is { } m ? Math.Min(Math.Max(m, 0), rc) : rc;
+            for (var r = 0; r < limit; r++)
             {
                 var row = new string[cc];
                 for (var c = 0; c < cc; c++)
@@ -385,12 +389,14 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
                 }
                 rows.Add(row);
             }
-            return rows.ToArray();
+            return new TableReadResult(rows.ToArray(), rc, rc - limit);
         }
         // No Grid pattern: treat each child row's children as cells.
-        foreach (var row in el.FindAllChildren())
+        var children = el.FindAllChildren();
+        var take = maxRows is { } max ? Math.Min(Math.Max(max, 0), children.Length) : children.Length;
+        foreach (var row in children.Take(take))
             rows.Add(row.FindAllChildren().Select(CellText).ToArray());
-        return rows.ToArray();
+        return new TableReadResult(rows.ToArray(), children.Length, children.Length - take);
     });
 
     private static string CellText(AutomationElement c)

@@ -27,9 +27,10 @@ public sealed class ClipboardTools
         });
 
     [McpServerTool(Name = "clipboard_set", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
-    [Description("Put text on the clipboard (replacing its content).")]
-    public static Task<CallToolResult> ClipboardSet(ToolContext ctx, [Description("The text.")] string text) =>
-        ctx.RunStepAsync("clipboard_set", ToolContext.Args(("text", text)), async _ =>
+    [Description("Put text on the clipboard (replacing its content). With secret=true the text is kept out of the log, the journal and saved scenarios.")]
+    public static Task<CallToolResult> ClipboardSet(ToolContext ctx, [Description("The text.")] string text,
+        [Description(ToolContext.SecretArg)] bool secret = false) =>
+        ctx.RunStepAsync("clipboard_set", ToolContext.Args(("text", ToolContext.Journaled(text, secret)), ("secret", secret ? true : null)), async _ =>
         {
             await ctx.Clipboard.SetTextAsync(text);
             return new { length = text.Length };
@@ -45,13 +46,15 @@ public sealed class ClipboardTools
         });
 
     [McpServerTool(Name = "paste_text", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Paste text into the focused control through the clipboard (clipboard_set + ctrl+v), then restore the clipboard's previous text. The way to fill rich editors that set_text / type_text cannot.")]
+    [Description("Paste text into the focused control through the clipboard (clipboard_set + ctrl+v), then restore the clipboard's previous text. The way to fill rich editors that set_text / type_text cannot. With secret=true the text is kept out of the log, the journal and saved scenarios.")]
     public static Task<CallToolResult> PasteText(
         ToolContext ctx,
         [Description("The text to paste.")] string text,
         [Description(WindowArg)] string? window = null,
-        [Description("Restore the previous clipboard text afterwards (only text is restored; a previous image is lost).")] bool restore = true) =>
-        ctx.RunStepAsync("paste_text", ToolContext.Args(("text", text), ("window", window), ("restore", restore)), async _ =>
+        [Description("Restore the previous clipboard text afterwards (only text is restored; a previous image is lost).")] bool restore = true,
+        [Description(ToolContext.SecretArg)] bool secret = false) =>
+        ctx.RunStepAsync("paste_text", ToolContext.Args(("text", ToolContext.Journaled(text, secret)), ("window", window), ("restore", restore),
+            ("secret", secret ? true : null)), async _ =>
         {
             var target = await InputTools.ResolveTargetWindowAsync(ctx, window);
             var restored = await PasteAsync(ctx, () => ctx.Clipboard.SetTextAsync(text), restore);

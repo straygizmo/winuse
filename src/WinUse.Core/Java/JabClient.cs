@@ -4,19 +4,27 @@ using static WinUse.Core.Java.JabPackets;
 
 namespace WinUse.Core.Java;
 
-/// <summary>What inspecting a JVM process tells the client: its wire format and bitness, each null when not (yet) readable.</summary>
-internal sealed record JabJvmProbe(JabLayout? Layout, bool? Is32Bit);
+/// <summary>
+/// What inspecting a JVM process tells the client: its wire format, bitness and loaded bridge DLL, each null when not (yet)
+/// readable; <paramref name="Error"/> when the process could not be opened at all (elevated, other user).
+/// </summary>
+internal sealed record JabJvmProbe(JabLayout? Layout, bool? Is32Bit, string? BridgeModule = null, string? Error = null);
+
+/// <summary>The outcome of opening a channel: the channel, or why the handshake failed.</summary>
+internal sealed record JabChannelOpen(IJabChannel? Channel, string? Failure = null);
 
 /// <summary>
 /// What <see cref="JabClient"/> needs from the outside world, injectable for tests. <paramref name="OpenChannel"/> performs
-/// the memory-mapped-file handshake with a JVM window and returns null when it fails; <paramref name="Inspect"/> reads the
-/// JVM process (loaded bridge DLL, bitness); <paramref name="PidOf"/> and <paramref name="IsWindow"/> wrap the user32 calls.
+/// the memory-mapped-file handshake with a JVM window and reports the failure when it fails; <paramref name="Inspect"/> reads
+/// the JVM process (loaded bridge DLL, bitness); <paramref name="PidOf"/> and <paramref name="IsWindow"/> wrap the user32
+/// calls; <paramref name="ClientHwnd"/> is the client window the JVMs talk to (for diagnoses).
 /// </summary>
 internal sealed record JabClientServices(
-    Func<nint, IJabChannel?> OpenChannel,
+    Func<nint, JabChannelOpen> OpenChannel,
     Func<int, JabJvmProbe> Inspect,
     Func<nint, int> PidOf,
-    Func<nint, bool> IsWindow);
+    Func<nint, bool> IsWindow,
+    Func<nint>? ClientHwnd = null);
 
 /// <summary>A JVM the client has shaken hands with.</summary>
 internal sealed class JabJvm
@@ -31,6 +39,11 @@ internal sealed class JabJvm
     public bool LayoutAssumed { get; set; }
     public int LayoutAttempts { get; set; }
     public bool? Is32Bit { get; set; }
+    public string? BridgeModule { get; set; }
+    /// <summary>How the last request to this JVM ended, and which one it was when it failed.</summary>
+    public JabExchange LastOutcome { get; set; } = JabExchange.Answered;
+    public JabPacketKind? LastFailedKind { get; set; }
+    public DateTimeOffset LastFailureAt { get; set; }
     /// <summary>Set from the window procedure (JVM shutdown, AB_DLL_GOING_AWAY); the list is pruned at the next call.</summary>
     public volatile bool Dead;
 }
@@ -43,15 +56,20 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
 {
     private const int LayoutRetries = 3;
     private static readonly TimeSpan LayoutRetryDelay = TimeSpan.FromMilliseconds(100);
+    private const int MaxRememberedHandshakeFailures = 32;
 
     private readonly ILogger _log = log ?? NullLogger.Instance;
     private readonly List<JabJvm> _jvms = [];
+    private readonly Dictionary<nint, (int Pid, string Failure, DateTimeOffset At)> _handshakeFailures = new();
 
     /// <summary>Raised when a JVM says hello, before the handshake (for tests).</summary>
     public event Action<nint, int>? Connecting;
 
     /// <summary>The JVMs currently connected (dead ones until the next call prunes them).</summary>
     public IReadOnlyList<JabJvm> Jvms => _jvms;
+
+    /// <summary>The request timeout a diagnosis reports.</summary>
+    public int TimeoutMs { get; init; } = (int)JabMemoryChannel.SendTimeoutMs;
 
     // ---- connection management ---------------------------------------------------------------------------------------
 
@@ -67,13 +85,22 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
         }
         var pid = services.PidOf(javaHwnd);
         var probe = Detect(pid);
-        var channel = services.OpenChannel(javaHwnd);
-        if (channel is null)
+        var open = services.OpenChannel(javaHwnd);
+        if (open.Channel is null)
         {
-            _log.LogWarning("JAB handshake with JVM window 0x{Hwnd:X} (pid {Pid}) failed", javaHwnd, pid);
+            var failure = open.Failure ?? "the JVM did not answer the handshake";
+            if (_handshakeFailures.Count >= MaxRememberedHandshakeFailures)
+                _handshakeFailures.Remove(_handshakeFailures.OrderBy(kv => kv.Value.At).First().Key);
+            _handshakeFailures[javaHwnd] = (pid, failure, DateTimeOffset.Now);
+            _log.LogWarning("JAB handshake with JVM window 0x{Hwnd:X} (pid {Pid}) failed: {Failure}", javaHwnd, pid, failure);
             return;
         }
-        _jvms.Add(new JabJvm { JavaHwnd = javaHwnd, VmId = vmId, Pid = pid, Channel = channel, Layout = probe.Layout, Is32Bit = probe.Is32Bit, LayoutAttempts = 1 });
+        _handshakeFailures.Remove(javaHwnd);
+        _jvms.Add(new JabJvm
+        {
+            JavaHwnd = javaHwnd, VmId = vmId, Pid = pid, Channel = open.Channel, Layout = probe.Layout, Is32Bit = probe.Is32Bit,
+            BridgeModule = probe.BridgeModule, LayoutAttempts = 1,
+        });
         _log.LogInformation("JAB connected to JVM pid {Pid} (vmID {VmId}, {Layout} wire format)", pid, vmId, Name(probe.Layout));
     }
 
@@ -127,7 +154,7 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
         catch (Exception ex)
         {
             _log.LogDebug(ex, "JAB process inspection for pid {Pid} threw", pid);
-            return new JabJvmProbe(null, null);
+            return new JabJvmProbe(null, null, null, ex.Message);
         }
     }
 
@@ -136,6 +163,7 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
     {
         var probe = Detect(j.Pid);
         j.Is32Bit ??= probe.Is32Bit;
+        j.BridgeModule ??= probe.BridgeModule;
         if (probe.Layout is null) return false;
         j.Layout = probe.Layout;
         j.LayoutAssumed = false;
@@ -162,6 +190,61 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
 
     private static string Name(JabLayout? layout) => JavaProcessInfo.FormatName(layout);
 
+    // ---- diagnosis ---------------------------------------------------------------------------------------------------
+
+    public JabWindowDiagnosis Diagnose(nint hwnd, int pid)
+    {
+        Prune();
+        var client = services.ClientHwnd?.Invoke() ?? 0;
+        var connected = _jvms.Select(j => new JabJvmSummary(j.Pid, Name(j.Layout), j.LayoutAssumed, j.Is32Bit, FailureText(j))).ToList();
+        var jvm = _jvms.FirstOrDefault(j => j.Pid == pid);
+        if (jvm is not null)
+        {
+            var format = Name(jvm.Layout) + (jvm.LayoutAssumed ? ", assumed" : "");
+            var kind = jvm.LastFailedKind?.ToString() ?? "the request";
+            var (stage, reason) = jvm.LastOutcome switch
+            {
+                JabExchange.Timeout => (JabStage.Timeout,
+                    $"JVM pid {pid} is connected ({format} wire format) but did not answer {kind} within {TimeoutMs} ms: "
+                    + "the Java side is not processing bridge requests (its event thread is blocked, or the process is suspended)."),
+                JabExchange.SendFailed => (JabStage.SendFailed,
+                    $"JVM pid {pid} is connected but {kind} could not be delivered to its bridge window: the JVM is exiting or its window is gone."),
+                JabExchange.NoAnswer => (JabStage.NoAnswer,
+                    $"JVM pid {pid} acknowledged {kind} but wrote no answer: the packet size did not match its wire format ({format})."),
+                _ => (JabStage.NotOwned,
+                    $"JVM pid {pid} is connected ({format} wire format) and answers, but reports that window 0x{hwnd:X} is not one of its Java windows "
+                    + "(not an AWT top-level window, or not shown yet)."),
+            };
+            return new JabWindowDiagnosis(stage, reason, pid, client, jvm.BridgeModule, Name(jvm.Layout), jvm.Is32Bit, true, TimeoutMs, connected);
+        }
+
+        var failed = _handshakeFailures.Where(kv => kv.Value.Pid == pid).Select(kv => kv.Value).OrderByDescending(f => f.At).FirstOrDefault();
+        var probe = Detect(pid);
+        if (failed.Failure is not null)
+        {
+            return new JabWindowDiagnosis(JabStage.HandshakeFailed,
+                $"JVM pid {pid} announced itself to the client window 0x{client:X} at {failed.At:HH:mm:ss} but the memory-mapped-file handshake failed: {failed.Failure}",
+                pid, client, probe.BridgeModule, Name(probe.Layout), probe.Is32Bit, false, TimeoutMs, connected);
+        }
+        var others = connected.Count == 0 ? "no JVM is connected" : $"{connected.Count} other JVM(s) are connected";
+        var reasonNoHello = probe.Error is not null
+            ? $"JVM pid {pid} could not be inspected ({probe.Error}) and never announced itself to the client window 0x{client:X}: "
+              + "a JVM running elevated or as another user is out of reach."
+            : probe.BridgeModule is null
+                ? $"JVM pid {pid} has no JavaAccessBridge*.dll loaded, so it cannot announce itself to the client window 0x{client:X}: "
+                  + "accessibility was not enabled when it started (enable it with winuse jab enable or start it through process_run, then restart the app; see winuse doctor)."
+                : $"JVM pid {pid} has {probe.BridgeModule} loaded but never announced itself to the client window 0x{client:X} (no AccessBridge-FromJava-Hello): "
+                  + "its bridge thread is not pumping messages, or its messages do not reach this process (app elevated or in another session).";
+        return new JabWindowDiagnosis(JabStage.NoHello, $"{reasonNoHello} {others}.",
+            pid, client, probe.BridgeModule, Name(probe.Layout), probe.Is32Bit, false, TimeoutMs, connected);
+    }
+
+    private static string? FailureText(JabJvm j) => j.LastOutcome switch
+    {
+        JabExchange.Answered => null,
+        var o => $"{o} on {j.LastFailedKind} at {j.LastFailureAt:HH:mm:ss}",
+    };
+
     // ---- sending -----------------------------------------------------------------------------------------------------
 
     private JabJvm? Find(int vmId)
@@ -175,8 +258,12 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
     {
         var p = New(kind, LayoutOf(j));
         fill(p);
-        if (j.Channel.Exchange(p.Buffer, p.Size)) return p;
-        _log.LogDebug("JAB {Kind} to pid {Pid} ({Layout}) got no answer", kind, j.Pid, Name(j.Layout));
+        var outcome = j.Channel.Exchange(p.Buffer, p.Size);
+        j.LastOutcome = outcome;
+        if (outcome == JabExchange.Answered) return p;
+        j.LastFailedKind = kind;
+        j.LastFailureAt = DateTimeOffset.Now;
+        _log.LogDebug("JAB {Kind} to pid {Pid} ({Layout}) got no answer: {Outcome}", kind, j.Pid, Name(j.Layout), outcome);
         return null;
     }
 
@@ -335,6 +422,43 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
         var p = SendFor(h, JabPacketKind.GetVirtualName, p => p.WriteI32(JabPackets.GetVirtualName.Len, MaxStringSize));
         return p is null ? null : NullIfEmpty(p.ReadWChars(JabPackets.GetVirtualName.Name));
     }
+
+    // ---- tables ----------------------------------------------------------------------------------------------------
+
+    public JabTableInfo? GetTableInfo(JabHandle h) => TableInfo(h, JabPacketKind.GetTableInfo);
+
+    public JabTableInfo? GetTableColumnHeader(JabHandle h) => TableInfo(h, JabPacketKind.GetTableColumnHeader);
+
+    /// <summary>
+    /// Sends one of the <c>AccessibleTableInfo</c> packets and keeps only the <c>accessibleTable</c> object; the caption,
+    /// summary and context objects the JVM also pinned are released right away.
+    /// </summary>
+    private JabTableInfo? TableInfo(JabHandle h, JabPacketKind kind)
+    {
+        var p = SendFor(h, kind);
+        if (p is null) return null;
+        var table = p.ReadObj(JabPackets.GetTableInfo.Table);
+        foreach (var field in new[] { JabPackets.GetTableInfo.Caption, JabPackets.GetTableInfo.Summary, JabPackets.GetTableInfo.Context })
+        {
+            var o = p.ReadObj(field);
+            if (o != 0 && o != table && o != h.Ac) Release(new JabHandle(h.VmId, o));
+        }
+        if (table == 0) return null;
+        return new JabTableInfo(p.ReadI32(JabPackets.GetTableInfo.RowCount), p.ReadI32(JabPackets.GetTableInfo.ColumnCount), new JabHandle(h.VmId, table));
+    }
+
+    public JabHandle? GetTableCell(JabHandle table, int row, int column)
+    {
+        var p = SendFor(table, JabPacketKind.GetTableCellInfo, p =>
+        {
+            p.WriteI32(JabPackets.GetTableCellInfo.Row, row);
+            p.WriteI32(JabPackets.GetTableCellInfo.Column, column);
+        });
+        var ac = p?.ReadObj(JabPackets.GetTableCellInfo.Context) ?? 0;
+        return ac == 0 ? null : new JabHandle(table.VmId, ac);
+    }
+
+    // ---- versions ------------------------------------------------------------------------------------------------------
 
     public JabVersionInfo? GetVersion(int vmId)
     {

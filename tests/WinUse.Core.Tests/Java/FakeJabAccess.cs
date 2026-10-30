@@ -19,6 +19,10 @@ internal sealed class FakeNode(string role, string? name = null, string states =
     public bool HasSelection;
     public List<int> Selected = [];
     public bool RejectSetText;
+    /// <summary>A table: its cells are <see cref="Children"/> in row-major order, <see cref="Columns"/> per row.</summary>
+    public int? Columns;
+    /// <summary>Header cell names of a table (null: no column header).</summary>
+    public string[]? Header;
 
     public FakeNode Add(params FakeNode[] kids)
     {
@@ -182,6 +186,34 @@ internal sealed class FakeJabAccess(FakeNode root, nint hwnd = 0x1234) : IJabAcc
         return NodeOf(h).VirtualName;
     }
 
+    public JabWindowDiagnosis Diagnose(nint hwnd, int pid) =>
+        new(JabStage.NoHello, $"fake: pid {pid} never said hello", pid, Hwnd, null, null, null, false, 4000, []);
+
+    public JabTableInfo? GetTableInfo(JabHandle h)
+    {
+        var n = NodeOf(h);
+        if (n.Columns is not { } cols || cols <= 0) return null;
+        return new JabTableInfo(n.Children.Count / cols, cols, NewHandle(n));
+    }
+
+    /// <summary>The header as a one-row table whose cells are label nodes made on the fly.</summary>
+    public JabTableInfo? GetTableColumnHeader(JabHandle h)
+    {
+        var n = NodeOf(h);
+        if (n.Columns is not { } cols || n.Header is null) return null;
+        var header = new FakeNode("table") { Columns = cols };
+        header.Children.AddRange(n.Header.Select(name => new FakeNode("label", name)));
+        return new JabTableInfo(1, cols, NewHandle(header));
+    }
+
+    public JabHandle? GetTableCell(JabHandle table, int row, int column)
+    {
+        var n = NodeOf(table);
+        if (n.Columns is not { } cols || row < 0 || column < 0 || column >= cols) return null;
+        var i = row * cols + column;
+        return i < n.Children.Count ? NewHandle(n.Children[i]) : null;
+    }
+
     public JabVersionInfo? GetVersion(int vmId) => new("fake 1.8.0", "fake", "fake");
     public JabVersionInfo? GetVersionForWindow(nint hwnd) => IsJavaWindow(hwnd) ? GetVersion(0) : null;
     public JabLayout? LayoutForWindow(nint hwnd) => IsJavaWindow(hwnd) ? JabLayout.Wide : null;
@@ -208,6 +240,12 @@ internal sealed class FakeJabBridge(FakeJabAccess access, bool available = true,
 /// <summary>The fixture-shaped tree the unit tests share (see SwingFixture.java).</summary>
 internal static class FakeTrees
 {
+    /// <summary>A two-row table like the connection list of a launcher: name, port and an "active" check box per row.</summary>
+    public static FakeNode Table(string? name = "Connections") =>
+        new FakeNode("table", name, x: 100, y: 300, w: 300, h: 60) { Columns = 3, Header = ["Name", "Port", "Active"] }.Add(
+            new FakeNode("label", "alpha"), new FakeNode("label", "8080"), new FakeNode("check box", states: "enabled,visible,showing,checked"),
+            new FakeNode("label", "beta"), new FakeNode("label", "9090"), new FakeNode("check box"));
+
     public static FakeNode Fixture()
     {
         var save = new FakeNode("menu item", "Save", "enabled,visible").With(actions: ["click"]);
