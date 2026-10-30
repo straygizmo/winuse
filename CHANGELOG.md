@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Added
+
+- winuse-gate plugin: the `winuse-operator` subagent (`plugins/winuse-gate/agents/winuse-operator.md`). The main conversation hands it the window and the goal; it reads trees and screenshots, drives the app and runs the assertions in its own context, and returns a short text report, so the main context is not filled with UI dumps. Its passing assertions count for the gate. The `winuse-e2e` skill now delegates the driving to it. Plugin version 0.2.0.
+
 ## 0.2.6 - 2026-10-30
 
 Added
