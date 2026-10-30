@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+Added
+
+- `select_item` reads the selection back after acting and reports it: `item` (the label that was matched and acted on), `selected` (what the container reports as selected afterwards), `method` (`mouse`, `selection` or `dom`) and `outcome`. `done` means the read-back named the item. A read-back that names another item is an error quoting what is selected (`Selected 'Two' in ComboBox (ref u5), but afterwards it reports 'One' as selected`), so a success result always means the item is selected. `outcome: "unknown"` with `note` means the container exposes no way to read its selection (no UIA Selection / Value pattern or SelectionItem state, no Java AccessibleSelection): the request was delivered but not confirmed. UIA reads the container's Selection pattern, the item's SelectionItem state and, for a combo box, its Value pattern (Qt and Win32 expose the current text there); Java reads AccessibleSelection (a combo box answers with its popup list's item); the DOM reads the selected option's label. The read-back is retried for about half a second before a mismatch is reported.
+
+Fixed
+
+- `select_item` on a UIA combo box clicks the item in the open popup, the way a user commits it, instead of selecting it through the SelectionItem pattern and collapsing the popup: Win32 and Qt combo boxes keep their old value after the pattern path (the collapse cancels the pending choice), which previous versions reported as success. The pattern path is still tried when the item cannot be clicked (not on screen) or when the click does not take, and lists, tabs and trees keep the pattern path first with the click as the fallback.
+
 ## 0.2.6 - 2026-10-30
 
 Added

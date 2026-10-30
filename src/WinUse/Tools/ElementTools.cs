@@ -31,15 +31,17 @@ public sealed class ElementTools
             async r => new { method = await ctx.Java.SetTextAsync(r.Id, text, ParseTextEntry(method)) });
 
     [McpServerTool(Name = "select_item", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Select an item by its label in a list, combo box, tab or tree (UIA), or an <option> by label in a <select> (DOM).")]
+    [Description("Select an item by its label in a list, combo box, tab or tree (UIA, Java), or an <option> by label in a <select> (DOM), then read the selection back and report it: item is the label that was matched and acted on, selected what the container reports as selected afterwards, outcome \"done\" when they agree. A read-back that names another item (the app refused or changed the selection) is an error that quotes what is selected, so a success result always means the item is selected. outcome \"unknown\" (with note) means the container exposes no way to read its selection (no UIA Selection / Value pattern or SelectionItem state, no AccessibleSelection): the request was delivered but not confirmed; read the element or take a screenshot. The read-back is retried for about half a second before a mismatch is reported, for apps that update the selection asynchronously.")]
     public static Task<CallToolResult> SelectItem(
         ToolContext ctx,
         [Description("Element ref (u{n}, j{n} or w{n}) of the container.")] string @ref,
         [Description("Item label (exact match preferred, then substring).")] string item) =>
         OnRef(ctx, "select_item", ToolContext.Args(("ref", @ref), ("item", item)), @ref,
-            r => ctx.Uia.SelectItemAsync(r.Id, item),
-            r => ctx.Web.SelectOptionAsync(r.Id, item),
-            r => ctx.Java.SelectItemAsync(r.Id, item));
+            async r => Describe(await ctx.Uia.SelectItemAsync(r.Id, item)),
+            async r => Describe(await ctx.Web.SelectOptionAsync(r.Id, item)),
+            async r => Describe(await ctx.Java.SelectItemAsync(r.Id, item)));
+
+    private static object Describe(SelectItemResult r) => new { method = r.Method, outcome = r.Outcome, item = r.Item, selected = r.Selected, note = r.Note };
 
     [McpServerTool(Name = "set_checked", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Set a check box / toggle / radio button to the given state.")]

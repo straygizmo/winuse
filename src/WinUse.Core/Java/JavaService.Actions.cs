@@ -181,32 +181,72 @@ public sealed partial class JavaService
 
     // ---- selection ------------------------------------------------------------------------------
 
-    /// <summary>Selects an item by label: through AccessibleSelection for lists / tabs / trees, by opening the popup and clicking for combo boxes.</summary>
-    public async Task SelectItemAsync(string refId, string item)
+    /// <summary>How long <see cref="SelectItemAsync"/> keeps re-reading the selection before calling it a mismatch.</summary>
+    public static readonly TimeSpan SelectReadBackWindow = TimeSpan.FromMilliseconds(600);
+    private static readonly TimeSpan SelectReadBackStep = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>
+    /// Selects an item by label: through AccessibleSelection for lists / tabs / trees, by opening the popup and clicking
+    /// for combo boxes. The selection is then read back through AccessibleSelection (a combo box answers with the item
+    /// of its popup list) until it names the item or <see cref="SelectReadBackWindow"/> passes, which is a mismatch
+    /// error; a container without AccessibleSelection gives <c>unknown</c>.
+    /// </summary>
+    public async Task<SelectItemResult> SelectItemAsync(string refId, string item)
     {
         ArgumentNullException.ThrowIfNull(item);
         var h = await LiveAsync(refId).ConfigureAwait(false);
         var parentRole = ParentRoleOf(refId);
-        var (ct, children) = await bridge.RunAsync(jab =>
+        var (ct, children, hasSelection) = await bridge.RunAsync(jab =>
         {
             var i = jab.GetInfo(h) ?? throw new InvalidOperationException($"Element for ref '{refId}' is gone.");
             var type = JavaRoleMap.ControlTypeOf(i.Role, parentRole);
-            return (type, type == "ComboBox" ? [] : ChildNames(jab, h, i));
+            return (type, type == "ComboBox" ? [] : ChildNames(jab, h, i), i.HasSelection);
         }).ConfigureAwait(false);
 
+        string? name;
+        var method = ct == "ComboBox" ? SelectPath.Mouse : SelectPath.Selection;
         if (ct == "ComboBox")
         {
-            await SelectComboItemAsync(refId, h, item).ConfigureAwait(false);
-            return;
+            name = await SelectComboItemAsync(refId, h, item).ConfigureAwait(false);
         }
-        var index = MatchIndex(children, item);
-        if (index < 0) throw new InvalidOperationException($"Item '{item}' not found in {ct} (ref {refId}).");
-        await bridge.RunAsync(jab =>
+        else
         {
-            jab.ClearSelection(h);
-            jab.AddSelection(h, index);
-            return 0;
-        }).ConfigureAwait(false);
+            var index = MatchIndex(children, item);
+            if (index < 0) throw new InvalidOperationException($"Item '{item}' not found in {ct} (ref {refId}).");
+            name = children[index];
+            await bridge.RunAsync(jab =>
+            {
+                jab.ClearSelection(h);
+                jab.AddSelection(h, index);
+                return 0;
+            }).ConfigureAwait(false);
+        }
+        if (!hasSelection)
+            return SelectItemResult.Unverified(method, name, $"the {ct} has no AccessibleSelection");
+
+        var deadline = DateTime.UtcNow + SelectReadBackWindow;
+        while (true)
+        {
+            var selected = await bridge.RunAsync(jab => SelectedNames(jab, h)).ConfigureAwait(false);
+            if (selected.Contains(name)) return SelectItemResult.Did(method, name, name);
+            if (DateTime.UtcNow >= deadline)
+                throw SelectItemResult.Mismatch(refId, ct, name, selected.Count == 0 ? null : string.Join(", ", selected.Select(n => n ?? "")));
+            await Task.Delay(SelectReadBackStep).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Names of the children AccessibleSelection reports as selected.</summary>
+    private static List<string?> SelectedNames(IJabAccess jab, JabHandle h)
+    {
+        var names = new List<string?>();
+        var count = jab.GetSelectionCount(h);
+        for (var i = 0; i < count; i++)
+        {
+            if (jab.GetSelection(h, i) is not { } c) { names.Add(null); continue; }
+            try { names.Add(jab.GetInfo(c) is { } ci ? JavaTreeBuilder.NameOf(jab, c, ci, JavaRoleMap.ControlTypeOf(ci.Role, null)) : null); }
+            finally { jab.Release(c); }
+        }
+        return names;
     }
 
     private static List<string?> ChildNames(IJabAccess jab, JabHandle h, JabContextInfo info)
@@ -235,7 +275,7 @@ public sealed partial class JavaService
     /// Swing's combo popup does not commit through AccessibleSelection: open it (<c>togglePopup</c>), find the now
     /// showing list item by name anywhere in the window and click its centre; Escape closes the popup on failure.
     /// </summary>
-    private async Task SelectComboItemAsync(string refId, JabHandle combo, string item)
+    private async Task<string?> SelectComboItemAsync(string refId, JabHandle combo, string item)
     {
         var items = await OpenComboPopupAsync(refId, combo).ConfigureAwait(false);
         var hit = items.FirstOrDefault(x => x.Name == item)
@@ -246,6 +286,7 @@ public sealed partial class JavaService
             throw new InvalidOperationException($"Item '{item}' not found in ComboBox (ref {refId}).");
         }
         await ClickAt(hit.Rect.X + hit.Rect.Width / 2, hit.Rect.Y + hit.Rect.Height / 2).ConfigureAwait(false);
+        return hit.Name;
     }
 
     private sealed record PopupItem(string? Name, Rect Rect);

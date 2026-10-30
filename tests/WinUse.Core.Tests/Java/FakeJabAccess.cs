@@ -18,6 +18,8 @@ internal sealed class FakeNode(string role, string? name = null, string states =
     public string? VirtualName;
     public bool HasSelection;
     public List<int> Selected = [];
+    /// <summary>A combo box: the list whose items <see cref="Selected"/> indexes (Swing answers AccessibleSelection from the popup list).</summary>
+    public FakeNode? SelectionList;
     public bool RejectSetText;
     /// <summary>A table: its cells are <see cref="Children"/> in row-major order, <see cref="Columns"/> per row.</summary>
     public int? Columns;
@@ -74,6 +76,8 @@ internal sealed class FakeJabAccess(FakeNode root, nint hwnd = 0x1234) : IJabAcc
     public List<(FakeNode Node, string Action)> Actions { get; } = [];
     public List<(FakeNode Node, int Index)> Selections { get; } = [];
     public List<FakeNode> Cleared { get; } = [];
+    /// <summary>Side effect of <see cref="AddSelection"/>, after the node's selection was updated (an app that vetoes the change).</summary>
+    public Action<FakeNode, int>? OnSelect { get; set; }
     public List<FakeNode> Focused { get; } = [];
     /// <summary>Side effect of an action; return false to make the bridge report failure.</summary>
     public Func<FakeNode, string, bool>? OnAction { get; set; }
@@ -181,6 +185,7 @@ internal sealed class FakeJabAccess(FakeNode root, nint hwnd = 0x1234) : IJabAcc
         var n = NodeOf(h);
         n.Selected.Add(index);
         Selections.Add((n, index));
+        OnSelect?.Invoke(n, index);
     }
 
     public void ClearSelection(JabHandle h)
@@ -193,10 +198,14 @@ internal sealed class FakeJabAccess(FakeNode root, nint hwnd = 0x1234) : IJabAcc
     public JabHandle? GetSelection(JabHandle h, int index)
     {
         var n = NodeOf(h);
-        return index < n.Selected.Count && n.Selected[index] < n.Children.Count ? NewHandle(n.Children[n.Selected[index]]) : null;
+        var items = SelectionItemsOf(n);
+        return index < n.Selected.Count && n.Selected[index] < items.Count ? NewHandle(items[n.Selected[index]]) : null;
     }
 
     public int GetSelectionCount(JabHandle h) => NodeOf(h).Selected.Count;
+
+    /// <summary>The nodes <see cref="FakeNode.Selected"/> indexes: the node's children, or its popup list's items for a combo box (as Swing's AccessibleJComboBox answers).</summary>
+    private static List<FakeNode> SelectionItemsOf(FakeNode n) => n.SelectionList?.Children ?? n.Children;
 
     public string? GetVirtualName(JabHandle h)
     {

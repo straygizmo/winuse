@@ -12,6 +12,7 @@ internal sealed class StubbornWindowFixture : IDisposable
     private const uint WM_CLOSE = 0x0010, WM_DESTROY = 0x0002, WM_ACTIVATE = 0x0006, WM_SETFOCUS = 0x0007, WM_APP_DESTROY = 0x8000 + 7;
     private const uint WS_OVERLAPPEDWINDOW = 0x00CF0000, WS_VISIBLE = 0x10000000, WS_CHILD = 0x40000000;
     private const uint ES_MULTILINE = 0x0004, ES_AUTOVSCROLL = 0x0040;
+    private const uint CBS_DROPDOWNLIST = 0x0003, WS_VSCROLL = 0x00200000, CB_ADDSTRING = 0x0143, CB_GETCURSEL = 0x0147, CB_SETCURSEL = 0x014E;
 
     private delegate nint WndProc(nint hwnd, uint msg, nint wParam, nint lParam);
 
@@ -40,6 +41,8 @@ internal sealed class StubbornWindowFixture : IDisposable
     [DllImport("user32.dll")] private static extern nint DispatchMessageW(ref MSG msg);
     [DllImport("user32.dll")] private static extern nint SetFocus(nint hwnd);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowTextW(nint hwnd, System.Text.StringBuilder text, int max);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern nint SendMessageW(nint hwnd, uint msg, nint wParam, string lParam);
+    [DllImport("user32.dll")] private static extern nint SendMessageW(nint hwnd, uint msg, nint wParam, nint lParam);
 
     /// <summary>The current text of the EDIT control.</summary>
     public string EditText
@@ -52,8 +55,14 @@ internal sealed class StubbornWindowFixture : IDisposable
         }
     }
 
+    /// <summary>The items of the combo box, when the fixture was created with one.</summary>
+    public static readonly string[] ComboItems = ["One", "Two", "Three"];
+
+    /// <summary>The index of the combo box's current selection (-1: none).</summary>
+    public int ComboSelection => (int)SendMessageW(Combo, CB_GETCURSEL, 0, 0);
+
     private static int _n;
-    private readonly bool _refuseClose, _withEdit;
+    private readonly bool _refuseClose, _withEdit, _withCombo;
     private readonly WndProc _proc; // kept alive for the window's lifetime
     private readonly Thread _thread;
     private readonly ManualResetEventSlim _ready = new();
@@ -61,14 +70,18 @@ internal sealed class StubbornWindowFixture : IDisposable
     public nint Hwnd { get; private set; }
     /// <summary>The EDIT control, when the fixture was created with one.</summary>
     public nint Edit { get; private set; }
+    /// <summary>The drop-down list COMBOBOX control, when the fixture was created with one.</summary>
+    public nint Combo { get; private set; }
     public string Title { get; }
 
     /// <param name="refuseClose">true: WM_CLOSE is ignored (a save prompt keeps the window); false: WM_CLOSE destroys the window like a plain app.</param>
     /// <param name="withEdit">Add a multi-line EDIT control that receives the focus whenever the window is activated.</param>
-    public StubbornWindowFixture(bool refuseClose = true, bool withEdit = false)
+    /// <param name="withCombo">Add a drop-down list COMBOBOX holding <see cref="ComboItems"/>, the first one selected.</param>
+    public StubbornWindowFixture(bool refuseClose = true, bool withEdit = false, bool withCombo = false)
     {
         _refuseClose = refuseClose;
         _withEdit = withEdit;
+        _withCombo = withCombo;
         Title = $"winuse stubborn {Environment.ProcessId}-{Interlocked.Increment(ref _n)}";
         _proc = Proc;
         _thread = new Thread(Loop) { IsBackground = true, Name = "stubborn-window" };
@@ -100,6 +113,12 @@ internal sealed class StubbornWindowFixture : IDisposable
         {
             Edit = CreateWindowExW(0, "EDIT", "", WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL, 10, 10, 260, 120, Hwnd, 0, 0, 0);
             SetFocus(Edit);
+        }
+        if (_withCombo && Hwnd != 0)
+        {
+            Combo = CreateWindowExW(0, "COMBOBOX", "", WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 10, _withEdit ? 140 : 10, 200, 150, Hwnd, 0, 0, 0);
+            foreach (var item in ComboItems) SendMessageW(Combo, CB_ADDSTRING, 0, item);
+            SendMessageW(Combo, CB_SETCURSEL, 0, 0);
         }
         _ready.Set();
         while (GetMessageW(out var msg, 0, 0, 0) > 0)

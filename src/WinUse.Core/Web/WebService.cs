@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text.Json;
 using Microsoft.Playwright;
 using InputButton = WinUse.Core.Input.MouseButton;
+using WinUse.Core.Input;
 using WinUse.Core.Refs;
 using WinUse.Core.Windows;
 
@@ -232,11 +233,27 @@ public sealed class WebService(RefRegistry refs) : IAsyncDisposable
         }
     }
 
-    public async Task SelectOptionAsync(string refId, string label)
+    /// <summary>Selects the option by label and reads the select's current option label back; a different label is a mismatch error.</summary>
+    public async Task<SelectItemResult> SelectOptionAsync(string refId, string label)
     {
         var (page, sel) = Target(refId);
-        await page.Locator(sel).SelectOptionAsync(new SelectOptionValue { Label = label },
+        var locator = page.Locator(sel);
+        await locator.SelectOptionAsync(new SelectOptionValue { Label = label },
             new LocatorSelectOptionOptions { Timeout = ActionTimeoutMs });
+        string? selected;
+        try
+        {
+            selected = await locator.EvaluateAsync<string?>(
+                "el => el.selectedIndex >= 0 && el.options ? (el.options[el.selectedIndex].label || el.options[el.selectedIndex].text) : null");
+        }
+        catch (Exception ex)
+        {
+            return SelectItemResult.Unverified(SelectPath.Dom, label, $"reading the selected option failed: {ex.Message}");
+        }
+        if (selected is null) return SelectItemResult.Unverified(SelectPath.Dom, label, "the element reports no selected option");
+        if (selected == label || string.Equals(selected.Trim(), label.Trim(), StringComparison.OrdinalIgnoreCase))
+            return SelectItemResult.Did(SelectPath.Dom, label, selected);
+        throw SelectItemResult.Mismatch(refId, "select", label, selected);
     }
 
     public async Task<string> GetTextAsync(string refId)

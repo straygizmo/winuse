@@ -271,4 +271,31 @@ public sealed class DesktopToolTests : IDisposable
             File.Delete(file);
         }
     }
+    [Fact, Trait("Category", "Integration")]
+    public async Task SelectItem_Combo_ReadsTheSelectionBack()
+    {
+        using var win = new StubbornWindowFixture(withCombo: true);
+        var refId = ctx.RegisterWindow((await ctx.Windows.ListAsync()).Single(w => w.Hwnd == win.Hwnd)).Id;
+        var tree = await Run(ObserveTools.GetUiTree(ctx, window: refId, control_type: "combobox", compact: true));
+        Assert.True(tree.Ok, tree.Error);
+        var combo = tree.Result["tree"]!["children"]!.AsArray().Single()!["ref"]!.GetValue<string>();
+        Assert.Equal(0, win.ComboSelection);
+
+        var two = await Run(ElementTools.SelectItem(ctx, combo, "Two"));
+        Assert.True(two.Ok, two.Error);
+        Assert.Equal(("done", "Two", "Two"), (two.Result["outcome"]!.GetValue<string>(), two.Result["item"]!.GetValue<string>(), two.Result["selected"]!.GetValue<string>()));
+        // A Win32 combo box keeps its old value when the item is selected through the pattern and the popup collapsed: the click commits it.
+        Assert.Equal("mouse", two.Result["method"]!.GetValue<string>());
+        Assert.Equal(1, win.ComboSelection);
+
+        // A substring picks the item and the result names the full label; the window keeps its place for the next test.
+        var three = await Run(ElementTools.SelectItem(ctx, combo, "thr"));
+        Assert.True(three.Ok, three.Error);
+        Assert.Equal(("done", "Three"), (three.Result["outcome"]!.GetValue<string>(), three.Result["item"]!.GetValue<string>()));
+        Assert.Equal(2, win.ComboSelection);
+
+        var missing = await Run(ElementTools.SelectItem(ctx, combo, "Four"));
+        Assert.False(missing.Ok);
+        Assert.Contains("not found", missing.Error);
+    }
 }

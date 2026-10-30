@@ -305,31 +305,172 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
         return TextEntryPath.Keyboard;
     }
 
-    public Task SelectItemAsync(string refId, string item) => WithAsync(refId, el =>
+    /// <summary>How long <see cref="SelectItemAsync"/> keeps re-reading the selection before calling it a mismatch.</summary>
+    public static readonly TimeSpan SelectReadBackWindow = TimeSpan.FromMilliseconds(600);
+    private static readonly TimeSpan SelectReadBackStep = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>
+    /// Selects the item by label (exact, then substring) and reads the container's selection back: the container's
+    /// Selection pattern, the item's SelectionItem state and, for a combo box (Qt / Win32 / WPF expose the current text
+    /// there), the Value pattern. A combo box item is clicked with the mouse while the popup is open, the way a user
+    /// commits it (selecting it through the SelectionItem pattern and collapsing the popup leaves Win32 and Qt combo
+    /// boxes on their old value); a list / tab / tree item goes through its SelectionItem pattern. When the read-back
+    /// does not name the item within <see cref="SelectReadBackWindow"/> the other path is tried; a read-back that still
+    /// names something else fails with the value seen. A container with no readable selection gives <c>unknown</c>.
+    /// </summary>
+    public async Task<SelectItemResult> SelectItemAsync(string refId, string item)
     {
-        var type = UiaLocatorResolver.TypeOf(el);
+        var el = await LiveAsync(refId).ConfigureAwait(false);
+        var type = await d.RunAsync(() => UiaLocatorResolver.TypeOf(el)).ConfigureAwait(false);
         var combo = type == "ComboBox";
-        if (combo) el.Patterns.ExpandCollapse.PatternOrDefault?.Expand();
-        try
+        string? seen = null, name = null;
+        var acted = false;
+        foreach (var method in combo ? new[] { SelectPath.Mouse, SelectPath.Selection } : new[] { SelectPath.Selection, SelectPath.Mouse })
+        {
+            if (combo && method == SelectPath.Mouse)
+            {
+                // The popup must be in front of everything for the click to land on it.
+                var loc = (UiaLocator)GetRef(refId).Locator;
+                if (await windows.FindAsync(loc.Window).ConfigureAwait(false) is { } w) await windows.ActivateAsync(w.Hwnd).ConfigureAwait(false);
+            }
+            var target = await FindItemAsync(refId, el, type, combo, item).ConfigureAwait(false);
+            name = target.Name;
+            bool done;
+            try
+            {
+                done = method == SelectPath.Mouse
+                    ? await ClickItemAsync(target.Element).ConfigureAwait(false)
+                    : await d.RunAsync(() => SelectThroughPattern(target.Element)).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (combo) await d.RunAsync(() => { try { el.Patterns.ExpandCollapse.PatternOrDefault?.Collapse(); } catch { } return 0; }).ConfigureAwait(false);
+            }
+            if (!done) continue;
+            acted = true;
+
+            var deadline = DateTime.UtcNow + SelectReadBackWindow;
+            while (true)
+            {
+                var (confirmed, value, readable) = await d.RunAsync(() => ReadSelection(el, target.Element, name, combo)).ConfigureAwait(false);
+                if (confirmed) return SelectItemResult.Did(method, name, value);
+                if (!readable)
+                    return SelectItemResult.Unverified(method, name, $"the {type} exposes no Selection or Value pattern and the item no SelectionItem state");
+                seen = value;
+                if (DateTime.UtcNow >= deadline) break;
+                await Task.Delay(SelectReadBackStep).ConfigureAwait(false);
+            }
+        }
+        if (!acted) throw new InvalidOperationException($"Item '{item}' in {type} (ref {refId}) can be neither selected through a pattern nor clicked.");
+        throw SelectItemResult.Mismatch(refId, type, name, seen);
+    }
+
+    /// <summary>Opens a combo box's popup (and lets it settle) and finds the item by label: exact first, then a case-insensitive substring.</summary>
+    private async Task<(AutomationElement Element, string? Name)> FindItemAsync(string refId, AutomationElement el, string type, bool combo, string item)
+    {
+        if (combo)
+        {
+            await d.RunAsync(() => { el.Patterns.ExpandCollapse.PatternOrDefault?.Expand(); return 0; }).ConfigureAwait(false);
+            await Task.Delay(ComboPopupDelay).ConfigureAwait(false);
+        }
+        return await d.RunAsync(() =>
         {
             var candidates = el.FindAllDescendants(cf => cf.ByControlType(ControlType.ListItem))
                 .Concat(el.FindAllDescendants(cf => cf.ByControlType(ControlType.TabItem)))
                 .Concat(el.FindAllDescendants(cf => cf.ByControlType(ControlType.TreeItem)))
                 .ToList();
             var target = candidates.FirstOrDefault(c => UiaLocatorResolver.NameOf(c) == item)
-                ?? candidates.FirstOrDefault(c => (UiaLocatorResolver.NameOf(c) ?? "").Contains(item, StringComparison.OrdinalIgnoreCase))
-                ?? throw new InvalidOperationException($"Item '{item}' not found in {type} (ref {refId}).");
-            var sp = target.Patterns.SelectionItem.PatternOrDefault;
-            if (sp is not null) sp.Select();
-            else if (target.Patterns.Invoke.PatternOrDefault is { } inv) inv.Invoke();
-            else target.Click();
-            return true;
-        }
-        finally
+                ?? candidates.FirstOrDefault(c => (UiaLocatorResolver.NameOf(c) ?? "").Contains(item, StringComparison.OrdinalIgnoreCase));
+            if (target is null)
+            {
+                if (combo) try { el.Patterns.ExpandCollapse.PatternOrDefault?.Collapse(); } catch { }
+                throw new InvalidOperationException($"Item '{item}' not found in {type} (ref {refId}).");
+            }
+            return (target, UiaLocatorResolver.NameOf(target));
+        }).ConfigureAwait(false);
+    }
+
+    /// <summary>How long a combo box popup gets to appear after Expand before its items are read and clicked.</summary>
+    public static readonly TimeSpan ComboPopupDelay = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>SelectionItem.Select, else Invoke; false when the item supports neither.</summary>
+    private static bool SelectThroughPattern(AutomationElement target)
+    {
+        if (target.Patterns.SelectionItem.PatternOrDefault is { } sp) { sp.Select(); return true; }
+        if (target.Patterns.Invoke.PatternOrDefault is { } inv) { inv.Invoke(); return true; }
+        return false;
+    }
+
+    /// <summary>Scrolls the item into view when it can be and clicks its centre; false when none of it is on screen.</summary>
+    private async Task<bool> ClickItemAsync(AutomationElement target)
+    {
+        var rect = await d.RunAsync(() =>
         {
-            if (combo) try { el.Patterns.ExpandCollapse.PatternOrDefault?.Collapse(); } catch { }
+            if (Safe(() => target.Properties.IsOffscreen.ValueOrDefault, false))
+                try { target.Patterns.ScrollItem.PatternOrDefault?.ScrollIntoView(); } catch { }
+            return Safe(() => target.Properties.IsOffscreen.ValueOrDefault, false) ? default : RectOf(target);
+        }).ConfigureAwait(false);
+        if (rect.Width <= 0 || rect.Height <= 0) return false;
+        await _input.ClickAsync(rect.X + rect.Width / 2, rect.Y + rect.Height / 2).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>
+    /// What the container says is selected. <c>confirmed</c> when some source names <paramref name="name"/> (or the very
+    /// item element); <c>seen</c> is the best other answer (null: the item is reported as not selected, or nothing is
+    /// readable); <c>readable</c> is false when no source answered at all.
+    /// </summary>
+    private static (bool Confirmed, string? Seen, bool Readable) ReadSelection(AutomationElement container, AutomationElement target, string? name, bool combo)
+    {
+        string? seen = null;
+        var readable = false;
+        try
+        {
+            if (container.Patterns.Selection.PatternOrDefault?.Selection.ValueOrDefault is { } chosen)
+            {
+                var names = chosen.Select(UiaLocatorResolver.NameOf).ToList();
+                if (chosen.Any(c => SameElement(c, target)) || names.Contains(name)) return (true, name, true);
+                if (names.Count > 0) { seen = string.Join(", ", names.Select(n => n ?? "")); readable = true; }
+            }
         }
-    });
+        catch { }
+        try
+        {
+            // Combo boxes are read through their Value pattern (Qt: the current text; Win32 / WPF too). Other containers
+            // expose a Value as well on some toolkits (Qt gives every control one), so there it only counts when set.
+            if (container.Patterns.Value.PatternOrDefault?.Value.ValueOrDefault is { } value && (combo || value.Length > 0))
+            {
+                if (name is not null && Matches(value, name)) return (true, value, true);
+                seen ??= value;
+                readable = true;
+            }
+        }
+        catch { }
+        try
+        {
+            if (target.Patterns.SelectionItem.PatternOrDefault is { } si)
+            {
+                if (si.IsSelected.ValueOrDefault) return (true, name, true);
+                readable = true;
+            }
+        }
+        catch { }
+        return (false, seen, readable);
+    }
+
+    private static bool Matches(string value, string name) =>
+        value == name || string.Equals(value.Trim(), name.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private static bool SameElement(AutomationElement a, AutomationElement b)
+    {
+        try
+        {
+            var ra = a.Properties.RuntimeId.ValueOrDefault;
+            var rb = b.Properties.RuntimeId.ValueOrDefault;
+            return ra is { Length: > 0 } && rb is { Length: > 0 } && ra.SequenceEqual(rb);
+        }
+        catch { return false; }
+    }
 
     public Task SetCheckedAsync(string refId, bool on) => WithAsync(refId, el =>
     {
