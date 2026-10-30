@@ -120,14 +120,14 @@ public class JavaTreeBuilderTests
     public void Build_ClipsToTheWindow_WhenTheLayoutOverflowsIt()
     {
         // The window shrank (a resolution change) and the layout did not follow: a button sits below the bottom edge.
-        var root = new FakeNode("frame", "F", x: 0, y: 0, w: 1022, h: 718).Add(
-            new FakeNode("panel", x: 0, y: 0, w: 1022, h: 1040).Add(
-                new FakeNode("push button", "START", x: 11, y: 720, w: 80, h: 19).With(actions: ["click"]),
-                new FakeNode("push button", "STOP", x: 11, y: 600, w: 80, h: 19).With(actions: ["click"])));
+        var root = new FakeNode("frame", "F", x: 0, y: 0, w: 1000, h: 700).Add(
+            new FakeNode("panel", x: 0, y: 0, w: 1000, h: 1200).Add(
+                new FakeNode("push button", "Below", x: 10, y: 750, w: 80, h: 20).With(actions: ["click"]),
+                new FakeNode("push button", "Above", x: 10, y: 500, w: 80, h: 20).With(actions: ["click"])));
         var (tree, _, _, _, _) = Build(root);
-        Assert.Equal(["STOP"], tree.Children.Select(c => c.Name));
+        Assert.Equal(["Above"], tree.Children.Select(c => c.Name));
         var (all, _, _, _, _) = Build(root, new TreeOptions(IncludeOffscreen: true));
-        Assert.True(Find(all, "Button", "START")!.Offscreen);
+        Assert.True(Find(all, "Button", "Below")!.Offscreen);
     }
 
     [Fact]
