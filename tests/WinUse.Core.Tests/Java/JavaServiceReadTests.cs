@@ -252,6 +252,22 @@ public class JavaServiceReadTests
     }
 
     [Fact]
+    public async Task GetTreeWithStatus_ReportsTheDepthLimit_AndUnreadableNodes()
+    {
+        var root = new FakeNode("frame", "WinUse Swing Fixture", x: 100, y: 100, w: 640, h: 480).Add(
+            new FakeNode("panel", "Named", x: 100, y: 100, w: 600, h: 400).Add(
+                new FakeNode("push button", "Go", x: 100, y: 100, w: 10, h: 10).With(actions: ["click"]),
+                new FakeNode("push button", "Lost", x: 100, y: 100, w: 10, h: 10) { NoInfo = true }.With(actions: ["click"])));
+        using var h = new JavaServiceHarness(root);
+        var full = await h.Service.GetTreeWithStatusAsync(JavaServiceHarness.Hwnd, new TreeOptions());
+        Assert.False(full.DepthLimitReached);
+        Assert.Equal(1, full.UnreadableNodes);
+        var cut = await h.Service.GetTreeWithStatusAsync(JavaServiceHarness.Hwnd, new TreeOptions(MaxDepth: 1));
+        Assert.True(cut.DepthLimitReached);
+        Assert.False(cut.NodeLimitReached);
+    }
+
+    [Fact]
     public async Task GetTree_WithoutReadValues_LeavesEveryValueNull()
     {
         using var h = new JavaServiceHarness();
@@ -281,9 +297,9 @@ public class JavaServiceReadTests
         {
             var before = h.Jab.LiveHandles;
             var t = await h.Service.GetTableAsync(id);
-            Assert.Equal(["Name", "Port", "Active"], t.Rows[0]);
-            Assert.Equal(["alpha", "8080", "true"], t.Rows[1]);
-            Assert.Equal(["beta", "9090", "false"], t.Rows[2]);
+            Assert.Equal<string?>(["Name", "Port", "Active"], t.Rows[0].AsEnumerable());
+            Assert.Equal<string?>(["alpha", "8080", "true"], t.Rows[1].AsEnumerable());
+            Assert.Equal<string?>(["beta", "9090", "false"], t.Rows[2].AsEnumerable());
             Assert.Equal(3, t.Rows.Length);
             Assert.Equal((2, 0), (t.RowCount, t.OmittedRows));
             Assert.Equal(before, h.Jab.LiveHandles);
@@ -298,12 +314,57 @@ public class JavaServiceReadTests
         {
             var t = await h.Service.GetTableAsync(id, 1);
             Assert.Equal(2, t.Rows.Length); // header + one row
-            Assert.Equal(["alpha", "8080", "true"], t.Rows[1]);
+            Assert.Equal<string?>(["alpha", "8080", "true"], t.Rows[1].AsEnumerable());
             Assert.Equal((2, 1), (t.RowCount, t.OmittedRows));
             var none = await h.Service.GetTableAsync(id, 0);
             Assert.Single(none.Rows);
             Assert.Equal((2, 2), (none.RowCount, none.OmittedRows));
         }
+    }
+
+    [Fact]
+    public async Task GetTable_WithoutHeader_NeverAsksForTheHeader_AndStillReportsTheCounts()
+    {
+        var (h, id) = await TableHarness();
+        using (h)
+        {
+            var before = h.Jab.LiveHandles;
+            var t = await h.Service.GetTableAsync(id, 0, includeHeader: false);
+            Assert.Empty(t.Rows);
+            Assert.Equal((2, 3, 2), (t.RowCount, t.ColumnCount, t.OmittedRows));
+            Assert.Equal(0, h.Jab.ColumnHeaderCalls);
+            Assert.Equal(before, h.Jab.LiveHandles);
+            var rows = await h.Service.GetTableAsync(id, includeHeader: false);
+            Assert.Equal<string?>(["alpha", "8080", "true"], rows.Rows[0].AsEnumerable());
+            Assert.Equal(2, rows.Rows.Length);
+            Assert.Equal(0, h.Jab.ColumnHeaderCalls);
+            var withHeader = await h.Service.GetTableAsync(id);
+            Assert.Equal(3, withHeader.ColumnCount);
+            Assert.Equal(1, h.Jab.ColumnHeaderCalls);
+        }
+    }
+
+    [Fact]
+    public async Task GetTable_CellTheBridgeCannotRead_IsNull_AndCounted()
+    {
+        var table = new FakeNode("table", "Connections", x: 100, y: 300, w: 300, h: 60) { Columns = 2, Header = ["Name", "Port"] }.Add(
+            new FakeNode("label", "alpha"), new FakeNode("label", "8080") { NoHandle = true },
+            new FakeNode("label", "beta") { NoInfo = true }, new FakeNode("label", ""));
+        var (h, id) = await TableHarness(table);
+        using (h)
+        {
+            var before = h.Jab.LiveHandles;
+            var t = await h.Service.GetTableAsync(id);
+            Assert.Equal<string?>(["Name", "Port"], t.Rows[0].AsEnumerable());
+            Assert.Equal<string?>(["alpha", null], t.Rows[1].AsEnumerable());
+            Assert.Equal<string?>([null, ""], t.Rows[2].AsEnumerable());
+            Assert.Equal(2, t.UnreadableCells);
+            Assert.Equal(before, h.Jab.LiveHandles);
+            var clean = await h.Service.GetTableAsync(id, 1);
+            Assert.Equal(1, clean.UnreadableCells);
+        }
+        var (h2, id2) = await TableHarness();
+        using (h2) Assert.Equal(0, (await h2.Service.GetTableAsync(id2)).UnreadableCells);
     }
 
     [Fact]

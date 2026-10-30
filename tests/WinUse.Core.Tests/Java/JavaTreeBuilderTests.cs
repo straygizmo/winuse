@@ -154,6 +154,39 @@ public class JavaTreeBuilderTests
         Assert.Empty(shallow.Children);
     }
 
+    [Fact]
+    public void Build_FlagsTheDepthLimit_OnlyWhenChildrenWereLeftOut()
+    {
+        var button = new FakeNode("push button", "Go").With(actions: ["click"]);
+        var root = new FakeNode("frame", "F").Add(new FakeNode("panel", "Named").Add(button));
+        var (_, full, _, _, _) = Build(root);
+        Assert.False(full.DepthLimitReached);
+        // Depth 1 lists the named pane but not its button.
+        var (tree, cut, _, _, _) = Build(root, new TreeOptions(MaxDepth: 1));
+        Assert.True(cut.DepthLimitReached);
+        Assert.Null(Find(tree, "Button", "Go"));
+        // A leaf at the limit has nothing to leave out.
+        var flat = new FakeNode("frame", "F").Add(button);
+        var (_, leaf, _, _, _) = Build(flat, new TreeOptions(MaxDepth: 1));
+        Assert.False(leaf.DepthLimitReached);
+        Assert.Equal(0, leaf.UnreadableNodes);
+    }
+
+    [Fact]
+    public void Build_CountsChildrenTheBridgeCouldNotRead_AndKeepsTheRest()
+    {
+        var root = new FakeNode("frame", "F").Add(new FakeNode("panel").Add(
+            new FakeNode("push button", "A").With(actions: ["click"]),
+            new FakeNode("push button", "B") { NoHandle = true }.With(actions: ["click"]),
+            new FakeNode("push button", "C") { NoInfo = true }.With(actions: ["click"]),
+            new FakeNode("push button", "D").With(actions: ["click"])));
+        var (tree, builder, jab, _, _) = Build(root);
+        Assert.Equal(2, builder.UnreadableNodes);
+        Assert.Equal(["A", "D"], tree.Children.Select(c => c.Name));
+        Assert.False(builder.DepthLimitReached);
+        Assert.Equal(3, jab.LiveHandles); // root, A, D
+    }
+
     private static IEnumerable<UiNode> Flatten(UiNode n) => new[] { n }.Concat(n.Children.SelectMany(Flatten));
 
     private static ElementRef Get(RefRegistry refs, string id) => refs.TryGet(id, out var r) ? r : throw new KeyNotFoundException(id);

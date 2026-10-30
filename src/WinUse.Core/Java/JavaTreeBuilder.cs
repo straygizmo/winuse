@@ -20,6 +20,12 @@ internal sealed class JavaTreeBuilder(IJabAccess jab, RefRegistry refs, WindowLo
     /// <summary>True when the walk stopped at <see cref="MaxNodes"/>.</summary>
     public bool Truncated { get; private set; }
 
+    /// <summary>True when an element at <c>max_depth</c> had children that were therefore not walked.</summary>
+    public bool DepthLimitReached { get; private set; }
+
+    /// <summary>Children skipped because the bridge handed out no handle or no context info for them.</summary>
+    public int UnreadableNodes { get; private set; }
+
     /// <param name="keepRoot">false when the caller already owns <paramref name="root"/> (a scope ref).</param>
     public UiNode BuildRoot(JabHandle root, IReadOnlyList<JavaPathSegment> basePath, bool keepRoot = true)
     {
@@ -37,7 +43,11 @@ internal sealed class JavaTreeBuilder(IJabAccess jab, RefRegistry refs, WindowLo
         int outDepth, Rect fallbackRect)
     {
         var result = new List<UiNode>();
-        if (outDepth >= opt.MaxDepth) return result;
+        if (outDepth >= opt.MaxDepth)
+        {
+            if (parentInfo.ChildrenCount > 0) DepthLimitReached = true;
+            return result;
+        }
         var counts = new Dictionary<(string, string?), int>();
         // JTable cells report neither "showing" nor a position through the bridge (their renderer component is never
         // displayed); they are visible whenever the table is and carry the table's rectangle.
@@ -45,10 +55,10 @@ internal sealed class JavaTreeBuilder(IJabAccess jab, RefRegistry refs, WindowLo
         for (var i = 0; i < parentInfo.ChildrenCount; i++)
         {
             if (_visited >= MaxNodes) { Truncated = true; break; }
-            if (jab.GetChild(parent, i) is not { } h) continue;
+            if (jab.GetChild(parent, i) is not { } h) { UnreadableNodes++; continue; }
             _visited++;
             var info = jab.GetInfo(h);
-            if (info is null) { jab.Release(h); continue; }
+            if (info is null) { UnreadableNodes++; jab.Release(h); continue; }
 
             var ct = JavaRoleMap.ControlTypeOf(info.Role, parentInfo.Role);
             var name = NameOf(jab, h, info, ct);

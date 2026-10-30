@@ -10,5 +10,8 @@ public sealed record UiNode(
 /// <param name="ReadValues">False to leave <see cref="UiNode.Value"/> null everywhere: the text of edit fields and the like is never read (nor logged).</param>
 public sealed record TreeOptions(string? ScopeRef = null, int MaxDepth = 12, bool InteractiveOnly = true, bool IncludeOffscreen = false, bool ReadValues = true);
 
-/// <summary>The rows read from a table (header first when there is one), the total number of data rows and how many of them were left out.</summary>
-public sealed record TableReadResult(string[][] Rows, int RowCount, int OmittedRows);
+/// <summary>
+/// A table read: the rows (header first when read), the dimensions of the whole table, how many data rows were left out
+/// and how many cells could not be read (those cells are null; an empty cell is "").
+/// </summary>
+public sealed record TableReadResult(string?[][] Rows, int RowCount, int ColumnCount, int OmittedRows, int UnreadableCells);

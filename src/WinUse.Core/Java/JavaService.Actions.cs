@@ -266,9 +266,11 @@ public sealed partial class JavaService
 
     /// <summary>
     /// Reads a Swing table (role <c>table</c>) through the table interface of the bridge: the column header as the first
-    /// row when the table has one, then the text of every cell, <paramref name="maxRows"/> data rows at most (null: all).
+    /// row when the table has one and <paramref name="includeHeader"/> asks for it (false never reads a header cell),
+    /// then the text of every cell, <paramref name="maxRows"/> data rows at most (null: all). A cell the bridge cannot
+    /// hand out or describe is null and counted in <see cref="TableReadResult.UnreadableCells"/>.
     /// </summary>
-    public async Task<TableReadResult> GetTableAsync(string refId, int? maxRows = null)
+    public async Task<TableReadResult> GetTableAsync(string refId, int? maxRows = null, bool includeHeader = true)
     {
         var h = await LiveAsync(refId).ConfigureAwait(false);
         return await bridge.RunAsync(jab =>
@@ -278,16 +280,21 @@ public sealed partial class JavaService
                 ?? throw new NotSupportedException($"Ref '{refId}' ({info.Role}) is not a table: get_table needs the ref of a Swing table (JTable).");
             try
             {
-                var rows = new List<string[]>();
-                if (ReadHeader(jab, h, table.ColumnCount) is { } header) rows.Add(header);
+                var rows = new List<string?[]>();
+                var unreadable = 0;
+                if (includeHeader && ReadHeader(jab, h, table.ColumnCount, ref unreadable) is { } header) rows.Add(header);
                 var limit = maxRows is { } m ? Math.Min(Math.Max(m, 0), table.RowCount) : table.RowCount;
                 for (var r = 0; r < limit; r++)
                 {
-                    var row = new string[table.ColumnCount];
-                    for (var c = 0; c < table.ColumnCount; c++) row[c] = CellText(jab, table.Table, r, c);
+                    var row = new string?[table.ColumnCount];
+                    for (var c = 0; c < table.ColumnCount; c++)
+                    {
+                        row[c] = CellText(jab, table.Table, r, c);
+                        if (row[c] is null) unreadable++;
+                    }
                     rows.Add(row);
                 }
-                return new TableReadResult(rows.ToArray(), table.RowCount, table.RowCount - limit);
+                return new TableReadResult(rows.ToArray(), table.RowCount, table.ColumnCount, table.RowCount - limit, unreadable);
             }
             finally
             {
@@ -296,23 +303,30 @@ public sealed partial class JavaService
         }).ConfigureAwait(false);
     }
 
-    /// <summary>The header cells of a table, or null when it has no column header or the header cells carry no text.</summary>
-    private static string[]? ReadHeader(IJabAccess jab, JabHandle table, int columns)
+    /// <summary>
+    /// The header cells of a table, or null when it has no column header or no header cell carries text. A header cell
+    /// the bridge cannot read is null and counted in <paramref name="unreadable"/> (when the header row is kept).
+    /// </summary>
+    private static string?[]? ReadHeader(IJabAccess jab, JabHandle table, int columns, ref int unreadable)
     {
         if (jab.GetTableColumnHeader(table) is not { } header) return null;
         try
         {
             if (header.RowCount <= 0 || header.ColumnCount <= 0) return null;
             var n = Math.Min(columns, header.ColumnCount);
-            var row = new string[columns];
+            var row = new string?[columns];
             var any = false;
+            var failed = 0;
             for (var c = 0; c < n; c++)
             {
                 row[c] = CellText(jab, header.Table, header.RowCount - 1, c);
-                any |= row[c].Length > 0;
+                if (row[c] is null) failed++;
+                any |= row[c] is { Length: > 0 };
             }
             for (var c = n; c < columns; c++) row[c] = "";
-            return any ? row : null;
+            if (!any) return null;
+            unreadable += failed;
+            return row;
         }
         finally
         {
@@ -320,13 +334,17 @@ public sealed partial class JavaService
         }
     }
 
-    /// <summary>The text of a cell: its accessible name (the rendered text), else its text, else its checked state or value.</summary>
-    private static string CellText(IJabAccess jab, JabHandle table, int row, int column)
+    /// <summary>
+    /// The text of a cell: its accessible name (the rendered text), else its text, else its checked state or value; ""
+    /// for a cell that carries none of these. Null when the bridge hands out no cell or no context info for it, so a
+    /// caller can tell a read failure from an empty cell.
+    /// </summary>
+    private static string? CellText(IJabAccess jab, JabHandle table, int row, int column)
     {
-        if (jab.GetTableCell(table, row, column) is not { } cell) return "";
+        if (jab.GetTableCell(table, row, column) is not { } cell) return null;
         try
         {
-            if (jab.GetInfo(cell) is not { } ci) return "";
+            if (jab.GetInfo(cell) is not { } ci) return null;
             if (!string.IsNullOrEmpty(ci.Name)) return ci.Name;
             if (ci.HasText && jab.GetText(cell, 500) is { Length: > 0 } t) return t;
             var ct = JavaRoleMap.ControlTypeOf(ci.Role, "table");

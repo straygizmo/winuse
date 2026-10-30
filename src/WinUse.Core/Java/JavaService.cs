@@ -8,10 +8,11 @@ using WinUse.Core.Windows;
 namespace WinUse.Core.Java;
 
 /// <summary>
-/// A Java window tree and whether the walk hit the node limit: <paramref name="NodeLimitReached"/> means elements past
-/// the first <paramref name="NodeLimit"/> bridge round trips are missing from <paramref name="Root"/>.
+/// A Java tree plus what the walk left out: it stopped at <paramref name="NodeLimit"/> bridge round trips, it dropped the
+/// children of an element at <c>max_depth</c>, or the bridge gave no handle / no info for <paramref name="UnreadableNodes"/>
+/// children (skipped). Any of these means the tree may be missing an element that exists.
 /// </summary>
-public sealed record JavaTreeResult(UiNode Root, bool NodeLimitReached, int NodeLimit);
+public sealed record JavaTreeResult(UiNode Root, bool NodeLimitReached, int NodeLimit, bool DepthLimitReached, int UnreadableNodes);
 
 /// <summary>
 /// Reads and operates Swing windows through Java Access Bridge with the same public surface as <see cref="UiaService"/>.
@@ -153,7 +154,7 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
 
     public async Task<UiNode> GetTreeAsync(nint hwnd, TreeOptions opt) => (await GetTreeWithStatusAsync(hwnd, opt).ConfigureAwait(false)).Root;
 
-    /// <summary>The tree plus whether the walk stopped at <see cref="JavaTreeBuilder.MaxNodes"/> bridge round trips.</summary>
+    /// <summary>The tree plus what the walk left out (node limit, depth limit, children the bridge could not read).</summary>
     public async Task<JavaTreeResult> GetTreeWithStatusAsync(nint hwnd, TreeOptions opt)
     {
         opt ??= new TreeOptions();
@@ -193,7 +194,9 @@ public sealed partial class JavaService(IJabBridge bridge, RefRegistry refs, Win
                 var tree = builder.BuildRoot(root, basePath, keepRoot: scope is null);
                 if (builder.Truncated)
                     _log.LogWarning("Java tree of window 0x{Hwnd:X} truncated at {Max} nodes", hwnd, JavaTreeBuilder.MaxNodes);
-                return new JavaTreeResult(tree, builder.Truncated, JavaTreeBuilder.MaxNodes);
+                if (builder.UnreadableNodes > 0)
+                    _log.LogWarning("Java tree of window 0x{Hwnd:X}: the bridge could not read {Count} child element(s)", hwnd, builder.UnreadableNodes);
+                return new JavaTreeResult(tree, builder.Truncated, JavaTreeBuilder.MaxNodes, builder.DepthLimitReached, builder.UnreadableNodes);
             }
             finally
             {

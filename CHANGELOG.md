@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+Added
+
+- `get_table` takes `include_header: false`: the column header is never read (no bridge call, nothing in the result or the log) and `rows` holds data rows only. The result always carries `column_count`, so `max_rows: 0, include_header: false` returns the table size alone.
+- `get_table` tells a read failure from an empty cell: a cell the Java Access Bridge (or UIA) could not hand out or describe is `null` instead of `""`, and `unreadable_cells` counts them.
+- `get_ui_tree` on a Java window reports `depth_limit_reached: true` when an element at `max_depth` had children that were not walked, and `unreadable_nodes: n` when the bridge gave no handle or no context info for n children (they are skipped, as before, but no longer silently). Together with `node_limit_reached` these say when an element that exists may be missing from the tree.
+
 ## 0.2.4 - 2026-10-30
 
 Added

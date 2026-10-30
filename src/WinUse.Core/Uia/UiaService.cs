@@ -363,40 +363,55 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
 
     // ---- collections --------------------------------------------------------------------------
 
-    public async Task<string[][]> GetTableAsync(string refId) => (await GetTableAsync(refId, null).ConfigureAwait(false)).Rows;
+    public async Task<string?[][]> GetTableAsync(string refId) => (await GetTableAsync(refId, null).ConfigureAwait(false)).Rows;
 
-    /// <summary>The table as rows of cell text (header first when the Table pattern lists one), <paramref name="maxRows"/> data rows at most (null: all).</summary>
-    public Task<TableReadResult> GetTableAsync(string refId, int? maxRows) => WithAsync(refId, el =>
+    /// <summary>
+    /// The table as rows of cell text (header first when the Table pattern lists one and <paramref name="includeHeader"/>
+    /// asks for it), <paramref name="maxRows"/> data rows at most (null: all). A grid cell UIA fails to hand out is null
+    /// and counted in <see cref="TableReadResult.UnreadableCells"/>.
+    /// </summary>
+    public Task<TableReadResult> GetTableAsync(string refId, int? maxRows, bool includeHeader = true) => WithAsync(refId, el =>
     {
-        var rows = new List<string[]>();
+        var rows = new List<string?[]>();
         var grid = el.Patterns.Grid.PatternOrDefault;
         if (grid is not null)
         {
-            try
+            if (includeHeader)
             {
-                var headers = el.Patterns.Table.PatternOrDefault?.ColumnHeaders.ValueOrDefault;
-                if (headers is { Length: > 0 }) rows.Add(headers.Select(CellText).ToArray());
+                try
+                {
+                    var headers = el.Patterns.Table.PatternOrDefault?.ColumnHeaders.ValueOrDefault;
+                    if (headers is { Length: > 0 }) rows.Add(headers.Select(CellText).ToArray());
+                }
+                catch { }
             }
-            catch { }
             int rc = grid.RowCount.ValueOrDefault, cc = grid.ColumnCount.ValueOrDefault;
             var limit = maxRows is { } m ? Math.Min(Math.Max(m, 0), rc) : rc;
+            var unreadable = 0;
             for (var r = 0; r < limit; r++)
             {
-                var row = new string[cc];
+                var row = new string?[cc];
                 for (var c = 0; c < cc; c++)
                 {
-                    try { row[c] = CellText(grid.GetItem(r, c)); } catch { row[c] = ""; }
+                    try { row[c] = CellText(grid.GetItem(r, c)); }
+                    catch { row[c] = null; unreadable++; }
                 }
                 rows.Add(row);
             }
-            return new TableReadResult(rows.ToArray(), rc, rc - limit);
+            return new TableReadResult(rows.ToArray(), rc, cc, rc - limit, unreadable);
         }
-        // No Grid pattern: treat each child row's children as cells.
+        // No Grid pattern: treat each child row's children as cells; the column count is the width of the first row.
         var children = el.FindAllChildren();
         var take = maxRows is { } max ? Math.Min(Math.Max(max, 0), children.Length) : children.Length;
-        foreach (var row in children.Take(take))
-            rows.Add(row.FindAllChildren().Select(CellText).ToArray());
-        return new TableReadResult(rows.ToArray(), children.Length, children.Length - take);
+        var columns = 0;
+        foreach (var (row, i) in children.Select((r, i) => (r, i)))
+        {
+            var cells = row.FindAllChildren();
+            if (i == 0) columns = cells.Length;
+            if (i < take) rows.Add(cells.Select(CellText).ToArray());
+            else break;
+        }
+        return new TableReadResult(rows.ToArray(), children.Length, columns, children.Length - take, 0);
     });
 
     private static string CellText(AutomationElement c)
