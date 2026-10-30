@@ -5,6 +5,7 @@ A Claude Code plugin that keeps Claude from reporting UI changes as done, or com
 - **Turn end (Stop hook):** when UI files changed in this session have no passing winuse assertion, Claude's turn end is blocked once per change. If its last message reported the work as done, or asked you to smoke-test it, Claude goes and verifies it with winuse. A genuine question to you, or a progress report, ends the turn normally.
 - **Commit (PreToolUse hook):** `git commit` is denied while it would commit UI files changed in this session that have no passing winuse assertion.
 - **Evidence (PostToolUse hook):** a passing `assert_text`, `assert_exists`, `assert_window`, `assert_file` or `scenario_run` marks the current content of the changed UI files as verified. Clicks, `act`, `check` and screenshots do not count.
+- **Operator (subagent):** `winuse-gate:winuse-operator` drives the app for the main conversation. It takes the window and the goal, does the tree reads, screenshots, clicks and assertions in its own context, and returns a short text report, so the main conversation keeps its context for the code. Its assertions count as evidence like the main conversation's own. The `winuse-e2e` skill tells Claude to delegate to it; you can also call it yourself with `@agent-winuse-gate:winuse-operator`. It runs on Sonnet by default (the `model` line in `agents/winuse-operator.md`).
 
 Only files whose content changed in this session count. Uncommitted edits that were already there when the session started are left alone until Claude changes them.
 
@@ -13,7 +14,7 @@ The gate covers the repository the session runs in and every other repository or
 ## Requirements
 
 - Windows, Windows PowerShell 5.1 (built in) and git.
-- winuse registered as an MCP server in Claude Code (see the main README: `claude mcp add winuse -- <repo>\out\winuse.exe --mcp`). The plugin does not start winuse itself.
+- winuse registered as an MCP server in Claude Code under the name `winuse` (see the main README: `claude mcp add winuse -- <repo>\out\winuse.exe --mcp`). The plugin does not start winuse itself, and the operator subagent only sees the tools of a server with that name.
 
 ## Install
 

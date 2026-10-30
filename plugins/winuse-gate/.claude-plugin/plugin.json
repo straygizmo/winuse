@@ -1,6 +1,6 @@
 {
   "name": "winuse-gate",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Keeps Claude from reporting UI changes as done, or committing them, until it has verified them in the running desktop app with winuse",
   "author": {
     "name": "straygizmo"
