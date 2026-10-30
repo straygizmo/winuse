@@ -125,6 +125,34 @@ public sealed class JavaToolContextTests : IDisposable
         Assert.Equal(1, r["omitted_rows"]!.GetValue<int>());
         var all = await Call("get_table", new JsonObject { ["ref"] = id });
         Assert.Equal(3, all["rows"]!.AsArray().Count);
+        Assert.Equal(3, all["column_count"]!.GetValue<int>());
         Assert.Null(all["omitted_rows"]);
+        Assert.Null(all["unreadable_cells"]);
+    }
+
+    [Fact]
+    public async Task GetTable_JavaRef_CountsOnly_WhenHeaderIsLeftOut_AndMaxRowsIsZero()
+    {
+        _jab.Root.Add(FakeTrees.Table());
+        var id = await RefOf("Table", "Connections");
+        var r = await Call("get_table", new JsonObject { ["ref"] = id, ["max_rows"] = 0, ["include_header"] = false });
+        Assert.Empty(r["rows"]!.AsArray());
+        Assert.Equal(2, r["row_count"]!.GetValue<int>());
+        Assert.Equal(3, r["column_count"]!.GetValue<int>());
+        Assert.Equal(0, _jab.ColumnHeaderCalls);
+        Assert.DoesNotContain("Port", r.ToJsonString());
+    }
+
+    [Fact]
+    public async Task GetTable_JavaRef_UnreadableCell_IsNull_AndCounted()
+    {
+        _jab.Root.Add(new FakeNode("table", "Connections", x: 100, y: 300, w: 300, h: 60) { Columns = 2 }.Add(
+            new FakeNode("label", "alpha"), new FakeNode("label", "8080") { NoHandle = true }));
+        var id = await RefOf("Table", "Connections");
+        var r = await Call("get_table", new JsonObject { ["ref"] = id });
+        var row = r["rows"]![0]!.AsArray();
+        Assert.Equal("alpha", row[0]!.GetValue<string>());
+        Assert.Null(row[1]);
+        Assert.Equal(1, r["unreadable_cells"]!.GetValue<int>());
     }
 }

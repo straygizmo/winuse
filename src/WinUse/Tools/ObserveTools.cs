@@ -144,7 +144,7 @@ public sealed class ObserveTools
     };
 
     [McpServerTool(Name = "get_ui_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect); the window object carries the window's rect, visible_rect and state too. Use the refs with the other tools. Narrow the output with control_type / name (matching nodes are hoisted to their nearest kept ancestor), compact (no null / default fields) and max_nodes; include_values=false leaves every value unread (and out of the log). Java Swing windows are read through Java Access Bridge and return j{n} refs (menu items are listed even while their menu is closed; a table is one Table node, read its cells with get_table or scope the tree to it); node_limit_reached: true means the Java walk stopped at node_limit elements and the tree is incomplete (use scope, control_type or max_depth). java_access_bridge explains why a Java window could not be read that way and java_access_bridge_diagnostics carries the facts (stage, jvm_pid, bridge_module, connected_jvms, timeout_ms).")]
+    [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect); the window object carries the window's rect, visible_rect and state too. Use the refs with the other tools. Narrow the output with control_type / name (matching nodes are hoisted to their nearest kept ancestor), compact (no null / default fields) and max_nodes; include_values=false leaves every value unread (and out of the log). Java Swing windows are read through Java Access Bridge and return j{n} refs (menu items are listed even while their menu is closed; a table is one Table node, read its cells with get_table or scope the tree to it); node_limit_reached: true means the Java walk stopped at node_limit elements and the tree is incomplete (use scope, control_type or max_depth); depth_limit_reached: true means a Java element at max_depth had children that were not walked; unreadable_nodes counts Java children the bridge could not read (skipped). Any of these means an element that exists may be missing from the tree. java_access_bridge explains why a Java window could not be read that way and java_access_bridge_diagnostics carries the facts (stage, jvm_pid, bridge_module, connected_jvms, timeout_ms).")]
     public static Task<CallToolResult> GetUiTree(
         ToolContext ctx,
         [Description("Window ref (win{n}) or title regex. Default: last observed window, else the foreground window.")] string? window = null,
@@ -200,6 +200,8 @@ public sealed class ObserveTools
                 omitted_nodes = omitted > 0 ? omitted : (int?)null,
                 node_limit_reached = limitReached ? true : (bool?)null,
                 node_limit = limitReached ? javaResult!.NodeLimit : (int?)null,
+                depth_limit_reached = javaResult is { DepthLimitReached: true } ? true : (bool?)null,
+                unreadable_nodes = javaResult is { UnreadableNodes: > 0 } ? javaResult.UnreadableNodes : (int?)null,
                 java_access_bridge = !isJava && JavaService.LooksLikeJavaWindow(w) ? ctx.Java.UnavailableReason(w) : null,
                 java_access_bridge_diagnostics = diagnosis is null ? null : DiagnosisJson(diagnosis),
             };
@@ -298,18 +300,28 @@ public sealed class ObserveTools
     };
 
     [McpServerTool(Name = "get_table", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Read a UIA table/grid/list view or a Swing table (JTable) as a 2-D array of cell texts (header row first when available), plus row_count (data rows in the table) and omitted_rows when max_rows cut the result. An empty Swing table gives rows: [] (or the header alone) with row_count: 0.")]
+    [Description("Read a UIA table/grid/list view or a Swing table (JTable) as a 2-D array of cell texts (header row first when available), plus row_count (data rows in the table), column_count and omitted_rows when max_rows cut the result. An empty Swing table gives rows: [] (or the header alone) with row_count: 0. max_rows: 0 with include_header: false returns the counts alone without reading any cell. A cell that could not be read is null (an empty cell is \"\") and unreadable_cells says how many.")]
     public static Task<CallToolResult> GetTable(
         ToolContext ctx,
         [Description("Element ref (u{n} or j{n}) of the table.")] string @ref,
-        [Description("Read at most this many data rows (the header row does not count). Default: all.")] int? max_rows = null) =>
-        ctx.RunStepAsync("get_table", ToolContext.Args(("ref", @ref), ("max_rows", max_rows)), async step =>
+        [Description("Read at most this many data rows (the header row does not count). Default: all.")] int? max_rows = null,
+        [Description("false: do not read the column header; rows then hold data rows only and no header text reaches the result or the log.")] bool include_header = true) =>
+        ctx.RunStepAsync("get_table", ToolContext.Args(("ref", @ref), ("max_rows", max_rows), ("include_header", include_header ? null : false)), async step =>
         {
             var r = RequireElement(ctx, @ref);
             step.Resolved = r.Locator;
             if (max_rows is < 0) throw new ArgumentOutOfRangeException(nameof(max_rows), "max_rows must be 0 or more.");
-            var t = r.Kind == RefKind.Java ? await ctx.Java.GetTableAsync(r.Id, max_rows) : await ctx.Uia.GetTableAsync(r.Id, max_rows);
-            return new { rows = t.Rows, row_count = t.RowCount, omitted_rows = t.OmittedRows > 0 ? t.OmittedRows : (int?)null };
+            var t = r.Kind == RefKind.Java
+                ? await ctx.Java.GetTableAsync(r.Id, max_rows, include_header)
+                : await ctx.Uia.GetTableAsync(r.Id, max_rows, include_header);
+            return new
+            {
+                rows = t.Rows,
+                row_count = t.RowCount,
+                column_count = t.ColumnCount,
+                omitted_rows = t.OmittedRows > 0 ? t.OmittedRows : (int?)null,
+                unreadable_cells = t.UnreadableCells > 0 ? t.UnreadableCells : (int?)null,
+            };
         });
 
     [McpServerTool(Name = "get_list_items", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]

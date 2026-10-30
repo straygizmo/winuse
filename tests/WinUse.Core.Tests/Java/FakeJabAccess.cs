@@ -23,6 +23,10 @@ internal sealed class FakeNode(string role, string? name = null, string states =
     public int? Columns;
     /// <summary>Header cell names of a table (null: no column header).</summary>
     public string[]? Header;
+    /// <summary>The bridge hands out no handle for this node (getAccessibleChildFromContext / getAccessibleTableCellInfo fail).</summary>
+    public bool NoHandle;
+    /// <summary>The bridge returns no context info for this node (getAccessibleContextInfo fails).</summary>
+    public bool NoInfo;
 
     public FakeNode Add(params FakeNode[] kids)
     {
@@ -75,6 +79,7 @@ internal sealed class FakeJabAccess(FakeNode root, nint hwnd = 0x1234) : IJabAcc
     public Func<FakeNode, string, bool>? OnAction { get; set; }
     public int LiveHandles => _live.Count;
     public int VirtualNameCalls { get; private set; }
+    public int ColumnHeaderCalls { get; private set; }
 
     private JabHandle NewHandle(FakeNode n)
     {
@@ -96,6 +101,7 @@ internal sealed class FakeJabAccess(FakeNode root, nint hwnd = 0x1234) : IJabAcc
     public JabContextInfo? GetInfo(JabHandle h)
     {
         var n = NodeOf(h);
+        if (n.NoInfo) return null;
         var parent = ParentOf(n);
         var showing = n.Showing;
         return new JabContextInfo(n.Name, n.Description, n.Role, n.States,
@@ -118,7 +124,7 @@ internal sealed class FakeJabAccess(FakeNode root, nint hwnd = 0x1234) : IJabAcc
     public JabHandle? GetChild(JabHandle h, int index)
     {
         var n = NodeOf(h);
-        return index >= 0 && index < n.Children.Count ? NewHandle(n.Children[index]) : null;
+        return index >= 0 && index < n.Children.Count && !n.Children[index].NoHandle ? NewHandle(n.Children[index]) : null;
     }
 
     public void Release(JabHandle h)
@@ -199,6 +205,7 @@ internal sealed class FakeJabAccess(FakeNode root, nint hwnd = 0x1234) : IJabAcc
     /// <summary>The header as a one-row table whose cells are label nodes made on the fly.</summary>
     public JabTableInfo? GetTableColumnHeader(JabHandle h)
     {
+        ColumnHeaderCalls++;
         var n = NodeOf(h);
         if (n.Columns is not { } cols || n.Header is null) return null;
         var header = new FakeNode("table") { Columns = cols };
@@ -211,7 +218,7 @@ internal sealed class FakeJabAccess(FakeNode root, nint hwnd = 0x1234) : IJabAcc
         var n = NodeOf(table);
         if (n.Columns is not { } cols || row < 0 || column < 0 || column >= cols) return null;
         var i = row * cols + column;
-        return i < n.Children.Count ? NewHandle(n.Children[i]) : null;
+        return i < n.Children.Count && !n.Children[i].NoHandle ? NewHandle(n.Children[i]) : null;
     }
 
     public JabVersionInfo? GetVersion(int vmId) => new("fake 1.8.0", "fake", "fake");
