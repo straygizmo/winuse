@@ -172,7 +172,7 @@ public class JabClientTests
         Assert.Null(client.GetInfo(h));
         Assert.Null(client.GetChild(h, 0));
         Assert.Empty(client.GetActions(h));
-        Assert.False(client.DoAction(h, "click"));
+        Assert.Equal(JabActionOutcome.Unreachable, client.DoAction(h, "click"));
         Assert.Null(client.GetText(h, 100));
         Assert.Null(client.GetValue(h));
         Assert.False(client.SetText(h, "x"));
@@ -283,8 +283,36 @@ public class JabClientTests
         rig.Add(HwndA, JabLayout.Legacy, VmA);
         var client = new JabClient(rig.Services);
         client.Connect(HwndA, VmA);
-        Assert.True(client.DoAction(new JabHandle(VmA, 7), "click"));
-        Assert.False(client.DoAction(new JabHandle(VmA, 7), "togglePopup"));
+        Assert.Equal(JabActionOutcome.Done, client.DoAction(new JabHandle(VmA, 7), "click"));
+        Assert.Equal(JabActionOutcome.Failed, client.DoAction(new JabHandle(VmA, 7), "togglePopup"));
+    }
+
+    [Fact]
+    public void DoAction_Timeout_IsReportedAsSuch_AndTheDiagnosisBlamesTheOpenDialog()
+    {
+        var rig = new Rig();
+        var a = rig.Add(HwndA, JabLayout.Wide, VmA);
+        var client = new JabClient(rig.Services);
+        client.Connect(HwndA, VmA);
+        a.Outcome = JabExchange.Timeout;
+        Assert.Equal(JabActionOutcome.Timeout, client.DoAction(new JabHandle(VmA, 7), "click"));
+
+        // Every later request times out too while the dialog is up; the diagnosis names the cause.
+        Assert.False(client.IsJavaWindow(HwndA));
+        var d = client.Diagnose(HwndA, (int)HwndA * 10);
+        Assert.Equal(JabStage.Timeout, d.Stage);
+        Assert.NotNull(d.BlockedByActionAt);
+        Assert.Contains("modal dialog", d.Reason);
+        Assert.Contains("method \"mouse\"", d.Reason);
+
+        // The dialog closes: the next answer clears it.
+        a.Outcome = null;
+        Assert.True(client.IsJavaWindow(HwndA));
+        Assert.Null(client.Diagnose(HwndA, (int)HwndA * 10).BlockedByActionAt);
+
+        // A JVM that is gone (send fails) did not run the action.
+        a.Outcome = JabExchange.SendFailed;
+        Assert.Equal(JabActionOutcome.Unreachable, client.DoAction(new JabHandle(VmA, 7), "click"));
     }
 
     /// <summary>A text longer than the packet's 1024-wchar field must not be truncated and reported as success.</summary>

@@ -14,36 +14,84 @@ public sealed partial class JavaService
     private const int MaxToggleAttempts = 3;
     private const int PopupSearchLimit = 2000;
 
+    /// <summary>Roles whose accessible action commonly opens a modal dialog, so <see cref="InvokeMethod.Auto"/> clicks them with the mouse.</summary>
+    private static readonly string[] MouseFirstRoles = ["push button"];
+
     internal Func<string, Task> TypeText { get; set; } = text => input.TypeTextAsync(text, 0);
 
-    internal Func<nint, Task> Activate { get; set; } = async hwnd => await windows.ActivateAsync(hwnd).ConfigureAwait(false);
+    internal Func<nint, Task<bool>> Activate { get; set; } = windows.ActivateAsync;
+
+    /// <summary>What a timed-out action means; the note travels with the <c>unknown</c> outcome.</summary>
+    internal static string ActionTimedOutNote(string action, string refId) =>
+        $"The JVM did not answer the '{action}' action on ref '{refId}' within the bridge timeout. The action was delivered and most likely ran: "
+        + "a Swing action that opens a modal dialog returns only when the dialog closes, so expect such a dialog (foreground / new_windows show it). "
+        + "Until it is closed the JVM's Java Access Bridge is blocked: read the dialog with screenshot or the UIA tree and operate it with "
+        + "click / type_text / press_keys, or close it. Do not repeat the invoke. Buttons that open dialogs are best invoked with method \"mouse\".";
 
     // ---- invoke ---------------------------------------------------------------------------------
 
     /// <summary>
-    /// The element's <c>click</c> action (menu items work while their menu is closed), else its first action, else a
-    /// selection of its index in a parent that supports selection (tabs, list items, tree nodes), else a click at its centre.
+    /// Activates an element. <see cref="InvokeMethod.Auto"/>: a push button with an on-screen part is clicked with the mouse
+    /// (its <c>click</c> action would hold the bridge hostage while a dialog it opens is up); otherwise the element's
+    /// <c>click</c> action (menu items work while their menu is closed), else its first action, else a selection of its index
+    /// in a parent that supports selection (tabs, list items, tree nodes), else a mouse click at its centre.
     /// </summary>
-    public async Task InvokeAsync(string refId)
+    public async Task<InvokeResult> InvokeAsync(string refId, InvokeMethod method = InvokeMethod.Auto)
     {
         var h = await LiveAsync(refId).ConfigureAwait(false);
-        var info = await bridge.RunAsync(jab =>
+        var tx = await TransformForAsync(refId).ConfigureAwait(false);
+        var (info, visibility) = await bridge.RunAsync(jab =>
         {
             var i = jab.GetInfo(h) ?? throw new InvalidOperationException($"Element for ref '{refId}' is gone.");
-            var actions = jab.GetActions(h);
-            if (actions.Count == 0) return i;
-            var action = actions.Contains("click") ? "click" : actions[0];
-            if (!jab.DoAction(h, action)) throw new InvalidOperationException($"Action '{action}' failed on ref '{refId}'.");
-            return null;
+            return (i, VisibilityOf(jab, h, i, tx));
         }).ConfigureAwait(false);
-        if (info is null) return;
 
-        if (await SelectInParentAsync(refId, info.IndexInParent).ConfigureAwait(false)) return;
+        if (method == InvokeMethod.Mouse || (method == InvokeMethod.Auto && MouseFirstRoles.Contains(info.Role) && visibility.Visible))
+        {
+            var reason = await TryMouseClickAsync(refId, visibility).ConfigureAwait(false);
+            if (reason is null) return InvokeResult.Did("mouse");
+            if (method == InvokeMethod.Mouse) throw new InvalidOperationException(reason);
+            _log.LogDebug("invoke {Ref}: mouse click not possible ({Reason}); using the accessible action", refId, reason);
+        }
 
-        var rect = await GetRectAsync(refId).ConfigureAwait(false);
-        if (rect.Width <= 0 || rect.Height <= 0)
-            throw new InvalidOperationException($"Ref '{refId}' has no action and no visible area to click.");
-        await ClickAt(rect.X + rect.Width / 2, rect.Y + rect.Height / 2).ConfigureAwait(false);
+        var result = await bridge.RunAsync(jab =>
+        {
+            var actions = jab.GetActions(h);
+            if (actions.Count == 0) return null;
+            var action = actions.Contains("click") ? "click" : actions[0];
+            return jab.DoAction(h, action) switch
+            {
+                JabActionOutcome.Done => InvokeResult.Did("action", action),
+                JabActionOutcome.Timeout => new InvokeResult("action", action, InvokeResult.Unknown, ActionTimedOutNote(action, refId)),
+                JabActionOutcome.Failed => throw new InvalidOperationException($"Action '{action}' failed on ref '{refId}' (the component refused it)."),
+                _ => throw new InvalidOperationException($"Action '{action}' could not be delivered to the JVM for ref '{refId}' (the JVM is exiting or its bridge wrote no answer)."),
+            };
+        }).ConfigureAwait(false);
+        if (result is not null) return result;
+
+        if (await SelectInParentAsync(refId, info.IndexInParent).ConfigureAwait(false)) return InvokeResult.Did("selection");
+
+        var fallback = await TryMouseClickAsync(refId, visibility).ConfigureAwait(false);
+        if (fallback is not null) throw new InvalidOperationException($"Ref '{refId}' has no action and cannot be clicked: {fallback}");
+        return InvokeResult.Did("mouse");
+    }
+
+    /// <summary>
+    /// Clicks the centre of the element's visible part after bringing its window to the front, provided the point really
+    /// belongs to that window's process; returns why not instead of clicking otherwise.
+    /// </summary>
+    private async Task<string?> TryMouseClickAsync(string refId, JavaVisibility v)
+    {
+        if (v.NotClickableReason(refId) is { } reason) return reason;
+        var loc = (JavaLocator)GetRef(refId).Locator;
+        var w = await WindowFind(loc.Window).ConfigureAwait(false);
+        if (w is not null && !await Activate(w.Hwnd).ConfigureAwait(false)) return $"the window '{w.Title}' could not be brought to the foreground.";
+        var x = v.VisibleRect.X + v.VisibleRect.Width / 2;
+        var y = v.VisibleRect.Y + v.VisibleRect.Height / 2;
+        if (w is not null && await WindowAt(x, y).ConfigureAwait(false) is { } hit && hit.Pid != w.Pid)
+            return $"the point ({x},{y}) is covered by '{hit.Title}' ({hit.ProcessName}, pid {hit.Pid}), not by {w.ProcessName} (pid {w.Pid}).";
+        await ClickAt(x, y).ConfigureAwait(false);
+        return null;
     }
 
     /// <summary>Selects child <paramref name="index"/> in the ref's parent when that parent supports selection.</summary>
@@ -70,13 +118,23 @@ public sealed partial class JavaService
 
     // ---- text / check / focus -------------------------------------------------------------------
 
-    public async Task SetTextAsync(string refId, string text)
+    /// <summary>
+    /// Sets the text of a field and reports the path taken: <see cref="TextEntryPath.AccessibleText"/> when the field's
+    /// AccessibleEditableText took it (no key events reach the field), <see cref="TextEntryPath.Keyboard"/> when the field
+    /// was focused and the text typed (the field sees key events, as with a user). The text itself is never reported.
+    /// </summary>
+    public async Task<string> SetTextAsync(string refId, string text, TextEntryMethod method = TextEntryMethod.Auto)
     {
         ArgumentNullException.ThrowIfNull(text);
         var h = await LiveAsync(refId).ConfigureAwait(false);
-        if (await bridge.RunAsync(jab => jab.SetText(h, text)).ConfigureAwait(false)) return;
+        if (method != TextEntryMethod.Keyboard)
+        {
+            if (await bridge.RunAsync(jab => jab.SetText(h, text)).ConfigureAwait(false)) return TextEntryPath.AccessibleText;
+            if (method == TextEntryMethod.Api)
+                throw new NotSupportedException($"Ref '{refId}' did not take the text through AccessibleEditableText (no editable text interface, or the text is too long for one request); use method \"keyboard\".");
+        }
 
-        // No AccessibleEditableText: focus the field and type, like the UIA fallback.
+        // No AccessibleEditableText (or keyboard asked for): focus the field and type, like the UIA fallback.
         var loc = (JavaLocator)GetRef(refId).Locator;
         if (await WindowFind(loc.Window).ConfigureAwait(false) is { } w) await Activate(w.Hwnd).ConfigureAwait(false);
         await bridge.RunAsync(jab => jab.RequestFocus(h)).ConfigureAwait(false);
@@ -84,6 +142,7 @@ public sealed partial class JavaService
         await Press(KeyChord.Parse("ctrl+a")).ConfigureAwait(false);
         if (text.Length == 0) await Press(KeyChord.Parse("delete")).ConfigureAwait(false);
         else await TypeText(text).ConfigureAwait(false);
+        return TextEntryPath.Keyboard;
     }
 
     public async Task SetCheckedAsync(string refId, bool on)
@@ -101,13 +160,15 @@ public sealed partial class JavaService
             }).ConfigureAwait(false);
             if (current == on) return;
             if (attempt == MaxToggleAttempts) break;
-            await bridge.RunAsync(jab =>
+            var outcome = await bridge.RunAsync(jab =>
             {
                 var actions = jab.GetActions(h);
                 var action = actions.Contains("click") ? "click" : actions.FirstOrDefault()
                     ?? throw new NotSupportedException($"Ref '{refId}' has no action to toggle it.");
-                return jab.DoAction(h, action);
+                return (action, jab.DoAction(h, action));
             }).ConfigureAwait(false);
+            if (outcome.Item2 == JabActionOutcome.Timeout)
+                throw new InvalidOperationException($"Could not confirm the new state of ref '{refId}': {ActionTimedOutNote(outcome.action, refId)}");
         }
         throw new InvalidOperationException($"Could not set ref '{refId}' to {on}.");
     }
@@ -189,16 +250,16 @@ public sealed partial class JavaService
 
     private sealed record PopupItem(string? Name, Rect Rect);
 
-    /// <summary>Opens the combo popup and returns the showing list items of the window (name and screen rectangle).</summary>
     /// <summary>The combo's <c>togglePopup</c> action: opens a closed popup, closes an open one. Works whatever window has the focus.</summary>
-    private Task TogglePopupAsync(string refId, JabHandle combo) => bridge.RunAsync(jab =>
+    private Task<bool> TogglePopupAsync(string refId, JabHandle combo) => bridge.RunAsync(jab =>
     {
         var actions = jab.GetActions(combo);
         var action = actions.Contains("togglePopup") ? "togglePopup" : actions.FirstOrDefault()
             ?? throw new NotSupportedException($"Ref '{refId}' has no action to open its popup.");
-        return jab.DoAction(combo, action);
+        return jab.DoAction(combo, action) == JabActionOutcome.Done;
     });
 
+    /// <summary>Opens the combo popup and returns the showing list items of the window (name and screen rectangle).</summary>
     private async Task<List<PopupItem>> OpenComboPopupAsync(string refId, JabHandle combo)
     {
         await TogglePopupAsync(refId, combo).ConfigureAwait(false);
@@ -357,4 +418,3 @@ public sealed partial class JavaService
         }
     }
 }
-

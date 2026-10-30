@@ -144,7 +144,7 @@ public sealed class ObserveTools
     };
 
     [McpServerTool(Name = "get_ui_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect); the window object carries the window's rect, visible_rect and state too. Use the refs with the other tools. Narrow the output with control_type / name (matching nodes are hoisted to their nearest kept ancestor), compact (no null / default fields) and max_nodes; include_values=false leaves every value unread (and out of the log). Java Swing windows are read through Java Access Bridge and return j{n} refs (menu items are listed even while their menu is closed; a table is one Table node, read its cells with get_table or scope the tree to it); node_limit_reached: true means the Java walk stopped at node_limit elements and the tree is incomplete (use scope, control_type or max_depth); depth_limit_reached: true means a Java element at max_depth had children that were not walked; unreadable_nodes counts Java children the bridge could not read (skipped). Any of these means an element that exists may be missing from the tree. java_access_bridge explains why a Java window could not be read that way and java_access_bridge_diagnostics carries the facts (stage, jvm_pid, bridge_module, connected_jvms, timeout_ms).")]
+    [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect); the window object carries the window's rect, visible_rect and state too. Use the refs with the other tools. Narrow the output with control_type / name (matching nodes are hoisted to their nearest kept ancestor), compact (no null / default fields) and max_nodes; include_values=false leaves every value unread (and out of the log). Java Swing windows are read through Java Access Bridge and return j{n} refs (menu items are listed even while their menu is closed; a table is one Table node, read its cells with get_table or scope the tree to it); node_limit_reached: true means the Java walk stopped at node_limit elements and the tree is incomplete (use scope, control_type or max_depth); depth_limit_reached: true means a Java element at max_depth had children that were not walked; unreadable_nodes counts Java children the bridge could not read (skipped). Any of these means an element that exists may be missing from the tree; a Java tree always carries all three (false / 0 when the walk was complete), and every result carries backend (\"java_access_bridge\" or \"uia\") and server_version. A Java element's rect is the part on screen (clipped to its scroll viewport and the window); an element scrolled out of view or beyond the window edge is offscreen: true (listed only with include_offscreen, with its full rect) and click refuses it. java_access_bridge explains why a Java window could not be read that way and java_access_bridge_diagnostics carries the facts (stage, jvm_pid, bridge_module, connected_jvms, timeout_ms, blocked_by_action_at when an invoke that opened a modal dialog holds the bridge).")]
     public static Task<CallToolResult> GetUiTree(
         ToolContext ctx,
         [Description("Window ref (win{n}) or title regex. Default: last observed window, else the foreground window.")] string? window = null,
@@ -190,18 +190,21 @@ public sealed class ObserveTools
             tree = UiTreeShaper.Filter(tree, types, nameRegex);
             var omitted = 0;
             if (max_nodes is { } max) (tree, omitted) = UiTreeShaper.Truncate(tree, max);
-            var limitReached = javaResult is { NodeLimitReached: true };
             var diagnosis = !isJava && JavaService.LooksLikeJavaWindow(w) ? ctx.Java.Diagnosis(w) : null;
+            // A Java tree states every completeness flag explicitly (false / 0), so "inspected and fine" never reads like
+            // "this server does not report it" (older servers left the fields out).
             return new
             {
+                server_version = ToolContext.ServerVersion,
+                backend = isJava ? "java_access_bridge" : "uia",
                 window = new { @ref = ctx.RegisterWindow(w).Id, title = w.Title, process = w.ProcessName, pid = w.Pid, rect = w.Rect,
                     visible_rect = w.State == WindowState.Minimized ? w.Rect : WindowService.VisibleRectOf(w.Hwnd), state = w.State.ToString().ToLowerInvariant() },
                 tree = compact ? (object)UiTreeShaper.Compact(tree) : tree,
                 omitted_nodes = omitted > 0 ? omitted : (int?)null,
-                node_limit_reached = limitReached ? true : (bool?)null,
-                node_limit = limitReached ? javaResult!.NodeLimit : (int?)null,
-                depth_limit_reached = javaResult is { DepthLimitReached: true } ? true : (bool?)null,
-                unreadable_nodes = javaResult is { UnreadableNodes: > 0 } ? javaResult.UnreadableNodes : (int?)null,
+                node_limit_reached = javaResult is { } j1 ? j1.NodeLimitReached : (bool?)null,
+                node_limit = javaResult is { NodeLimitReached: true } j2 ? j2.NodeLimit : (int?)null,
+                depth_limit_reached = javaResult is { } j3 ? j3.DepthLimitReached : (bool?)null,
+                unreadable_nodes = javaResult is { } j4 ? j4.UnreadableNodes : (int?)null,
                 java_access_bridge = !isJava && JavaService.LooksLikeJavaWindow(w) ? ctx.Java.UnavailableReason(w) : null,
                 java_access_bridge_diagnostics = diagnosis is null ? null : DiagnosisJson(diagnosis),
             };
@@ -218,6 +221,7 @@ public sealed class ObserveTools
         bitness = d.Is32Bit switch { true => "32-bit", false => "64-bit", _ => (string?)null },
         client_window = d.ClientWindow == 0 ? null : $"0x{d.ClientWindow:X}",
         timeout_ms = d.TimeoutMs > 0 ? d.TimeoutMs : (int?)null,
+        blocked_by_action_at = d.BlockedByActionAt,
         connected_jvms = d.ConnectedJvms.Select(j => new
         {
             pid = j.Pid,

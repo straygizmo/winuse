@@ -16,7 +16,7 @@ public sealed class InputTools
     private const string InputWindowArg = "Window ref (win{n}) or title regex to activate before sending the input; fails when the window does not exist or cannot take the foreground. Without it the input goes to whichever window has focus.";
 
     [McpServerTool(Name = "click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Click an element by ref (UIA: centre of its rectangle plus offset; DOM: Playwright click) or at coordinates x,y (physical pixels; screen coordinates, or window-relative when window is given).")]
+    [Description("Click an element by ref (UIA / Java: centre of its on-screen rectangle plus offset, resolved at click time; DOM: Playwright click) or at coordinates x,y (physical pixels; screen coordinates, or window-relative when window is given). A ref click is refused, with the reason and nothing clicked, when the element has no on-screen part (scrolled out of its viewport, beyond the window edge after a resize) or when the point lies on a window of another process (the target moved or is covered; the result's lands_on names the window under the point). Coordinates are clicked as given.")]
     public static Task<CallToolResult> Click(
         ToolContext ctx,
         [Description("Element ref (u{n}, j{n}, w{n}) or window ref (win{n}). Either ref or x,y is required.")] string? @ref = null,
@@ -43,8 +43,9 @@ public sealed class InputTools
                 }
                 if (target is null) await ctx.ActivateOwnerAsync(r);
                 var (cx, cy) = await ctx.CenterOfAsync(r);
+                var hit = await ctx.EnsureClickLandsOnOwnerAsync(r, cx + offset_x, cy + offset_y);
                 await ctx.Input.ClickAsync(cx + offset_x, cy + offset_y, b, count);
-                return new { clicked = r.Id, x = cx + offset_x, y = cy + offset_y, window = target?.Json };
+                return new { clicked = r.Id, x = cx + offset_x, y = cy + offset_y, window = target?.Json, lands_on = hit };
             }
             var (px, py) = ToScreen(target, RequirePoint(x, y, "ref or x,y"));
             await ctx.Input.ClickAsync(px + offset_x, py + offset_y, b, count);

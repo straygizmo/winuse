@@ -77,6 +77,10 @@ internal sealed class FakeJabAccess(FakeNode root, nint hwnd = 0x1234) : IJabAcc
     public List<FakeNode> Focused { get; } = [];
     /// <summary>Side effect of an action; return false to make the bridge report failure.</summary>
     public Func<FakeNode, string, bool>? OnAction { get; set; }
+    /// <summary>Overrides the outcome of an action entirely (a timeout, an unreachable JVM); null: <see cref="OnAction"/> decides.</summary>
+    public Func<FakeNode, string, JabActionOutcome>? ActionOutcome { get; set; }
+    /// <summary>How often <see cref="GetParent"/> was asked (the clip computation walks up once per element read).</summary>
+    public int ParentCalls { get; private set; }
     public int LiveHandles => _live.Count;
     public int VirtualNameCalls { get; private set; }
     public int ColumnHeaderCalls { get; private set; }
@@ -127,6 +131,13 @@ internal sealed class FakeJabAccess(FakeNode root, nint hwnd = 0x1234) : IJabAcc
         return index >= 0 && index < n.Children.Count && !n.Children[index].NoHandle ? NewHandle(n.Children[index]) : null;
     }
 
+    public JabHandle? GetParent(JabHandle h)
+    {
+        ParentCalls++;
+        var p = ParentOf(NodeOf(h));
+        return p is null ? null : NewHandle(p);
+    }
+
     public void Release(JabHandle h)
     {
         if (!_live.Remove(h.Ac)) throw new InvalidOperationException($"double release: handle {h.Ac}");
@@ -135,11 +146,12 @@ internal sealed class FakeJabAccess(FakeNode root, nint hwnd = 0x1234) : IJabAcc
 
     public IReadOnlyList<string> GetActions(JabHandle h) => NodeOf(h).Actions ?? [];
 
-    public bool DoAction(JabHandle h, string action)
+    public JabActionOutcome DoAction(JabHandle h, string action)
     {
         var n = NodeOf(h);
         Actions.Add((n, action));
-        return OnAction?.Invoke(n, action) ?? true;
+        if (ActionOutcome is { } o) return o(n, action);
+        return OnAction?.Invoke(n, action) ?? true ? JabActionOutcome.Done : JabActionOutcome.Failed;
     }
 
     public string? GetText(JabHandle h, int maxChars)

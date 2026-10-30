@@ -37,4 +37,9 @@ public sealed record JabWindowDiagnosis(
     bool? Is32Bit,
     bool JvmConnected,
     int TimeoutMs,
-    IReadOnlyList<JabJvmSummary> ConnectedJvms);
+    IReadOnlyList<JabJvmSummary> ConnectedJvms,
+    /// <summary>
+    /// When an action sent to this JVM never answered (a Swing action that opened a modal dialog returns only when the
+    /// dialog closes), the time it was sent: the bridge of this JVM stays blocked until that dialog is gone.
+    /// </summary>
+    DateTimeOffset? BlockedByActionAt = null);

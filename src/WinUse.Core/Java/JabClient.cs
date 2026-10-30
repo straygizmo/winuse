@@ -44,6 +44,11 @@ internal sealed class JabJvm
     public JabExchange LastOutcome { get; set; } = JabExchange.Answered;
     public JabPacketKind? LastFailedKind { get; set; }
     public DateTimeOffset LastFailureAt { get; set; }
+    /// <summary>
+    /// When a <c>doAccessibleActions</c> request timed out and nothing has been answered since: the action most likely opened
+    /// a modal dialog, and the JVM's bridge thread waits inside it until the dialog closes. Cleared by the next answer.
+    /// </summary>
+    public DateTimeOffset? BlockedActionAt { get; set; }
     /// <summary>Set from the window procedure (JVM shutdown, AB_DLL_GOING_AWAY); the list is pruned at the next call.</summary>
     public volatile bool Dead;
 }
@@ -204,6 +209,12 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
             var kind = jvm.LastFailedKind?.ToString() ?? "the request";
             var (stage, reason) = jvm.LastOutcome switch
             {
+                JabExchange.Timeout when jvm.BlockedActionAt is { } at => (JabStage.Timeout,
+                    $"JVM pid {pid} is connected ({format} wire format) but did not answer {kind} within {TimeoutMs} ms: "
+                    + $"an action (invoke) sent at {at:HH:mm:ss} has not returned, which is what a Swing action that opens a modal dialog does, "
+                    + "so that dialog is most likely open and the JVM's bridge waits inside it until the dialog closes. Read the dialog with "
+                    + "screenshot or the UIA tree, operate it with click / type_text / press_keys, or close it; the Java tree is readable again "
+                    + "afterwards. Buttons that open dialogs are best invoked with method \"mouse\"."),
                 JabExchange.Timeout => (JabStage.Timeout,
                     $"JVM pid {pid} is connected ({format} wire format) but did not answer {kind} within {TimeoutMs} ms: "
                     + "the Java side is not processing bridge requests (its event thread is blocked, or the process is suspended)."),
@@ -215,7 +226,8 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
                     $"JVM pid {pid} is connected ({format} wire format) and answers, but reports that window 0x{hwnd:X} is not one of its Java windows "
                     + "(not an AWT top-level window, or not shown yet)."),
             };
-            return new JabWindowDiagnosis(stage, reason, pid, client, jvm.BridgeModule, Name(jvm.Layout), jvm.Is32Bit, true, TimeoutMs, connected);
+            return new JabWindowDiagnosis(stage, reason, pid, client, jvm.BridgeModule, Name(jvm.Layout), jvm.Is32Bit, true, TimeoutMs, connected,
+                jvm.LastOutcome == JabExchange.Timeout ? jvm.BlockedActionAt : null);
         }
 
         var failed = _handshakeFailures.Where(kv => kv.Value.Pid == pid).Select(kv => kv.Value).OrderByDescending(f => f.At).FirstOrDefault();
@@ -260,9 +272,14 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
         fill(p);
         var outcome = j.Channel.Exchange(p.Buffer, p.Size);
         j.LastOutcome = outcome;
-        if (outcome == JabExchange.Answered) return p;
+        if (outcome == JabExchange.Answered)
+        {
+            j.BlockedActionAt = null;
+            return p;
+        }
         j.LastFailedKind = kind;
         j.LastFailureAt = DateTimeOffset.Now;
+        if (kind == JabPacketKind.DoActions && outcome == JabExchange.Timeout) j.BlockedActionAt ??= j.LastFailureAt;
         _log.LogDebug("JAB {Kind} to pid {Pid} ({Layout}) got no answer: {Outcome}", kind, j.Pid, Name(j.Layout), outcome);
         return null;
     }
@@ -345,6 +362,13 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
         return ac == 0 ? null : new JabHandle(h.VmId, ac);
     }
 
+    public JabHandle? GetParent(JabHandle h)
+    {
+        var p = SendFor(h, JabPacketKind.GetParent);
+        var ac = p?.ReadObj(JabPackets.GetParent.Result) ?? 0;
+        return ac == 0 ? null : new JabHandle(h.VmId, ac);
+    }
+
     public void Release(JabHandle h) => SendFor(h, JabPacketKind.ReleaseObject);
 
     public IReadOnlyList<string> GetActions(JabHandle h)
@@ -358,16 +382,21 @@ internal sealed class JabClient(JabClientServices services, ILogger? log = null)
         return list;
     }
 
-    public bool DoAction(JabHandle h, string action)
+    public JabActionOutcome DoAction(JabHandle h, string action)
     {
-        var p = SendFor(h, JabPacketKind.DoActions, p =>
+        var j = Find(h.VmId);
+        if (j is null) return JabActionOutcome.Unreachable;
+        var p = Send(j, JabPacketKind.DoActions, p =>
         {
+            p.WriteI32(0, h.VmId);
+            p.WriteObj(1, h.Ac);
             var todo = p.BlobSpan(JabPackets.DoActions.ToDo);
             JabPacket.WriteI32At(todo, Actions.Count, 1);
             JabPacket.WriteWCharsAt(todo, Actions.Name(0), ShortStringSize, action);
             p.WriteI32(JabPackets.DoActions.Failure, -1);
         });
-        return p is not null && p.ReadI32(JabPackets.DoActions.Result) != 0;
+        if (p is null) return j.LastOutcome == JabExchange.Timeout ? JabActionOutcome.Timeout : JabActionOutcome.Unreachable;
+        return p.ReadI32(JabPackets.DoActions.Result) != 0 ? JabActionOutcome.Done : JabActionOutcome.Failed;
     }
 
     public string? GetText(JabHandle h, int maxChars)

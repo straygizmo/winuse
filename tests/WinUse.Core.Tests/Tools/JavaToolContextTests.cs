@@ -53,7 +53,7 @@ public sealed class JavaToolContextTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_JavaRef_Toggle_FlipsCheckedState()
     {
-        var check = new FakeNode("check box", "Enabled").With(actions: ["click"]);
+        var check = new FakeNode("check box", "Enabled", x: 120, y: 200, w: 80, h: 20).With(actions: ["click"]); // inside the window
         _jab.Root.Add(check);
         _jab.OnAction = (n, _) => { if (n == check) n.States = "enabled,visible,showing,checked"; return true; };
         var id = await RefOf("CheckBox", "Enabled");
@@ -88,6 +88,57 @@ public sealed class JavaToolContextTests : IDisposable
         var o = await new ToolDispatcher(_ctx).InvokeAsync(new(tool, args, id is null ? null : _ctx.GetRef(id).Locator), default);
         Assert.True(o.Ok, $"{tool}: {o.Error}");
         return o.Result;
+    }
+
+    [Fact]
+    public async Task SetText_ReportsThePathTaken_AndNeverTheText()
+    {
+        var id = await RefOf("Edit", "Name");
+        var r = await Call("set_text", new JsonObject { ["ref"] = id, ["text"] = "world" });
+        Assert.Equal("accessible_text", r["method"]!.GetValue<string>());
+        Assert.StartsWith("j", r["ref"]!.GetValue<string>()); // the dispatcher re-resolves the locator to a fresh ref
+        Assert.DoesNotContain("world", r.ToJsonString());
+        _jab.Root.Find("text", "Name")!.RejectSetText = true;
+        _ctx.Java.TypeText = _ => Task.CompletedTask;
+        _ctx.Java.Press = _ => Task.CompletedTask;
+        _ctx.Java.Activate = _ => Task.FromResult(true);
+        var k = await Call("set_text", new JsonObject { ["ref"] = id, ["text"] = "world" });
+        Assert.Equal("keyboard", k["method"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task Invoke_ReportsMethodAndOutcome()
+    {
+        _ctx.Java.ClickAt = (_, _) => Task.CompletedTask;
+        _ctx.Java.Activate = _ => Task.FromResult(true);
+        _ctx.Java.WindowAt = (_, _) => Task.FromResult<WindowInfo?>(null);
+        var button = await RefOf("Button", "Increment");
+        var r = await Call("invoke", new JsonObject { ["ref"] = button });
+        Assert.Equal(("mouse", "done"), (r["method"]!.GetValue<string>(), r["outcome"]!.GetValue<string>()));
+
+        var save = await RefOf("MenuItem", "Save");
+        var a = await Call("invoke", new JsonObject { ["ref"] = save });
+        Assert.Equal(("action", "click", "done"), (a["method"]!.GetValue<string>(), a["action"]!.GetValue<string>(), a["outcome"]!.GetValue<string>()));
+
+        _jab.ActionOutcome = (_, _) => JabActionOutcome.Timeout;
+        var u = await Call("invoke", new JsonObject { ["ref"] = save });
+        Assert.Equal("unknown", u["outcome"]!.GetValue<string>());
+        Assert.Contains("modal dialog", u["note"]!.GetValue<string>());
+        Assert.NotNull(u["new_windows"]);
+    }
+
+    [Fact]
+    public async Task Click_RefusesAJavaRef_ThatIsScrolledOutOfView()
+    {
+        _jab.Root.Add(new FakeNode("viewport", x: 100, y: 500, w: 200, h: 50).Add(
+            new FakeNode("panel", x: 100, y: 500, w: 200, h: 400).Add(
+                new FakeNode("push button", "Below", x: 110, y: 600, w: 80, h: 20).With(actions: ["click"]))));
+        var tree = await _ctx.Java.GetTreeAsync(Hwnd, new TreeOptions(IncludeOffscreen: true));
+        var id = JavaServiceHarness.Find(tree, "Button", "Below")!.Ref;
+        var o = await new ToolDispatcher(_ctx).InvokeAsync(new("click", new JsonObject { ["ref"] = id }, _ctx.GetRef(id).Locator), default);
+        Assert.False(o.Ok);
+        Assert.Contains("outside the on-screen area", o.Error);
+        Assert.Contains("Nothing was clicked", o.Error);
     }
 
     [Fact]
