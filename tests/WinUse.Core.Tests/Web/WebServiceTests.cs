@@ -49,7 +49,8 @@ public class WebServiceTests(EdgeCdpFixture fx) : IClassFixture<EdgeCdpFixture>
         await Set("<select id='s'><option value='1'>One</option><option value='2'>Two</option></select>");
         var s = (await Web.GetDomAsync()).Single(n => n.Selector == "#s");
         Assert.Equal("combobox", s.Role);
-        await Web.SelectOptionAsync(s.Ref, "Two");
+        var r = await Web.SelectOptionAsync(s.Ref, "Two");
+        Assert.Equal((WinUse.Core.Input.SelectItemResult.Done, "Two", "Two"), (r.Outcome, r.Item, r.Selected));
         Assert.Equal("2", await Web.GetTextAsync(s.Ref));
     }
 

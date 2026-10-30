@@ -256,8 +256,40 @@ public class JavaServiceActionTests
 
             h.Jab.OnAction = (_, _) => true; // state never changes
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Service.SetCheckedAsync(id, false));
+            Assert.Contains("after 3 toggles it reads checked", ex.Message);
             Assert.Equal(4, h.Jab.Actions.Count);
             _ = wrap;
+        }
+    }
+
+    [Fact]
+    public async Task SetChecked_ReportsTheToggles_AndSingleActionStopsAfterOne()
+    {
+        var (h, tree) = await Up();
+        using (h)
+        {
+            var edit = new FakeNode("menu", "Edit", x: 140, y: 130, w: 40, h: 20).With(actions: ["click"])
+                .Add(new FakeNode("check box", "Word Wrap", "enabled,visible").With(actions: ["click"]));
+            h.Jab.Root.Find("menu bar", null)!.Add(edit);
+            tree = await h.TreeAsync();
+            var item = h.Jab.Root.Find("check box", "Word Wrap")!;
+            h.Jab.OnAction = (n, a) =>
+            {
+                if (n == item) n.States = n.States.Contains("checked") ? "enabled,visible" : "enabled,visible,checked";
+                return true;
+            };
+            var id = Ref(tree, "CheckBox", "Word Wrap");
+            var r = await h.Service.SetCheckedAsync(id, true);
+            Assert.Equal((CheckPath.Action, SetCheckedResult.Done, 1, true), (r.Method, r.Outcome, r.Toggles, r.Checked));
+            r = await h.Service.SetCheckedAsync(id, true);
+            Assert.Equal((SetCheckedResult.Done, 0), (r.Outcome, r.Toggles));
+            Assert.Single(h.Jab.Actions);
+
+            h.Jab.OnAction = (_, _) => true; // state never changes: one click, then the caller decides
+            r = await h.Service.SetCheckedAsync(id, false, singleAction: true);
+            Assert.Equal((SetCheckedResult.Unknown, 1, true), (r.Outcome, r.Toggles, r.Checked));
+            Assert.Contains("single_action", r.Note);
+            Assert.Equal(2, h.Jab.Actions.Count);
         }
     }
 
@@ -273,17 +305,58 @@ public class JavaServiceActionTests
     }
 
     [Fact]
-    public async Task SelectItem_List_ClearsThenAddsSelectionByName()
+    public async Task SelectItem_List_ClearsThenAddsSelectionByName_AndReadsItBack()
     {
         var (h, tree) = await Up();
         using (h)
         {
-            await h.Service.SelectItemAsync(Ref(tree, "List", null), "Beta");
+            var r = await h.Service.SelectItemAsync(Ref(tree, "List", null), "Beta");
+            Assert.Equal((SelectItemResult.Done, "Beta", "Beta"), (r.Outcome, r.Item, r.Selected));
             Assert.Equal("list", Assert.Single(h.Jab.Cleared).Role);
             Assert.Equal(1, Assert.Single(h.Jab.Selections).Index);
-            await h.Service.SelectItemAsync(Ref(tree, "List", null), "gam"); // substring, case-insensitive
+            r = await h.Service.SelectItemAsync(Ref(tree, "List", null), "gam"); // substring, case-insensitive
             Assert.Equal(2, h.Jab.Selections[^1].Index);
+            Assert.Equal("Gamma", r.Item);
             await Assert.ThrowsAsync<InvalidOperationException>(() => h.Service.SelectItemAsync(Ref(tree, "List", null), "Delta"));
+        }
+    }
+
+    [Fact]
+    public async Task SelectItem_List_ReportsAMismatch_WhenTheSelectionDoesNotTake()
+    {
+        var list = new FakeNode("list", x: 10, y: 10, w: 100, h: 60).With(hasSelection: true).Add(
+            new FakeNode("label", "Alpha", x: 10, y: 10, w: 100, h: 20),
+            new FakeNode("label", "Beta", x: 10, y: 30, w: 100, h: 20));
+        list.Selected.Add(0);
+        var root = new FakeNode("frame", "F", x: 0, y: 0, w: 400, h: 300).Add(list);
+        var (h, tree) = await Up(root);
+        using (h)
+        {
+            // The app keeps Alpha selected whatever is asked (a model that refuses the change).
+            h.Jab.OnSelect = (_, _) => { list.Selected.Clear(); list.Selected.Add(0); };
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Service.SelectItemAsync(Ref(tree, "List", null), "Beta"));
+            Assert.Contains("Selected 'Beta'", ex.Message);
+            Assert.Contains("'Alpha' as selected", ex.Message);
+
+            h.Jab.OnSelect = (_, _) => list.Selected.Clear();
+            ex = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Service.SelectItemAsync(Ref(tree, "List", null), "Beta"));
+            Assert.Contains("not selected", ex.Message);
+        }
+    }
+
+    [Fact]
+    public async Task SelectItem_List_WithoutAccessibleSelection_ReportsUnknown()
+    {
+        var list = new FakeNode("list", x: 10, y: 10, w: 100, h: 60).Add(
+            new FakeNode("label", "Alpha", x: 10, y: 10, w: 100, h: 20),
+            new FakeNode("label", "Beta", x: 10, y: 30, w: 100, h: 20));
+        var root = new FakeNode("frame", "F", x: 0, y: 0, w: 400, h: 300).Add(list);
+        var (h, tree) = await Up(root);
+        using (h)
+        {
+            var r = await h.Service.SelectItemAsync(Ref(tree, "List", null), "Beta");
+            Assert.Equal((SelectItemResult.Unknown, "Beta", null), (r.Outcome, r.Item, r.Selected));
+            Assert.Contains("AccessibleSelection", r.Note);
         }
     }
 
@@ -293,13 +366,14 @@ public class JavaServiceActionTests
         var (h, tree) = await Up();
         using (h)
         {
-            await h.Service.SelectItemAsync(Ref(tree, "Tab", null), "Second");
+            var r = await h.Service.SelectItemAsync(Ref(tree, "Tab", null), "Second");
             Assert.Equal(("page tab list", 1), (h.Jab.Selections[^1].Node.Role, h.Jab.Selections[^1].Index));
+            Assert.Equal((SelectItemResult.Done, "Second"), (r.Outcome, r.Selected));
         }
     }
 
-    [Fact]
-    public async Task SelectItem_Combo_OpensPopup_ThenClicksShowingItem()
+    /// <summary>A combo box whose popup (child of the layered pane, as Swing lays it out) shows on <c>togglePopup</c>.</summary>
+    private static (FakeNode Root, FakeNode Combo, FakeNode Popup, FakeNode PopupList) ComboFixture()
     {
         var combo = new FakeNode("combo box", x: 10, y: 10, w: 100, h: 24).With(actions: ["togglePopup"], hasSelection: true);
         var popupList = new FakeNode("list", "", "enabled,visible", x: 10, y: 34, w: 100, h: 60).Add(
@@ -307,30 +381,63 @@ public class JavaServiceActionTests
             new FakeNode("label", "Two", "enabled,visible", x: 10, y: 54, w: 100, h: 20),
             new FakeNode("label", "Three", "enabled,visible", x: 10, y: 74, w: 100, h: 20));
         popupList.Name = null;
+        combo.SelectionList = popupList;
+        combo.Selected.Add(0);
         var popup = new FakeNode("popup menu", "", "enabled,visible", x: 10, y: 34, w: 100, h: 60).Add(popupList);
         popup.Name = null;
         var root = new FakeNode("frame", "F", x: 0, y: 0, w: 400, h: 300).Add(
             new FakeNode("root pane", x: 0, y: 0, w: 400, h: 300).Add(
                 new FakeNode("layered pane", x: 0, y: 0, w: 400, h: 300).Add(combo, popup)));
+        return (root, combo, popup, popupList);
+    }
+
+    private static void ShowPopupOnToggle(JavaServiceHarness h, FakeNode combo, FakeNode popup, FakeNode popupList)
+    {
+        h.Window = h.Window with { Rect = new WinUse.Core.Windows.Rect(0, 0, 400, 300) };
+        h.Jab.OnAction = (n, a) =>
+        {
+            if (n == combo && a == "togglePopup")
+            {
+                var show = popup.States.Contains("showing") ? "enabled,visible" : "enabled,visible,showing";
+                popup.States = show;
+                popupList.States = show;
+                foreach (var c in popupList.Children) c.States = show;
+            }
+            return true;
+        };
+    }
+
+    [Fact]
+    public async Task SelectItem_Combo_OpensPopup_ClicksShowingItem_AndReadsTheSelectionBack()
+    {
+        var (root, combo, popup, popupList) = ComboFixture();
         var (h, tree) = await Up(root);
         using (h)
         {
-            h.Window = h.Window with { Rect = new WinUse.Core.Windows.Rect(0, 0, 400, 300) };
-            h.Jab.OnAction = (n, a) =>
-            {
-                if (n == combo && a == "togglePopup")
-                {
-                    var show = popup.States.Contains("showing") ? "enabled,visible" : "enabled,visible,showing";
-                    popup.States = show;
-                    popupList.States = show;
-                    foreach (var c in popupList.Children) c.States = show;
-                }
-                return true;
-            };
-            await h.Service.SelectItemAsync(Ref(tree, "ComboBox", null), "Two");
+            ShowPopupOnToggle(h, combo, popup, popupList);
+            // The click lands on the popup list: the combo model takes the item, as the app would.
+            h.Service.ClickAt = (x, y) => { h.Clicks.Add((x, y)); combo.Selected.Clear(); combo.Selected.Add(1); return Task.CompletedTask; };
+            var r = await h.Service.SelectItemAsync(Ref(tree, "ComboBox", null), "Two");
             Assert.Contains(h.Jab.Actions, a => a.Node == combo && a.Action == "togglePopup");
             Assert.Equal((60, 64), Assert.Single(h.Clicks));
             Assert.Empty(h.Pressed);
+            Assert.Equal((SelectItemResult.Done, "Two", "Two"), (r.Outcome, r.Item, r.Selected));
+        }
+    }
+
+    [Fact]
+    public async Task SelectItem_Combo_ReportsAMismatch_WhenTheComboStillShowsAnotherItem()
+    {
+        var (root, combo, popup, popupList) = ComboFixture();
+        var (h, tree) = await Up(root);
+        using (h)
+        {
+            ShowPopupOnToggle(h, combo, popup, popupList);
+            // The click is delivered but the combo keeps "One" (the popup closed before the click, or the app vetoed it).
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Service.SelectItemAsync(Ref(tree, "ComboBox", null), "Two"));
+            Assert.Single(h.Clicks);
+            Assert.Contains("Selected 'Two' in ComboBox", ex.Message);
+            Assert.Contains("'One' as selected", ex.Message);
         }
     }
 
