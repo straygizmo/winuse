@@ -271,4 +271,75 @@ public sealed class DesktopToolTests : IDisposable
             File.Delete(file);
         }
     }
+    [Fact, Trait("Category", "Integration")]
+    public async Task SelectItem_Combo_ReadsTheSelectionBack()
+    {
+        using var win = new StubbornWindowFixture(withCombo: true);
+        var refId = ctx.RegisterWindow((await ctx.Windows.ListAsync()).Single(w => w.Hwnd == win.Hwnd)).Id;
+        var tree = await Run(ObserveTools.GetUiTree(ctx, window: refId, control_type: "combobox", compact: true));
+        Assert.True(tree.Ok, tree.Error);
+        var combo = tree.Result["tree"]!["children"]!.AsArray().Single()!["ref"]!.GetValue<string>();
+        Assert.Equal(0, win.ComboSelection);
+
+        var two = await Run(ElementTools.SelectItem(ctx, combo, "Two"));
+        Assert.True(two.Ok, two.Error);
+        Assert.Equal(("done", "Two", "Two"), (two.Result["outcome"]!.GetValue<string>(), two.Result["item"]!.GetValue<string>(), two.Result["selected"]!.GetValue<string>()));
+        // A Win32 combo box keeps its old value when the item is selected through the pattern and the popup collapsed: the click commits it.
+        Assert.Equal("mouse", two.Result["method"]!.GetValue<string>());
+        Assert.Equal(1, win.ComboSelection);
+
+        // A substring picks the item and the result names the full label; the window keeps its place for the next test.
+        var three = await Run(ElementTools.SelectItem(ctx, combo, "thr"));
+        Assert.True(three.Ok, three.Error);
+        Assert.Equal(("done", "Three"), (three.Result["outcome"]!.GetValue<string>(), three.Result["item"]!.GetValue<string>()));
+        Assert.Equal(2, win.ComboSelection);
+
+        var missing = await Run(ElementTools.SelectItem(ctx, combo, "Four"));
+        Assert.False(missing.Ok);
+        Assert.Contains("not found", missing.Error);
+
+        // single_action: the click is the first path for a combo box, it takes, and exactly one input is counted.
+        var one = await Run(ElementTools.SelectItem(ctx, combo, "One", single_action: true));
+        Assert.True(one.Ok, one.Error);
+        Assert.Equal(("done", "mouse", 1), (one.Result["outcome"]!.GetValue<string>(), one.Result["method"]!.GetValue<string>(), one.Result["actions"]!.GetValue<int>()));
+        Assert.Equal(1, two.Result["actions"]!.GetValue<int>());
+        Assert.Equal(0, win.ComboSelection);
+        Assert.True(ctx.Journal.Entries.Last(e => e.Tool == "select_item").Args["single_action"]!.GetValue<bool>());
+    }
+
+    [Fact, Trait("Category", "Integration")]
+    public async Task SetChecked_ReadsTheStateBack_AndCountsToggles()
+    {
+        using var win = new StubbornWindowFixture(withChecks: true);
+        var refId = ctx.RegisterWindow((await ctx.Windows.ListAsync()).Single(w => w.Hwnd == win.Hwnd)).Id;
+        var tree = await Run(ObserveTools.GetUiTree(ctx, window: refId, control_type: "checkbox", compact: true));
+        Assert.True(tree.Ok, tree.Error);
+        var boxes = tree.Result["tree"]!["children"]!.AsArray().ToDictionary(n => n!["name"]!.GetValue<string>(), n => n!["ref"]!.GetValue<string>());
+        Assert.False(win.IsChecked(win.AutoCheck));
+
+        // A control that toggles itself: one toggle, read back as checked; the same request again sends nothing.
+        var on = await Run(ElementTools.SetChecked(ctx, boxes["Auto"], true));
+        Assert.True(on.Ok, on.Error);
+        Assert.Equal(("toggle", "done", 1, true), (on.Result["method"]!.GetValue<string>(), on.Result["outcome"]!.GetValue<string>(), on.Result["toggles"]!.GetValue<int>(), on.Result["checked"]!.GetValue<bool>()));
+        Assert.True(win.IsChecked(win.AutoCheck));
+        Assert.Equal(1, win.AutoCheckClicks);
+        var again = await Run(ElementTools.SetChecked(ctx, boxes["Auto"], true));
+        Assert.True(again.Ok, again.Error);
+        Assert.Equal((0, "done"), (again.Result["toggles"]!.GetValue<int>(), again.Result["outcome"]!.GetValue<string>()));
+        Assert.Equal(1, win.AutoCheckClicks);
+
+        // A control whose state never changes by itself: the default sends up to three toggles and fails naming them...
+        var failed = await Run(ElementTools.SetChecked(ctx, boxes["Manual"], true));
+        Assert.False(failed.Ok);
+        Assert.Contains("after 3 toggles it reads unchecked", failed.Error);
+        Assert.Equal(3, win.ManualCheckClicks);
+
+        // ...and single_action sends exactly one and reports the state as unknown instead of failing or toggling again.
+        var single = await Run(ElementTools.SetChecked(ctx, boxes["Manual"], true, single_action: true));
+        Assert.True(single.Ok, single.Error);
+        Assert.Equal(("toggle", "unknown", 1, false), (single.Result["method"]!.GetValue<string>(), single.Result["outcome"]!.GetValue<string>(), single.Result["toggles"]!.GetValue<int>(), single.Result["checked"]!.GetValue<bool>()));
+        Assert.Contains("single_action", single.Result["note"]!.GetValue<string>());
+        Assert.Equal(4, win.ManualCheckClicks);
+        Assert.True(ctx.Journal.Entries.Last(e => e.Tool == "set_checked").Args["single_action"]!.GetValue<bool>());
+    }
 }
