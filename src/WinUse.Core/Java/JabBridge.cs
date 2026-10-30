@@ -73,10 +73,16 @@ public sealed class JabBridge(WinUseConfig cfg, ILogger? log = null) : IJabBridg
                 return;
             }
             var services = new JabClientServices(
-                OpenChannel: javaHwnd => _window is null ? null : JabMemoryChannel.Open(_window.Hwnd, javaHwnd, _log),
-                Inspect: pid => { var i = JavaProcessInfo.Inspect(pid); return new JabJvmProbe(i.Layout, i.Is32Bit); },
+                OpenChannel: javaHwnd =>
+                {
+                    if (_window is null) return new JabChannelOpen(null, "the client window does not exist yet");
+                    var channel = JabMemoryChannel.Open(_window.Hwnd, javaHwnd, out var failure, _log);
+                    return new JabChannelOpen(channel, failure);
+                },
+                Inspect: pid => { var i = JavaProcessInfo.Inspect(pid); return new JabJvmProbe(i.Layout, i.Is32Bit, i.LoadedBridgeModule, i.Error); },
                 PidOf: hwnd => { NativeMethods.GetWindowThreadProcessId(hwnd, out var pid); return (int)pid; },
-                IsWindow: NativeMethods.IsWindow);
+                IsWindow: NativeMethods.IsWindow,
+                ClientHwnd: () => _window?.Hwnd ?? 0);
             var client = new JabClient(services, _log);
             try
             {

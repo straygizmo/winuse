@@ -180,4 +180,54 @@ public class JavaTreeBuilderTests
         Assert.Equal("Virtual", Assert.Single(tree.Children).Name);
         Assert.Equal(1, jab.VirtualNameCalls);
     }
+
+    [Fact]
+    public void Build_KeepsATableAsOneNode_WithoutItsCells()
+    {
+        var root = FakeTrees.Fixture();
+        root.Add(FakeTrees.Table());
+        var (tree, _, _, _, _) = Build(root);
+        var table = Find(tree, "Table", "Connections")!;
+        Assert.Empty(table.Children);
+        Assert.Null(Find(tree, "Text", "alpha"));
+        Assert.Null(Find(tree, "CheckBox", null));
+    }
+
+    [Fact]
+    public void Build_WithInteractiveOnlyOff_WalksTheCells()
+    {
+        var root = FakeTrees.Fixture();
+        root.Add(FakeTrees.Table());
+        var (tree, _, _, _, _) = Build(root, new TreeOptions(InteractiveOnly: false));
+        var table = Find(tree, "Table", "Connections")!;
+        Assert.Equal(6, table.Children.Count);
+        Assert.Equal("alpha", table.Children[0].Name);
+    }
+
+    [Fact]
+    public void Build_RootedAtATable_ListsItsCells()
+    {
+        var (tree, _, _, _, _) = Build(FakeTrees.Table());
+        Assert.Equal("Table", tree.ControlType);
+        Assert.Equal(["alpha", "8080", null, "beta", "9090", null], tree.Children.Select(c => c.Name));
+        Assert.Equal(["Text", "Text", "CheckBox", "Text", "Text", "CheckBox"], tree.Children.Select(c => c.ControlType));
+    }
+
+    /// <summary>Real JTable cells carry neither a "showing" state nor a position; inside a showing table they are listed as visible with the table's rectangle.</summary>
+    [Fact]
+    public void Build_TableCellsWithoutShowingState_AreVisibleWithTheTableRect()
+    {
+        var table = new FakeNode("table", "Connections", x: 100, y: 300, w: 300, h: 60) { Columns = 2 }.Add(
+            new FakeNode("label", "alpha", "enabled,visible"),
+            new FakeNode("label", "8080", "enabled,visible"));
+        var (tree, _, _, _, _) = Build(table);
+        Assert.Equal(2, tree.Children.Count);
+        Assert.False(tree.Children[0].Offscreen);
+        Assert.Equal(new Rect(100, 300, 300, 60), tree.Children[1].Rect);
+
+        var hidden = new FakeNode("table", "Connections", "enabled,visible", x: 100, y: 300, w: 300, h: 60) { Columns = 2 }.Add(
+            new FakeNode("label", "alpha", "enabled,visible", x: 100, y: 300, w: 150, h: 20));
+        var (hiddenTree, _, _, _, _) = Build(hidden);
+        Assert.Empty(hiddenTree.Children); // a table that is not showing hides its cells like any other node
+    }
 }

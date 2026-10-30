@@ -147,13 +147,15 @@ public sealed class InputTools
         });
 
     [McpServerTool(Name = "type_text", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Type text into the focused control as Unicode keystrokes (newlines become Enter). With window, that window is activated first so the keystrokes cannot land elsewhere.")]
+    [Description("Type text into the focused control as Unicode keystrokes (newlines become Enter). With window, that window is activated first so the keystrokes cannot land elsewhere. With secret=true the text is kept out of the log, the journal and saved scenarios.")]
     public static Task<CallToolResult> TypeText(
         ToolContext ctx,
         [Description("The text to type.")] string text,
         [Description("Delay between characters in milliseconds.")] int per_char_delay_ms = 0,
-        [Description(InputWindowArg)] string? window = null) =>
-        ctx.RunStepAsync("type_text", ToolContext.Args(("text", text), ("per_char_delay_ms", per_char_delay_ms), ("window", window)), async _ =>
+        [Description(InputWindowArg)] string? window = null,
+        [Description(ToolContext.SecretArg)] bool secret = false) =>
+        ctx.RunStepAsync("type_text", ToolContext.Args(("text", ToolContext.Journaled(text, secret)), ("per_char_delay_ms", per_char_delay_ms), ("window", window),
+            ("secret", secret ? true : null)), async _ =>
         {
             var target = await ResolveTargetWindowAsync(ctx, window);
             await ctx.Input.TypeTextAsync(text, per_char_delay_ms);

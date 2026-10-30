@@ -299,15 +299,4 @@ public class JavaServiceActionTests
             Assert.Equal(["First", "Second"], await h.Service.GetListItemsAsync(Ref(tree, "Tab", null)));
         }
     }
-
-    [Fact]
-    public async Task GetTable_Throws_NotSupported()
-    {
-        var (h, tree) = await Up();
-        using (h)
-        {
-            var ex = await Assert.ThrowsAsync<NotSupportedException>(() => h.Service.GetTableAsync(Ref(tree, "List", null)));
-            Assert.Contains("get_table is not supported for Java elements yet", ex.Message);
-        }
-    }
 }

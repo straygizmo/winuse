@@ -13,7 +13,9 @@ import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
+import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import javax.swing.event.ChangeEvent;
@@ -117,6 +119,16 @@ public class SwingFixture {
             nested = outer;
         }
         frame.add(nested, BorderLayout.EAST);
+
+        // A connection list like a launcher shows: text, number and boolean columns (get_table reads all three kinds).
+        Object[][] rows = { { "alpha", Integer.valueOf(8080), Boolean.TRUE }, { "beta", Integer.valueOf(9090), Boolean.FALSE } };
+        JTable table = new JTable(new javax.swing.table.DefaultTableModel(rows, new String[] { "Name", "Port", "Active" }) {
+            @Override public Class<?> getColumnClass(int c) { return c == 1 ? Integer.class : c == 2 ? Boolean.class : String.class; }
+        });
+        table.getAccessibleContext().setAccessibleName("Connections");
+        JScrollPane scroll = new JScrollPane(table);
+        scroll.setPreferredSize(new java.awt.Dimension(220, 120));
+        frame.add(scroll, BorderLayout.WEST);
 
         frame.add(status, BorderLayout.SOUTH);
         frame.setVisible(true);

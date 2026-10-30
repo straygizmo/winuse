@@ -150,7 +150,7 @@ internal static partial class NativeMethods
     [LibraryImport("imm32.dll")]
     public static partial nint ImmGetDefaultIMEWnd(nint hwnd);
 
-    [LibraryImport("user32.dll", EntryPoint = "SendMessageTimeoutW")]
+    [LibraryImport("user32.dll", EntryPoint = "SendMessageTimeoutW", SetLastError = true)]
     public static partial nint SendMessageTimeoutW(nint hwnd, uint msg, nint wParam, nint lParam, uint flags, uint timeoutMs, out nint result);
     // ---- message loop (Java Access Bridge thread) ----------------------------------------------
 

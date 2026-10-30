@@ -94,7 +94,7 @@ public static class DoctorCommand
                         version is null ? null : $"Java {version.VmVersion}",
                         version is null ? null : $"bridge {version.JavaDllVersion}",
                     }.Where(s => s is not null)) + ")"
-                : java.BridgeAvailable ? "bridge NOT responding (accessibility not enabled when the app started?)"
+                : java.BridgeAvailable ? "bridge NOT responding: " + (java.UnavailableReason(w) ?? "no answer")
                 : "bridge unavailable";
             windowLines.Add($"  \"{w.Title}\" (pid {w.Pid}, {bits}, {w.ClassName}): {state}");
             windowLines.Add($"      {info.Describe()}");

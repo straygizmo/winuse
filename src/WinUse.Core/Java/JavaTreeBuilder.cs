@@ -30,7 +30,7 @@ internal sealed class JavaTreeBuilder(IJabAccess jab, RefRegistry refs, WindowLo
         var r = refs.Register(RefKind.Java, new JavaLocator(wloc, basePath), null);
         if (keepRoot) keep(r.Id, root);
         var children = Children(root, info, ct, basePath, 0, rect);
-        return MakeNode(jab, root, info, r.Id, ct, NameOf(jab, root, info, ct), 0, children, rect);
+        return MakeNode(jab, root, info, r.Id, ct, NameOf(jab, root, info, ct), 0, children, rect, opt.ReadValues);
     }
 
     private List<UiNode> Children(JabHandle parent, JabContextInfo parentInfo, string parentCt, IReadOnlyList<JavaPathSegment> parentPath,
@@ -39,6 +39,9 @@ internal sealed class JavaTreeBuilder(IJabAccess jab, RefRegistry refs, WindowLo
         var result = new List<UiNode>();
         if (outDepth >= opt.MaxDepth) return result;
         var counts = new Dictionary<(string, string?), int>();
+        // JTable cells report neither "showing" nor a position through the bridge (their renderer component is never
+        // displayed); they are visible whenever the table is and carry the table's rectangle.
+        var cellsVisible = parentCt == "Table" && JavaStates.Parse(parentInfo.States).Showing;
         for (var i = 0; i < parentInfo.ChildrenCount; i++)
         {
             if (_visited >= MaxNodes) { Truncated = true; break; }
@@ -56,25 +59,28 @@ internal sealed class JavaTreeBuilder(IJabAccess jab, RefRegistry refs, WindowLo
             var path = new List<JavaPathSegment>(parentPath) { new(info.Role, name, idx) };
 
             var flags = JavaStates.Parse(info.States);
-            if (!flags.Showing && !opt.IncludeOffscreen && !JavaRoleMap.IsMenuFamily(ct, parentCt))
+            var visible = flags.Showing || cellsVisible;
+            if (!visible && !opt.IncludeOffscreen && !JavaRoleMap.IsMenuFamily(ct, parentCt))
             {
                 jab.Release(h);
                 continue;
             }
-            // Items of a closed menu have no position; they inherit the nearest showing ancestor's rectangle.
+            // Items of a closed menu and table cells have no position; they inherit the nearest showing ancestor's rectangle.
             var rect = flags.Showing ? tx.Apply(info.X, info.Y, info.Width, info.Height) : fallbackRect;
 
             var keepNode = !opt.InteractiveOnly
                 || InteractiveFilter.IsInteractive(ct)
+                || ct == "Table"
                 || (ct == "Text" && !string.IsNullOrWhiteSpace(name));
             if (keepNode)
             {
                 var r = refs.Register(RefKind.Java, new JavaLocator(wloc, path), null);
                 keep(r.Id, h);
-                var sub = opt.InteractiveOnly && ct == "Text"
+                // A table's cells (one node per cell, read through IPC each) are left to get_table or a scoped tree.
+                var sub = opt.InteractiveOnly && ct is "Text" or "Table"
                     ? []
                     : Children(h, info, ct, path, outDepth + 1, rect);
-                result.Add(MakeNode(jab, h, info, r.Id, ct, name, outDepth + 1, sub, rect));
+                result.Add(MakeNode(jab, h, info, r.Id, ct, name, outDepth + 1, sub, rect, opt.ReadValues, visible));
             }
             else if (ct == "Pane" && name is not null)
             {
@@ -84,7 +90,7 @@ internal sealed class JavaTreeBuilder(IJabAccess jab, RefRegistry refs, WindowLo
                 {
                     var r = refs.Register(RefKind.Java, new JavaLocator(wloc, path), null);
                     keep(r.Id, h);
-                    result.Add(MakeNode(jab, h, info, r.Id, ct, name, outDepth + 1, sub, rect));
+                    result.Add(MakeNode(jab, h, info, r.Id, ct, name, outDepth + 1, sub, rect, opt.ReadValues, visible));
                 }
                 else jab.Release(h);
             }
@@ -106,12 +112,13 @@ internal sealed class JavaTreeBuilder(IJabAccess jab, RefRegistry refs, WindowLo
     internal static string? NameOf(IJabAccess jab, JabHandle h, JabContextInfo info, string controlType) =>
         info.Name ?? info.Description ?? (controlType == "Pane" ? null : jab.GetVirtualName(h));
 
+    /// <param name="visible">Overrides the showing state (table cells are visible with their table); null: as the states say.</param>
     internal static UiNode MakeNode(IJabAccess jab, JabHandle h, JabContextInfo info, string refId, string ct, string? name, int depth,
-        IReadOnlyList<UiNode> children, Rect rect)
+        IReadOnlyList<UiNode> children, Rect rect, bool readValue = true, bool? visible = null)
     {
         var flags = JavaStates.Parse(info.States);
-        return new UiNode(refId, ct, name, null, ReadValue(jab, h, ct),
-            flags.Enabled, !flags.Showing, JavaStates.CheckedOf(flags, ct, info.Role), flags.Focused, rect, depth, children);
+        return new UiNode(refId, ct, name, null, readValue ? ReadValue(jab, h, ct) : null,
+            flags.Enabled, !(visible ?? flags.Showing), JavaStates.CheckedOf(flags, ct, info.Role), flags.Focused, rect, depth, children);
     }
 
     /// <summary>The value shown for editable / ranged controls: text, the selected combo item, or the numeric value.</summary>

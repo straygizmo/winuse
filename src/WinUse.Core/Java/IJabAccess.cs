@@ -11,6 +11,13 @@ public sealed record JabContextInfo(
 public sealed record JabVersionInfo(string VmVersion, string JavaDllVersion, string WindowsDllVersion);
 
 /// <summary>
+/// What <c>getAccessibleTableInfo</c> / <c>getAccessibleTableColumnHeader</c> return: the dimensions and the
+/// <c>AccessibleTable</c> object (<see cref="Table"/>) that <see cref="IJabAccess.GetTableCell"/> addresses cells through.
+/// The caller owns <see cref="Table"/> and must <see cref="IJabAccess.Release"/> it.
+/// </summary>
+public sealed record JabTableInfo(int RowCount, int ColumnCount, JabHandle Table);
+
+/// <summary>
 /// The subset of the Java Access Bridge API winuse uses. Every call must run on the bridge's dispatcher thread.
 /// Handles returned by <see cref="GetContextFromHwnd"/>, <see cref="GetChild"/> and <see cref="GetSelection"/> are owned
 /// by the caller and must be passed to <see cref="Release"/> exactly once; a released handle must never be used again.
@@ -43,4 +50,15 @@ public interface IJabAccess
     JabVersionInfo? GetVersionForWindow(nint hwnd);
     /// <summary>The wire format the client sends to the JVM that owns <paramref name="hwnd"/>; null when no connected JVM claims it.</summary>
     JabLayout? LayoutForWindow(nint hwnd);
+    /// <summary>
+    /// Why the window owned by process <paramref name="pid"/> cannot be read: how far the conversation with that JVM got
+    /// (hello, handshake, answering requests) and what the connected JVMs are. Only facts, no window or element data.
+    /// </summary>
+    JabWindowDiagnosis Diagnose(nint hwnd, int pid);
+    /// <summary>The table behind a context (role <c>table</c>), or null when it has no AccessibleTable.</summary>
+    JabTableInfo? GetTableInfo(JabHandle h);
+    /// <summary>The column header of a table as a table of its own (one row of header cells), or null when it has none.</summary>
+    JabTableInfo? GetTableColumnHeader(JabHandle h);
+    /// <summary>The context of one cell (owned by the caller), or null when the table has no such cell.</summary>
+    JabHandle? GetTableCell(JabHandle table, int row, int column);
 }

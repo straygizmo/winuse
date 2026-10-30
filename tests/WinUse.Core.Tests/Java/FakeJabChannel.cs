@@ -13,22 +13,25 @@ internal sealed class FakeJabChannel(JabLayout layout, Func<JabPacketKind, JabPa
     public List<int> SentTypeIds { get; } = [];
     public JabLayout? LastLayoutSeen { get; private set; }
     public bool Disposed { get; private set; }
+    /// <summary>When set, every exchange ends this way without reaching the handler (a hung or vanished JVM).</summary>
+    public JabExchange? Outcome { get; set; }
 
-    public bool Exchange(byte[] buffer, int size)
+    public JabExchange Exchange(byte[] buffer, int size)
     {
         if (Disposed) throw new ObjectDisposedException(nameof(FakeJabChannel));
         var typeId = BitConverter.ToInt32(buffer, 0);
         SentTypeIds.Add(typeId);
+        if (Outcome is { } forced) return forced;
         var id = JabPackets.Identify(typeId, size) ?? throw new InvalidOperationException($"unknown packet 0x{typeId:X} of {size} bytes");
         var mine = JabPackets.For(id.Kind, Layout);
         // Packets without an object handle have the same size in both formats; a real JVM cannot tell them apart either.
         LastLayoutSeen = mine.BufferSize == size ? Layout : id.Layout;
-        if (mine.BufferSize != size) return true; // size mismatch: the JVM drops it silently
+        if (mine.BufferSize != size) return JabExchange.Answered; // size mismatch: the JVM drops it silently
         var p = new JabPacket(mine);
         buffer.AsSpan(0, size).CopyTo(p.Buffer);
         var ok = handler(id.Kind, p);
         p.Buffer.CopyTo(buffer, 0);
-        return ok;
+        return ok ? JabExchange.Answered : JabExchange.NoAnswer;
     }
 
     public void Dispose() => Disposed = true;

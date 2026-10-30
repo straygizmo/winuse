@@ -56,13 +56,27 @@ One thing must be in place: **accessibility enabled in the Java app's JVM**, whi
    - Apps started with `process_run` get it automatically through `JAVA_TOOL_OPTIONS=-Djavax.accessibility.assistive_technologies=com.sun.java.accessibility.AccessBridge` (the JVM prints one `Picked up JAVA_TOOL_OPTIONS` line to stderr). `WINUSE_JAVA_ACCESSIBILITY=off` disables this.
    - For apps started any other way, `winuse jab enable` writes `%USERPROFILE%\.accessibility.properties` (what `jabswitch -enable` does; no admin rights). `winuse jab disable` / `winuse jab status` undo and show it.
 
-`winuse doctor` reports the client window and the JVMs connected to it, whether the user profile enables accessibility, and every Java window with its JVM (`jvm.dll` path and version, bitness, which `JavaAccessBridge*.dll` it loaded and its wire format, the Java and bridge versions the JVM reports) and whether the bridge answers for it. When a Java window cannot be read, `get_ui_tree` returns `java_access_bridge` with the reason and `act` reports `no elements (java access bridge: ...)`; the window then falls back to visual grounding.
+`winuse doctor` reports the client window and the JVMs connected to it, whether the user profile enables accessibility, and every Java window with its JVM (`jvm.dll` path and version, bitness, which `JavaAccessBridge*.dll` it loaded and its wire format, the Java and bridge versions the JVM reports) and whether the bridge answers for it. When a Java window cannot be read, `get_ui_tree` returns `java_access_bridge` with the reason, `java_access_bridge_diagnostics` with the facts behind it, and `act` reports `no elements (java access bridge: ...)`; the window then falls back to visual grounding. The diagnostics say how far the conversation with that window's JVM got, so the caller can tell the cases apart without digging through logs:
+
+| `stage` | What happened | What to do |
+|---|---|---|
+| `client_unavailable` | `WINUSE_JAB=off`, or the client window could not be created | see `reason` |
+| `no_hello` | the JVM (`jvm_pid`) never announced itself to the client window; `bridge_module` says whether it has a `JavaAccessBridge*.dll` loaded at all | no DLL: accessibility was not enabled when the app started (`winuse jab enable` or `process_run`, then restart it); DLL loaded but silent: the app is elevated / in another session, or its bridge thread is stuck |
+| `handshake_failed` | the JVM said hello but the memory-mapped-file handshake failed (`reason` names the step) | restart the app; check for an elevated app |
+| `timeout` | the JVM is connected but did not answer a request within `timeout_ms` (4000) | the Java side is not processing bridge requests: its event thread is blocked or the process is suspended |
+| `send_failed` | the JVM is connected but the request could not be delivered | the JVM is exiting |
+| `no_answer` | the JVM acknowledged the request but wrote no answer | wire format mismatch (`wire_format`, `wire_format_assumed`) |
+| `not_owned` | the JVM answers but says the window is not one of its Java windows | not an AWT top-level window, or not shown yet |
+
+The object also lists `connected_jvms` (pid, wire format, bitness and the last failed request of each) and `client_window`; it carries no window titles or element data. `winuse doctor` prints the same reason after `bridge NOT responding:`.
+
+Swing tables: a `JTable` is one `Table` node in the tree (its cells are not walked in `interactive_only` mode, so a long list does not eat the node budget); `get_table` on its ref returns the header row and every cell, `max_rows` caps the rows and `row_count` tells how many data rows the table holds (an empty table gives `row_count: 0`). Scope `get_ui_tree` to the table ref to list the cells; the bridge reports no position for a cell, so cells carry the table's rectangle. The Java tree walk stops after 5000 bridge round trips: the result then carries `node_limit_reached: true` and `node_limit: 5000` (narrow it with `scope`, `control_type` or `max_depth`).
 
 Settings: `WINUSE_JAB` (`auto`, default, or `off`), `WINUSE_JAVA_ACCESSIBILITY` (`on`, default, or `off`).
 
 The Swing integration tests need Java under `tools\` (git-ignored): `pwsh -File scripts/fetch-dev-java.ps1` installs a Temurin 21 JDK x64 and a Temurin 8 JRE x86.
 
-Limits: `get_table` does not read Swing tables yet. A JRE trimmed of `jdk.accessibility` (Java 8: `bin\JavaAccessBridge-32.dll` and `lib\ext\access-bridge-32.jar`) cannot be read at all, and **a JVM on such a JRE refuses to start when accessibility is requested** (`AWTError: Assistive Technology not found`): for apps on a trimmed JRE set `WINUSE_JAVA_ACCESSIBILITY=off` before `process_run`, and do not run `winuse jab enable`. `winuse doctor` points this out for every Java window whose JRE lacks the bridge files. A Java app running elevated or as another user is out of reach (its messages are blocked and the user-profile setting does not apply).
+Limits: A JRE trimmed of `jdk.accessibility` (Java 8: `bin\JavaAccessBridge-32.dll` and `lib\ext\access-bridge-32.jar`) cannot be read at all, and **a JVM on such a JRE refuses to start when accessibility is requested** (`AWTError: Assistive Technology not found`): for apps on a trimmed JRE set `WINUSE_JAVA_ACCESSIBILITY=off` before `process_run`, and do not run `winuse jab enable`. `winuse doctor` points this out for every Java window whose JRE lacks the bridge files. A Java app running elevated or as another user is out of reach (its messages are blocked and the user-profile setting does not apply).
 
 ## Register with an AI client
 
@@ -148,11 +162,11 @@ Replay never calls the decision model for `act`: each `act` step replays on its 
 
 Element refs are `u{n}` (UI Automation), `j{n}` (Java Swing via Java Access Bridge), `w{n}` (WebView2 DOM), `win{n}` (window) and `pt{n}` (a screen point from visual grounding).
 
-- Observe: `screenshot` (`target`: `screen` = the primary monitor or `monitor: <index>`, `virtual` = all monitors in one image, `window`, `element`; returns `origin {x, y}`, `method` and, for screen captures, `monitors`), `list_windows` (each window: `ref`, `title`, `process`, `pid`, `rect`, `visible_rect` = the frame actually drawn, without the invisible resize borders, `state`; a window keeps its `win{n}` ref for the session), `get_ui_tree` (its `window` object carries the same fields; `control_type`, `name`, `compact` and `max_nodes` cut the output down), `get_dom`, `get_element`, `get_text`, `get_table`, `get_list_items`
+- Observe: `screenshot` (`target`: `screen` = the primary monitor or `monitor: <index>`, `virtual` = all monitors in one image, `window`, `element`; returns `origin {x, y}`, `method` and, for screen captures, `monitors`), `list_windows` (each window: `ref`, `title`, `process`, `pid`, `rect`, `visible_rect` = the frame actually drawn, without the invisible resize borders, `state`; a window keeps its `win{n}` ref for the session), `get_ui_tree` (its `window` object carries the same fields; `control_type`, `name`, `compact` and `max_nodes` cut the output down; `include_values: false` reads no field values), `get_dom`, `get_element`, `get_text`, `get_table` (UIA grids and Swing tables; `max_rows`, `row_count`, `omitted_rows`), `get_list_items`
 - Intent: `act`, `find`, `check` (see "Visual grounding" above for windows without elements)
 - Input: `click`, `hover`, `drag`, `scroll` (with `window`, x/y are relative to that window and it is activated first), `type_text`, `press_keys` (with `window`, that window is activated first so the keys cannot land elsewhere)
 - Clipboard: `clipboard_get`, `clipboard_set`, `clipboard_set_image`, `paste_text`, `paste_image` (the way into rich editors such as CodeMirror or Monaco that UIA cannot fill: `paste_text` sets the clipboard, presses ctrl+v and restores the previous text; read an editor back with `press_keys "ctrl+a ctrl+c"` + `clipboard_get`)
-- Element: `set_text`, `select_item`, `set_checked`, `focus`, `invoke`
+- Element: `set_text` (`secret: true` keeps the text out of the log and journal), `select_item`, `set_checked`, `focus`, `invoke`
 - Window: `window_activate`, `window_close` (waits `timeout_ms`, default 2 s; `closed: false, reason: "still_open"` plus the foreground window when a save prompt keeps it open), `window_set_state`, `window_move`, `window_exists`
 - Wait: `wait_for` (conditions `window`, `window_closed`, `element`, `text`, `enabled`, `time`), `sleep`
 - Process: `process_run`, `process_kill`, `process_exists`
@@ -183,6 +197,17 @@ Element refs are `u{n}` (UI Automation), `j{n}` (Java Swing via Java Access Brid
 ```
 
 `${NAME}` expands from `env`, then process environment variables. A step with `soft: true` only warns on failure. Steps may carry a `resolved` locator recorded at save time.
+
+A `set_text` / `type_text` / `paste_text` / `clipboard_set` step recorded with `secret: true` holds `"***"` instead of its text; replace it with `"${NAME}"` and provide `NAME` in `env` or the environment before replaying it, or the run stops at that step with `secret text was not recorded`.
+
+### Secrets and the log
+
+Every tool call is written to `%LOCALAPPDATA%\winuse\logs\winuse-{date}.log` with its arguments and the first 2000 characters of its result, and kept in the session journal that `scenario_save` writes out. For a password or token:
+
+- pass `secret: true` to `set_text`, `type_text`, `paste_text` or `clipboard_set`: the text is used but the log, the journal and any saved scenario hold `"***"`;
+- pass `include_values: false` to `get_ui_tree` when a form holds credentials: no field value is read, so none reaches the result or the log (`get_text` / `get_element` still read on request).
+
+A Swing password field reports its echo characters, never the password; an `act` instruction that spells out a secret is logged as given, so use `set_text` with `secret: true` on the field ref instead.
 
 ## Driving winuse without an AI client
 

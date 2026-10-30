@@ -136,7 +136,7 @@ public class JabMemoryChannelTests
 
             var p = JabPackets.New(JabPacketKind.IsJavaWindow, JabLayout.Wide);
             p.WriteI32(JabPackets.IsJavaWindow.Window, 0x77);
-            Assert.True(channel!.Exchange(p.Buffer, p.Size));
+            Assert.Equal(JabExchange.Answered, channel!.Exchange(p.Buffer, p.Size));
             Assert.True(p.ReadBool8(JabPackets.IsJavaWindow.Result));
             Assert.Equal([0x11000, 0x11], jvm.ReceivedTypeIds);
         }
@@ -153,7 +153,8 @@ public class JabMemoryChannelTests
         using var d = new JabDispatcher(() => jvm = FakeJvmWindow.Create(answersHandshake: false));
         try
         {
-            Assert.Null(JabMemoryChannel.Open(OurHwnd, jvm!.Hwnd));
+            Assert.Null(JabMemoryChannel.Open(OurHwnd, jvm!.Hwnd, out var failure));
+            Assert.Contains("instead of OK!", failure);
         }
         finally
         {
@@ -190,7 +191,7 @@ public class JabMemoryChannelTests
             Assert.NotNull(channel);
             d.RunAsync(() => jvm.Dispose()).GetAwaiter().GetResult();
             var p = JabPackets.New(JabPacketKind.IsJavaWindow, JabLayout.Wide);
-            Assert.False(channel!.Exchange(p.Buffer, p.Size));
+            Assert.Equal(JabExchange.SendFailed, channel!.Exchange(p.Buffer, p.Size));
         }
     }
 }
