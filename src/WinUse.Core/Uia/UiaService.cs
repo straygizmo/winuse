@@ -315,16 +315,18 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
     /// there), the Value pattern. A combo box item is clicked with the mouse while the popup is open, the way a user
     /// commits it (selecting it through the SelectionItem pattern and collapsing the popup leaves Win32 and Qt combo
     /// boxes on their old value); a list / tab / tree item goes through its SelectionItem pattern. When the read-back
-    /// does not name the item within <see cref="SelectReadBackWindow"/> the other path is tried; a read-back that still
-    /// names something else fails with the value seen. A container with no readable selection gives <c>unknown</c>.
+    /// does not name the item within <see cref="SelectReadBackWindow"/> the other path is tried (unless
+    /// <paramref name="singleAction"/>, which stops after the first path that delivered an input); a read-back that still
+    /// names something else fails with the value seen and the paths that acted. A container with no readable selection
+    /// gives <c>unknown</c>. The result counts the inputs delivered in <see cref="SelectItemResult.Actions"/>.
     /// </summary>
-    public async Task<SelectItemResult> SelectItemAsync(string refId, string item)
+    public async Task<SelectItemResult> SelectItemAsync(string refId, string item, bool singleAction = false)
     {
         var el = await LiveAsync(refId).ConfigureAwait(false);
         var type = await d.RunAsync(() => UiaLocatorResolver.TypeOf(el)).ConfigureAwait(false);
         var combo = type == "ComboBox";
         string? seen = null, name = null;
-        var acted = false;
+        var acted = new List<string>();
         foreach (var method in combo ? new[] { SelectPath.Mouse, SelectPath.Selection } : new[] { SelectPath.Selection, SelectPath.Mouse })
         {
             if (combo && method == SelectPath.Mouse)
@@ -347,22 +349,23 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
                 if (combo) await d.RunAsync(() => { try { el.Patterns.ExpandCollapse.PatternOrDefault?.Collapse(); } catch { } return 0; }).ConfigureAwait(false);
             }
             if (!done) continue;
-            acted = true;
+            acted.Add(method);
 
             var deadline = DateTime.UtcNow + SelectReadBackWindow;
             while (true)
             {
                 var (confirmed, value, readable) = await d.RunAsync(() => ReadSelection(el, target.Element, name, combo)).ConfigureAwait(false);
-                if (confirmed) return SelectItemResult.Did(method, name, value);
+                if (confirmed) return SelectItemResult.Did(method, name, value, acted.Count);
                 if (!readable)
-                    return SelectItemResult.Unverified(method, name, $"the {type} exposes no Selection or Value pattern and the item no SelectionItem state");
+                    return SelectItemResult.Unverified(method, name, $"the {type} exposes no Selection or Value pattern and the item no SelectionItem state", acted.Count);
                 seen = value;
                 if (DateTime.UtcNow >= deadline) break;
                 await Task.Delay(SelectReadBackStep).ConfigureAwait(false);
             }
+            if (singleAction) break;
         }
-        if (!acted) throw new InvalidOperationException($"Item '{item}' in {type} (ref {refId}) can be neither selected through a pattern nor clicked.");
-        throw SelectItemResult.Mismatch(refId, type, name, seen);
+        if (acted.Count == 0) throw new InvalidOperationException($"Item '{item}' in {type} (ref {refId}) can be neither selected through a pattern nor clicked; no action was delivered.");
+        throw SelectItemResult.Mismatch(refId, type, name, seen, acted, singleAction);
     }
 
     /// <summary>Opens a combo box's popup (and lets it settle) and finds the item by label: exact first, then a case-insensitive substring.</summary>
@@ -472,22 +475,62 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
         catch { return false; }
     }
 
-    public Task SetCheckedAsync(string refId, bool on) => WithAsync(refId, el =>
+    /// <summary>How many toggles <see cref="SetCheckedAsync"/> delivers at most before giving up (default mode).</summary>
+    public const int MaxToggles = 3;
+    /// <summary>How long <see cref="SetCheckedAsync"/> keeps re-reading the state after a toggle before it counts as not taken.</summary>
+    public static readonly TimeSpan CheckReadBackWindow = TimeSpan.FromMilliseconds(600);
+    private static readonly TimeSpan CheckReadBackStep = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>
+    /// Sets the checked state through the Toggle pattern (else SelectionItem) and reads it back. A toggle that has not
+    /// taken within <see cref="CheckReadBackWindow"/> is followed by another, up to <see cref="MaxToggles"/>, after which
+    /// the wrong state is an error; with <paramref name="singleAction"/> at most one toggle is delivered and a state that
+    /// still differs is reported as <c>unknown</c> instead, so a caller that must not resend can decide.
+    /// </summary>
+    public async Task<SetCheckedResult> SetCheckedAsync(string refId, bool on, bool singleAction = false)
     {
-        var t = el.Patterns.Toggle.PatternOrDefault;
-        if (t is not null)
+        var el = await LiveAsync(refId).ConfigureAwait(false);
+        var (hasToggle, hasSelection) = await d.RunAsync(() =>
+            (el.Patterns.Toggle.PatternOrDefault is not null, el.Patterns.SelectionItem.PatternOrDefault is not null)).ConfigureAwait(false);
+        if (hasToggle) return await ToggleUntilAsync(refId, el, on, singleAction ? 1 : MaxToggles, singleAction).ConfigureAwait(false);
+        if (!hasSelection) throw new NotSupportedException($"Ref '{refId}' supports neither Toggle nor SelectionItem.");
+        return await d.RunAsync(() =>
         {
-            for (var i = 0; i < 3 && (t.ToggleState.ValueOrDefault == ToggleState.On) != on; i++) t.Toggle();
-            if ((t.ToggleState.ValueOrDefault == ToggleState.On) != on)
-                throw new InvalidOperationException($"Could not set ref '{refId}' to {on}.");
-            return true;
+            var s = el.Patterns.SelectionItem.Pattern;
+            var before = s.IsSelected.ValueOrDefault;
+            if (before == on) return SetCheckedResult.Did(CheckPath.SelectionItem, 0, before);
+            if (on) s.Select(); else s.RemoveFromSelection();
+            var after = Safe(() => s.IsSelected.ValueOrDefault, before);
+            if (after == on) return SetCheckedResult.Did(CheckPath.SelectionItem, 1, after);
+            if (singleAction) return SetCheckedResult.Unconfirmed(CheckPath.SelectionItem, on, after);
+            throw SetCheckedResult.Failed(refId, on, 1, after);
+        }).ConfigureAwait(false);
+    }
+
+    private async Task<SetCheckedResult> ToggleUntilAsync(string refId, AutomationElement el, bool on, int maxToggles, bool singleAction)
+    {
+        bool? Read() => Safe<bool?>(() => el.Patterns.Toggle.Pattern.ToggleState.ValueOrDefault == ToggleState.On, null);
+        var seen = await d.RunAsync(Read).ConfigureAwait(false);
+        var toggles = 0;
+        while (seen != on)
+        {
+            if (toggles >= maxToggles)
+            {
+                if (singleAction) return SetCheckedResult.Unconfirmed(CheckPath.Toggle, on, seen);
+                throw SetCheckedResult.Failed(refId, on, toggles, seen);
+            }
+            await d.RunAsync(() => { el.Patterns.Toggle.Pattern.Toggle(); return 0; }).ConfigureAwait(false);
+            toggles++;
+            var deadline = DateTime.UtcNow + CheckReadBackWindow;
+            while (true)
+            {
+                seen = await d.RunAsync(Read).ConfigureAwait(false);
+                if (seen == on || DateTime.UtcNow >= deadline) break;
+                await Task.Delay(CheckReadBackStep).ConfigureAwait(false);
+            }
         }
-        var s = el.Patterns.SelectionItem.PatternOrDefault
-            ?? throw new NotSupportedException($"Ref '{refId}' supports neither Toggle nor SelectionItem.");
-        if (on) s.Select();
-        else if (s.IsSelected.ValueOrDefault) s.RemoveFromSelection();
-        return true;
-    });
+        return SetCheckedResult.Did(CheckPath.Toggle, toggles, seen);
+    }
 
     /// <summary>
     /// Invoke, Toggle or SelectionItem pattern, else a click at the element's centre; <see cref="InvokeMethod.Mouse"/> clicks

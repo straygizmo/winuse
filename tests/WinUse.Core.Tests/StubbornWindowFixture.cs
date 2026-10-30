@@ -13,6 +13,8 @@ internal sealed class StubbornWindowFixture : IDisposable
     private const uint WS_OVERLAPPEDWINDOW = 0x00CF0000, WS_VISIBLE = 0x10000000, WS_CHILD = 0x40000000;
     private const uint ES_MULTILINE = 0x0004, ES_AUTOVSCROLL = 0x0040;
     private const uint CBS_DROPDOWNLIST = 0x0003, WS_VSCROLL = 0x00200000, CB_ADDSTRING = 0x0143, CB_GETCURSEL = 0x0147, CB_SETCURSEL = 0x014E;
+    private const uint BS_CHECKBOX = 0x0002, BS_AUTOCHECKBOX = 0x0003, BM_GETCHECK = 0x00F0, WM_COMMAND = 0x0111;
+    private const int BN_CLICKED = 0;
 
     private delegate nint WndProc(nint hwnd, uint msg, nint wParam, nint lParam);
 
@@ -61,8 +63,17 @@ internal sealed class StubbornWindowFixture : IDisposable
     /// <summary>The index of the combo box's current selection (-1: none).</summary>
     public int ComboSelection => (int)SendMessageW(Combo, CB_GETCURSEL, 0, 0);
 
+    /// <summary>Whether the check box is checked (BM_GETCHECK).</summary>
+    public bool IsChecked(nint button) => SendMessageW(button, BM_GETCHECK, 0, 0) != 0;
+
+    private int _autoClicks, _manualClicks;
+    /// <summary>How many BN_CLICKED notifications the auto check box has sent.</summary>
+    public int AutoCheckClicks => Volatile.Read(ref _autoClicks);
+    /// <summary>How many BN_CLICKED notifications the manual check box has sent (its state never changes by itself).</summary>
+    public int ManualCheckClicks => Volatile.Read(ref _manualClicks);
+
     private static int _n;
-    private readonly bool _refuseClose, _withEdit, _withCombo;
+    private readonly bool _refuseClose, _withEdit, _withCombo, _withChecks;
     private readonly WndProc _proc; // kept alive for the window's lifetime
     private readonly Thread _thread;
     private readonly ManualResetEventSlim _ready = new();
@@ -72,16 +83,22 @@ internal sealed class StubbornWindowFixture : IDisposable
     public nint Edit { get; private set; }
     /// <summary>The drop-down list COMBOBOX control, when the fixture was created with one.</summary>
     public nint Combo { get; private set; }
+    /// <summary>A BS_AUTOCHECKBOX button labelled "Auto" that toggles itself when clicked, when the fixture was created with check boxes.</summary>
+    public nint AutoCheck { get; private set; }
+    /// <summary>A BS_CHECKBOX button labelled "Manual" whose state the owner would have to set: a click never changes it.</summary>
+    public nint ManualCheck { get; private set; }
     public string Title { get; }
 
     /// <param name="refuseClose">true: WM_CLOSE is ignored (a save prompt keeps the window); false: WM_CLOSE destroys the window like a plain app.</param>
     /// <param name="withEdit">Add a multi-line EDIT control that receives the focus whenever the window is activated.</param>
     /// <param name="withCombo">Add a drop-down list COMBOBOX holding <see cref="ComboItems"/>, the first one selected.</param>
-    public StubbornWindowFixture(bool refuseClose = true, bool withEdit = false, bool withCombo = false)
+    /// <param name="withChecks">Add the <see cref="AutoCheck"/> and <see cref="ManualCheck"/> check boxes, both unchecked.</param>
+    public StubbornWindowFixture(bool refuseClose = true, bool withEdit = false, bool withCombo = false, bool withChecks = false)
     {
         _refuseClose = refuseClose;
         _withEdit = withEdit;
         _withCombo = withCombo;
+        _withChecks = withChecks;
         Title = $"winuse stubborn {Environment.ProcessId}-{Interlocked.Increment(ref _n)}";
         _proc = Proc;
         _thread = new Thread(Loop) { IsBackground = true, Name = "stubborn-window" };
@@ -97,6 +114,8 @@ internal sealed class StubbornWindowFixture : IDisposable
             case WM_CLOSE when _refuseClose: return 0;  // refuse to close, like an app showing a save prompt
             case WM_SETFOCUS when Edit != 0: SetFocus(Edit); return 0;
             case WM_ACTIVATE when Edit != 0 && (wParam & 0xFFFF) != 0: SetFocus(Edit); return 0;
+            case WM_COMMAND when ((wParam >> 16) & 0xFFFF) == BN_CLICKED && lParam == AutoCheck && AutoCheck != 0: Interlocked.Increment(ref _autoClicks); return 0;
+            case WM_COMMAND when ((wParam >> 16) & 0xFFFF) == BN_CLICKED && lParam == ManualCheck && ManualCheck != 0: Interlocked.Increment(ref _manualClicks); return 0;
             case WM_APP_DESTROY: DestroyWindow(hwnd); return 0;
             case WM_DESTROY: PostQuitMessage(0); return 0;
             default: return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -119,6 +138,12 @@ internal sealed class StubbornWindowFixture : IDisposable
             Combo = CreateWindowExW(0, "COMBOBOX", "", WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 10, _withEdit ? 140 : 10, 200, 150, Hwnd, 0, 0, 0);
             foreach (var item in ComboItems) SendMessageW(Combo, CB_ADDSTRING, 0, item);
             SendMessageW(Combo, CB_SETCURSEL, 0, 0);
+        }
+        if (_withChecks && Hwnd != 0)
+        {
+            var top = (_withEdit ? 140 : 10) + (_withCombo ? 30 : 0);
+            AutoCheck = CreateWindowExW(0, "BUTTON", "Auto", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 10, top, 120, 24, Hwnd, 0, 0, 0);
+            ManualCheck = CreateWindowExW(0, "BUTTON", "Manual", WS_CHILD | WS_VISIBLE | BS_CHECKBOX, 140, top, 120, 24, Hwnd, 0, 0, 0);
         }
         _ready.Set();
         while (GetMessageW(out var msg, 0, 0, 0) > 0)

@@ -145,11 +145,17 @@ public sealed partial class JavaService
         return TextEntryPath.Keyboard;
     }
 
-    public async Task SetCheckedAsync(string refId, bool on)
+    /// <summary>
+    /// Sets the checked state by running the element's <c>click</c> action until the state reads as requested, at most
+    /// <see cref="MaxToggleAttempts"/> times; with <paramref name="singleAction"/> at most once, a state that still differs
+    /// being reported as <c>unknown</c> instead of an error.
+    /// </summary>
+    public async Task<SetCheckedResult> SetCheckedAsync(string refId, bool on, bool singleAction = false)
     {
         var h = await LiveAsync(refId).ConfigureAwait(false);
         var parentRole = ParentRoleOf(refId);
-        for (var attempt = 0; attempt <= MaxToggleAttempts; attempt++)
+        var maxToggles = singleAction ? 1 : MaxToggleAttempts;
+        for (var toggles = 0; ; toggles++)
         {
             var current = await bridge.RunAsync(jab =>
             {
@@ -158,8 +164,12 @@ public sealed partial class JavaService
                 return JavaStates.CheckedOf(JavaStates.Parse(i.States), ct, i.Role)
                        ?? throw new NotSupportedException($"Ref '{refId}' ({i.Role}) has no checked state.");
             }).ConfigureAwait(false);
-            if (current == on) return;
-            if (attempt == MaxToggleAttempts) break;
+            if (current == on) return SetCheckedResult.Did(CheckPath.Action, toggles, current);
+            if (toggles >= maxToggles)
+            {
+                if (singleAction) return SetCheckedResult.Unconfirmed(CheckPath.Action, on, current);
+                throw SetCheckedResult.Failed(refId, on, toggles, current);
+            }
             var outcome = await bridge.RunAsync(jab =>
             {
                 var actions = jab.GetActions(h);
@@ -170,7 +180,6 @@ public sealed partial class JavaService
             if (outcome.Item2 == JabActionOutcome.Timeout)
                 throw new InvalidOperationException($"Could not confirm the new state of ref '{refId}': {ActionTimedOutNote(outcome.action, refId)}");
         }
-        throw new InvalidOperationException($"Could not set ref '{refId}' to {on}.");
     }
 
     public async Task FocusAsync(string refId)

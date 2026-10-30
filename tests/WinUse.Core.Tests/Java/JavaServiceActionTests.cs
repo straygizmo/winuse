@@ -256,8 +256,40 @@ public class JavaServiceActionTests
 
             h.Jab.OnAction = (_, _) => true; // state never changes
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Service.SetCheckedAsync(id, false));
+            Assert.Contains("after 3 toggles it reads checked", ex.Message);
             Assert.Equal(4, h.Jab.Actions.Count);
             _ = wrap;
+        }
+    }
+
+    [Fact]
+    public async Task SetChecked_ReportsTheToggles_AndSingleActionStopsAfterOne()
+    {
+        var (h, tree) = await Up();
+        using (h)
+        {
+            var edit = new FakeNode("menu", "Edit", x: 140, y: 130, w: 40, h: 20).With(actions: ["click"])
+                .Add(new FakeNode("check box", "Word Wrap", "enabled,visible").With(actions: ["click"]));
+            h.Jab.Root.Find("menu bar", null)!.Add(edit);
+            tree = await h.TreeAsync();
+            var item = h.Jab.Root.Find("check box", "Word Wrap")!;
+            h.Jab.OnAction = (n, a) =>
+            {
+                if (n == item) n.States = n.States.Contains("checked") ? "enabled,visible" : "enabled,visible,checked";
+                return true;
+            };
+            var id = Ref(tree, "CheckBox", "Word Wrap");
+            var r = await h.Service.SetCheckedAsync(id, true);
+            Assert.Equal((CheckPath.Action, SetCheckedResult.Done, 1, true), (r.Method, r.Outcome, r.Toggles, r.Checked));
+            r = await h.Service.SetCheckedAsync(id, true);
+            Assert.Equal((SetCheckedResult.Done, 0), (r.Outcome, r.Toggles));
+            Assert.Single(h.Jab.Actions);
+
+            h.Jab.OnAction = (_, _) => true; // state never changes: one click, then the caller decides
+            r = await h.Service.SetCheckedAsync(id, false, singleAction: true);
+            Assert.Equal((SetCheckedResult.Unknown, 1, true), (r.Outcome, r.Toggles, r.Checked));
+            Assert.Contains("single_action", r.Note);
+            Assert.Equal(2, h.Jab.Actions.Count);
         }
     }
 

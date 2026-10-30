@@ -192,10 +192,17 @@ public sealed class WebService(RefRegistry refs) : IAsyncDisposable
         await page.Mouse.WheelAsync(deltaX, deltaY);
     }
 
-    public async Task SetCheckedAsync(string refId, bool on)
+    /// <summary>Checks or unchecks the input and reads the state back; the browser changes it at most once, so <c>single_action</c> needs nothing extra.</summary>
+    public async Task<SetCheckedResult> SetCheckedAsync(string refId, bool on)
     {
         var (page, sel) = Target(refId);
-        await page.Locator(sel).SetCheckedAsync(on, new LocatorSetCheckedOptions { Timeout = ActionTimeoutMs });
+        var loc = page.Locator(sel);
+        var before = await loc.IsCheckedAsync(new LocatorIsCheckedOptions { Timeout = ActionTimeoutMs });
+        if (before == on) return SetCheckedResult.Did(CheckPath.Dom, 0, before);
+        await loc.SetCheckedAsync(on, new LocatorSetCheckedOptions { Timeout = ActionTimeoutMs });
+        var after = await loc.IsCheckedAsync(new LocatorIsCheckedOptions { Timeout = ActionTimeoutMs });
+        if (after == on) return SetCheckedResult.Did(CheckPath.Dom, 1, after);
+        throw SetCheckedResult.Failed(refId, on, 1, after);
     }
 
     public async Task FocusAsync(string refId)

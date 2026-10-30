@@ -31,28 +31,32 @@ public sealed class ElementTools
             async r => new { method = await ctx.Java.SetTextAsync(r.Id, text, ParseTextEntry(method)) });
 
     [McpServerTool(Name = "select_item", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Select an item by its label in a list, combo box, tab or tree (UIA, Java), or an <option> by label in a <select> (DOM), then read the selection back and report it: item is the label that was matched and acted on, selected what the container reports as selected afterwards, outcome \"done\" when they agree. A read-back that names another item (the app refused or changed the selection) is an error that quotes what is selected, so a success result always means the item is selected. outcome \"unknown\" (with note) means the container exposes no way to read its selection (no UIA Selection / Value pattern or SelectionItem state, no AccessibleSelection): the request was delivered but not confirmed; read the element or take a screenshot. The read-back is retried for about half a second before a mismatch is reported, for apps that update the selection asynchronously.")]
+    [Description("Select an item by its label in a list, combo box, tab or tree (UIA, Java), or an <option> by label in a <select> (DOM), then read the selection back and report it: item is the label that was matched and acted on, selected what the container reports as selected afterwards, outcome \"done\" when they agree. A read-back that names another item (the app refused or changed the selection) is an error that quotes what is selected, so a success result always means the item is selected. outcome \"unknown\" (with note) means the container exposes no way to read its selection (no UIA Selection / Value pattern or SelectionItem state, no AccessibleSelection): the request was delivered but not confirmed; read the element or take a screenshot. The read-back is retried for about half a second before a mismatch is reported, for apps that update the selection asynchronously. On a UIA container a read-back that still disagrees makes winuse try the other path (a combo box: mouse click in the popup first, then the SelectionItem pattern; lists, tabs, trees: the pattern first, then the click); actions counts the inputs that reached the app (1, or 2 when both paths acted), and a mismatch error names the paths delivered. single_action=true stops after the first path that delivered an input, so the app never receives a second selection: for callers that must not resend on an unconfirmed result.")]
     public static Task<CallToolResult> SelectItem(
         ToolContext ctx,
         [Description("Element ref (u{n}, j{n} or w{n}) of the container.")] string @ref,
-        [Description("Item label (exact match preferred, then substring).")] string item) =>
-        OnRef(ctx, "select_item", ToolContext.Args(("ref", @ref), ("item", item)), @ref,
-            async r => Describe(await ctx.Uia.SelectItemAsync(r.Id, item)),
+        [Description("Item label (exact match preferred, then substring).")] string item,
+        [Description("true: deliver at most one input (no fallback to the other path when the read-back disagrees); the mismatch is then reported as an error naming the path that acted. Default false.")] bool single_action = false) =>
+        OnRef(ctx, "select_item", ToolContext.Args(("ref", @ref), ("item", item), ("single_action", single_action ? (object)true : null)), @ref,
+            async r => Describe(await ctx.Uia.SelectItemAsync(r.Id, item, single_action)),
             async r => Describe(await ctx.Web.SelectOptionAsync(r.Id, item)),
             async r => Describe(await ctx.Java.SelectItemAsync(r.Id, item)));
 
-    private static object Describe(SelectItemResult r) => new { method = r.Method, outcome = r.Outcome, item = r.Item, selected = r.Selected, note = r.Note };
+    private static object Describe(SelectItemResult r) => new { method = r.Method, outcome = r.Outcome, item = r.Item, selected = r.Selected, actions = r.Actions, note = r.Note };
 
     [McpServerTool(Name = "set_checked", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Set a check box / toggle / radio button to the given state.")]
+    [Description("Set a check box / toggle / radio button to the given state and read it back. Reports method (\"toggle\" UIA Toggle pattern, \"selection_item\" UIA SelectionItem, \"action\" Java click action, \"dom\"), toggles (how many toggles were delivered: 0 when the control already had the state), checked (the state read back afterwards) and outcome: \"done\" when the read-back shows the requested state. By default a toggle that has not taken within about half a second is followed by another, up to 3, and a state that is still wrong is an error naming the toggles delivered. single_action=true delivers at most one toggle and reports outcome \"unknown\" with note when the state still differs, so a caller that must not resend can read the element and decide.")]
     public static Task<CallToolResult> SetChecked(
         ToolContext ctx,
         [Description("Element ref (u{n}, j{n} or w{n}).")] string @ref,
-        [Description("true to check, false to uncheck.")] bool @checked) =>
-        OnRef(ctx, "set_checked", ToolContext.Args(("ref", @ref), ("checked", @checked)), @ref,
-            r => ctx.Uia.SetCheckedAsync(r.Id, @checked),
-            r => ctx.Web.SetCheckedAsync(r.Id, @checked),
-            r => ctx.Java.SetCheckedAsync(r.Id, @checked));
+        [Description("true to check, false to uncheck.")] bool @checked,
+        [Description("true: toggle at most once and report outcome \"unknown\" instead of toggling again when the state read back still differs. Default false (up to 3 toggles, then an error).")] bool single_action = false) =>
+        OnRef(ctx, "set_checked", ToolContext.Args(("ref", @ref), ("checked", @checked), ("single_action", single_action ? (object)true : null)), @ref,
+            async r => Describe(await ctx.Uia.SetCheckedAsync(r.Id, @checked, single_action)),
+            async r => Describe(await ctx.Web.SetCheckedAsync(r.Id, @checked)),
+            async r => Describe(await ctx.Java.SetCheckedAsync(r.Id, @checked, single_action)));
+
+    private static object Describe(SetCheckedResult r) => new { method = r.Method, outcome = r.Outcome, toggles = r.Toggles, @checked = r.Checked, note = r.Note };
 
     [McpServerTool(Name = "focus", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Give keyboard focus to an element.")]
