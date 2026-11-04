@@ -90,6 +90,40 @@ public class GrounderTests
         var g = new Grounder(new FakeJev(configured: false), new FakeObservation(Cand("u1", "Cancel")), new FakeExecutor(), TestConfig.Default);
         var r = await g.FindAsync("anything", null);
         Assert.False(r.Grounded); Assert.Single(r.Ranked);
+        Assert.Equal(JevClient.NotConfiguredMessage, r.Reason);
+    }
+
+    [Fact]
+    public async Task FindAsync_WithoutJev_RanksByTextMatch()
+    {
+        var g = new Grounder(new FakeJev(configured: false), new FakeObservation(Cand("u1", "Cancel"), Cand("u2", "Save"), Cand("u3", "Help")), new FakeExecutor(), TestConfig.Default);
+        var r = await g.FindAsync("press the Save button", null);
+        Assert.False(r.Grounded);
+        Assert.Equal("u2", r.Ranked[0].Candidate.Id);
+        Assert.True(r.Ranked[0].Probability > 0.9);
+        Assert.Equal(0, r.Ranked[1].Probability);
+    }
+
+    [Fact]
+    public async Task FindAsync_WhenJevUnavailable_ReportsTheErrorAndRanksByTextMatch()
+    {
+        var r = await Make(new FakeJev(throwUnavailable: true), new FakeExecutor(), Cand("u1", "Cancel"), Cand("u2", "Save")).FindAsync("save", null);
+        Assert.False(r.Grounded);
+        Assert.Equal("down", r.Reason);
+        Assert.Equal("u2", r.Ranked[0].Candidate.Id);
+    }
+
+    [Fact]
+    public async Task ActAsync_WithoutModel_CarriesTheDetailAndTextRankedAlternatives()
+    {
+        var g = new Grounder(new FakeJev(configured: false), new FakeObservation(Cand("u1", "Cancel"), Cand("u2", "Save")), new FakeExecutor(), TestConfig.Default);
+        var r = await g.ActAsync("click save", null, ActKind.Click, null, null);
+        Assert.Equal("model not configured", r.Reason);
+        Assert.Equal(JevClient.NotConfiguredMessage, r.Detail);
+        Assert.Equal("u2", r.Alternatives[0].Item1.Id);
+        var down = await Make(new FakeJev(throwUnavailable: true), new FakeExecutor(), Cand("u1")).ActAsync("x", null, ActKind.Click, null, null);
+        Assert.Equal("model unavailable", down.Reason);
+        Assert.Equal("down", down.Detail);
     }
 
     [Fact]
@@ -119,7 +153,8 @@ public class GrounderTests
     public async Task CheckAsync_WhenJevUnavailable_ReportsNotAvailable()
     {
         var g = new Grounder(new FakeJev(throwUnavailable: true), new FakeObservation(), new FakeExecutor(), TestConfig.WithJev("k"));
-        Assert.False((await g.CheckAsync("done?", null)).Available);
+        var c = await g.CheckAsync("done?", null);
+        Assert.False(c.Available); Assert.Equal("down", c.Reason);
     }
 
     [Fact]

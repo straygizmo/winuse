@@ -11,7 +11,7 @@ namespace WinUse.Tools;
 public sealed class IntentTools
 {
     [McpServerTool(Name = "act", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Perform a natural-language intent on the window: build candidates, let the decision model (Jev or Clef) pick the target (and action kind when kind=auto), execute it when confident, then verify. When not confident (or no decision model is configured / reachable) nothing is executed and the top candidates are returned (plus a window screenshot when not confident) so you can act with click/set_text yourself. A window without any UIA / DOM elements (VM console, emulator, VNC) is handled visually: the target is located on a screenshot and clicked; the result then carries point {x, y} and a pt{n} ref.")]
+    [Description("Perform a natural-language intent on the window: build candidates, let the decision model (Jev or Clef) pick the target (and action kind when kind=auto), execute it when confident, then verify. When not confident (or no decision model is configured / reachable) nothing is executed and the top candidates are returned (plus a window screenshot when not confident) so you can act with click/set_text yourself; reason says which case it is, reason_detail why the model could not be asked (missing keys, HTTP error, timeout), and the alternatives are then ranked by text match with the intent (ranking explains the scores). A window without any UIA / DOM elements (VM console, emulator, VNC) is handled visually: the target is located on a screenshot and clicked; the result then carries point {x, y} and a pt{n} ref.")]
     public static Task<CallToolResult> Act(
         ToolContext ctx,
         [Description("What to do, e.g. \"Click the Save button\".")] string intent,
@@ -58,8 +58,13 @@ public sealed class IntentTools
                 verified = r.Verified,
                 alternatives = r.Alternatives.Select(a => CandidateJson(a.Item1, a.Item2)).ToList(),
                 reason = r.Reason,
+                reason_detail = r.Detail,
+                ranking = r.Executed || r.Detail is null ? null : LexicalRankingNote,
             };
         });
+
+    /// <summary>What the probabilities of an ungrounded result mean.</summary>
+    private const string LexicalRankingNote = "lexical: the probabilities are text-match scores between the intent and each element's label / value / role (1 = exact label), not decision-model probabilities. Pick the target from the candidates and act with click / set_text / invoke, or use get_ui_tree with name / control_type.";
 
     /// <summary>Registers a <c>pt{n}</c> ref for a screen point located on a screenshot of <paramref name="w"/>.</summary>
     private static ElementRef RegisterPoint(ToolContext ctx, WinUse.Core.Windows.WindowInfo w, (int X, int Y) pt) =>
@@ -104,7 +109,7 @@ public sealed class IntentTools
         });
 
     [McpServerTool(Name = "find", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Rank the elements that best match a natural-language intent without acting. Returns refs with labels and probabilities (probability 0 and grounded=false when no decision model is configured or reachable). On a window without elements the target is located on a screenshot and returned as a pt{n} ref with point {x, y}.")]
+    [Description("Rank the elements that best match a natural-language intent without acting. Returns refs with labels and probabilities. grounded=true: the decision model (Jev or Clef) ranked them. grounded=false: the model could not be asked (reason says why: no keys configured, HTTP error, timeout) and the candidates are ranked by text match between the intent and each element's label / value / role instead (probability is that score, 1 = exact label; ranking explains it), so the list is still usable to pick a target. On a window without elements the target is located on a screenshot and returned as a pt{n} ref with point {x, y}.")]
     public static Task<CallToolResult> Find(
         ToolContext ctx,
         [Description("The element you are looking for, e.g. \"the search box\".")] string intent,
@@ -123,13 +128,15 @@ public sealed class IntentTools
             {
                 grounded = r.Grounded,
                 confidence = r.Confidence,
+                reason = r.Reason,
+                ranking = r.Grounded ? "model" : (ranked.Count > 0 ? LexicalRankingNote : null),
                 point = r.Point is { } p ? new { x = p.X, y = p.Y } : null,
                 candidates = ranked.Select(c => CandidateJson(c.Candidate, c.Probability)).ToList(),
             };
         });
 
     [McpServerTool(Name = "check", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Ask the decision model (Jev or Clef) a yes/no question about the current state of the window. Returns the probability of \"yes\"; available=false when no decision model is configured or reachable. On a window without elements (or with WINUSE_SCREENSHOTS=always) a screenshot is attached.")]
+    [Description("Ask the decision model (Jev or Clef) a yes/no question about the current state of the window. Returns the probability of \"yes\"; available=false with reason when no decision model is configured or reachable (use get_ui_tree / get_text / assert_* to check the state yourself then). On a window without elements (or with WINUSE_SCREENSHOTS=always) a screenshot is attached.")]
     public static Task<CallToolResult> Check(
         ToolContext ctx,
         [Description("A yes/no question, e.g. \"Is the document shown as saved?\".")] string question,
@@ -137,7 +144,7 @@ public sealed class IntentTools
         ctx.RunStepAsync("check", ToolContext.Args(("question", question), ("window", window)), async _ =>
         {
             var r = await ctx.Grounder.CheckAsync(question, window);
-            return new { probability = r.Probability, available = r.Available };
+            return new { probability = r.Probability, available = r.Available, reason = r.Reason };
         });
 
     internal static ActKind ParseKind(string kind) =>

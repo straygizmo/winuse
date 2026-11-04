@@ -26,6 +26,36 @@ public static class UiTreeShaper
         return root with { Children = root.Children.SelectMany(c => Shape(c, 1)).ToList() };
     }
 
+    /// <summary>
+    /// The element the tree should be scoped to: the node whose control type is <paramref name="controlType"/> (when given,
+    /// case-insensitive) and whose name matches <paramref name="name"/> (when given). When several match, the one that has
+    /// the keyboard focus or contains it wins (a browser's active tab page over its side panes), else the first in
+    /// document order. Null when nothing matches; <paramref name="matches"/> then lists what was considered, for the error.
+    /// </summary>
+    public static UiNode? FindScope(UiNode root, string? controlType, Regex? name, out IReadOnlyList<UiNode> matches)
+    {
+        bool Matches(UiNode n) =>
+            (controlType is null || string.Equals(n.ControlType, controlType, StringComparison.OrdinalIgnoreCase))
+            && (name is null || (n.Name is not null && name.IsMatch(n.Name)));
+        var all = new List<UiNode>();
+        void Collect(UiNode n)
+        {
+            if (Matches(n)) all.Add(n);
+            foreach (var c in n.Children) Collect(c);
+        }
+        foreach (var c in root.Children) Collect(c);
+        matches = all;
+        if (all.Count == 0) return null;
+        return all.FirstOrDefault(n => n.Focused) ?? all.FirstOrDefault(ContainsFocus) ?? all[0];
+    }
+
+    /// <summary>Whether the node or one of its descendants has the keyboard focus.</summary>
+    public static bool ContainsFocus(UiNode n) => n.Focused || n.Children.Any(ContainsFocus);
+
+    /// <summary>The subtree with depths counted from <paramref name="n"/> (0) again, for a node taken out of a bigger tree.</summary>
+    public static UiNode Rebase(UiNode n, int depth = 0) =>
+        n with { Depth = depth, Children = n.Children.Select(c => Rebase(c, depth + 1)).ToList() };
+
     /// <summary>Parses a comma-separated control type list ("Edit, Button") into its entries; null or blank gives null.</summary>
     public static IReadOnlyList<string>? ParseControlTypes(string? list) =>
         string.IsNullOrWhiteSpace(list)

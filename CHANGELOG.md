@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+Added
+
+- `type_text`, `press_keys`, `paste_text` and `paste_image` without `window` report `foreground` (the window that had the focus when the input was sent, with a ref) and a `warning` when that window belongs to another process than the last observed window, so keys that landed in the wrong app are visible in the result instead of silently "pressed". Coordinate `click` reports `lands_on` (the window under the point) and the same kind of `warning`; a ref `click` reports a `warning` when the element's window would not take the foreground. The `window` argument, which activates the target first and fails instead of typing elsewhere, is now recommended in every input tool's description.
+- `get_ui_tree` takes `scope_type` and `scope_name`: the tree of the element with that control type and/or name instead of the whole window. `scope_type: "Document"` returns a browser's or web view's page content without the address bar, favourites and tab strip; when several elements match, the one with (or containing) the keyboard focus is taken, so it is the active tab's page rather than a side pane's, and `scope_name` picks another. The result's `scope` names the element taken (ref, type, name, rect, focused, how many matched); when nothing matches the call fails and lists the elements of that type.
+- `find` and `act` rank the candidates by text match when no decision model can be asked: the intent is compared with each element's label, value and role (shared words, character bigrams for Japanese and other scripts without word spaces, a role word such as "button" / "ボタン" as a tie-breaker), the best match first with `probability` 1 for an exact label and 0 for no overlap, instead of an alphabetical list with every probability 0. `reason` (`find`, `check`) and `reason_detail` (`act`) say why the model was not asked: the missing keys, the HTTP error or the timeout. `ranking` explains that the probabilities are match scores.
+
 ## 0.2.7 - 2026-10-30
 
 Added

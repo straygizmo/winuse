@@ -104,6 +104,34 @@ public class ToolHelpersTests
         Assert.Equal((null, null), ProcessTools.PickStartedWindow([Win(1, "x", "nothing")], "MDium", 9, "mdium", allowTitleOnly: true));
     }
     [Fact]
+    public void ForegroundWarning_OnlyWhenTheFocusIsInAnotherProcess()
+    {
+        var observed = Win(7, "app", "Main - App");
+        Assert.Null(InputTools.ForegroundWarning(null, Win(1, "explorer", "Desktop"), "keys"));
+        Assert.Null(InputTools.ForegroundWarning(observed, observed, "keys"));
+        // A dialog of the same process is where the keys should go.
+        Assert.Null(InputTools.ForegroundWarning(observed, Win(7, "app", "Save As"), "keys"));
+        var w = InputTools.ForegroundWarning(observed, Win(1, "devenv", "Editor - IDE"), "keys");
+        Assert.Contains("'Editor - IDE' (devenv, pid 1)", w);
+        Assert.Contains("'Main - App' (app, pid 7)", w);
+        Assert.Contains("Pass window", w);
+        Assert.Contains("reached nothing", InputTools.ForegroundWarning(observed, null, "keys"));
+    }
+
+    [Fact]
+    public void LandsOnWarning_OnlyWhenThePointIsOnAnotherProcess()
+    {
+        var observed = Win(7, "app", "Main - App");
+        Assert.Null(InputTools.LandsOnWarning(null, Win(1, "explorer", "Desktop"), 1, 2));
+        Assert.Null(InputTools.LandsOnWarning(observed, Win(7, "app", "Popup"), 1, 2));
+        var w = InputTools.LandsOnWarning(observed, Win(1, "explorer", "Taskbar"), 10, 20);
+        Assert.Contains("(10,20)", w);
+        Assert.Contains("'Taskbar' (explorer, pid 1)", w);
+        Assert.Contains("window-relative", w);
+        Assert.Contains("on no window", InputTools.LandsOnWarning(observed, null, 10, 20));
+    }
+
+    [Fact]
     public void JavaRefs_AreRecognised()
     {
         Assert.True(ToolContext.IsJavaRef("j3"));
