@@ -144,11 +144,13 @@ public sealed class ObserveTools
     };
 
     [McpServerTool(Name = "get_ui_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect); the window object carries the window's rect, visible_rect and state too. Use the refs with the other tools. Narrow the output with control_type / name (matching nodes are hoisted to their nearest kept ancestor), compact (no null / default fields) and max_nodes; include_values=false leaves every value unread (and out of the log). Java Swing windows are read through Java Access Bridge and return j{n} refs (menu items are listed even while their menu is closed; a table is one Table node, read its cells with get_table or scope the tree to it); node_limit_reached: true means the Java walk stopped at node_limit elements and the tree is incomplete (use scope, control_type or max_depth); depth_limit_reached: true means a Java element at max_depth had children that were not walked; unreadable_nodes counts Java children the bridge could not read (skipped). Any of these means an element that exists may be missing from the tree; a Java tree always carries all three (false / 0 when the walk was complete), and every result carries backend (\"java_access_bridge\" or \"uia\") and server_version. A Java element's rect is the part on screen (clipped to its scroll viewport and the window); an element scrolled out of view or beyond the window edge is offscreen: true (listed only with include_offscreen, with its full rect) and click refuses it. java_access_bridge explains why a Java window could not be read that way and java_access_bridge_diagnostics carries the facts (stage, jvm_pid, bridge_module, connected_jvms, timeout_ms, blocked_by_action_at when an invoke that opened a modal dialog holds the bridge).")]
+    [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect); the window object carries the window's rect, visible_rect and state too. Use the refs with the other tools. Narrow the output: scope (a ref) or scope_type / scope_name (a control type and/or name regex, e.g. scope_type=\"Document\" for a browser's page content without the toolbars, favourites and tab strip; the focused match wins, so it is the active tab's page) return only that element's subtree and report it under scope; control_type / name keep only matching nodes (hoisted to their nearest kept ancestor); compact drops null / default fields; max_nodes caps the count; include_values=false leaves every value unread (and out of the log). Java Swing windows are read through Java Access Bridge and return j{n} refs (menu items are listed even while their menu is closed; a table is one Table node, read its cells with get_table or scope the tree to it); node_limit_reached: true means the Java walk stopped at node_limit elements and the tree is incomplete (use scope, control_type or max_depth); depth_limit_reached: true means a Java element at max_depth had children that were not walked; unreadable_nodes counts Java children the bridge could not read (skipped). Any of these means an element that exists may be missing from the tree; a Java tree always carries all three (false / 0 when the walk was complete), and every result carries backend (\"java_access_bridge\" or \"uia\") and server_version. A Java element's rect is the part on screen (clipped to its scroll viewport and the window); an element scrolled out of view or beyond the window edge is offscreen: true (listed only with include_offscreen, with its full rect) and click refuses it. java_access_bridge explains why a Java window could not be read that way and java_access_bridge_diagnostics carries the facts (stage, jvm_pid, bridge_module, connected_jvms, timeout_ms, blocked_by_action_at when an invoke that opened a modal dialog holds the bridge).")]
     public static Task<CallToolResult> GetUiTree(
         ToolContext ctx,
         [Description("Window ref (win{n}) or title regex. Default: last observed window, else the foreground window.")] string? window = null,
         [Description("Optional element ref (u{n} or j{n}) to return only that subtree.")] string? scope = null,
+        [Description("Return only the subtree of the element with this control type (case-insensitive), e.g. \"Document\" for the page content of a browser or web view, \"Pane\" with scope_name for a named pane, \"Table\" for a table. When several elements match, the one with the keyboard focus (or containing it) is taken, else the first in document order; combine with scope_name to pick another. The result's scope names the element taken; when nothing matches the call fails and lists the elements of that type. The element must lie within max_depth of the window.")] string? scope_type = null,
+        [Description("Regex (case-insensitive) the name of the element to scope to must match; with scope_type, or alone to scope to the first (focused) element of any type with that name.")] string? scope_name = null,
         [Description("Maximum depth to walk.")] int max_depth = 12,
         [Description("Keep only interactive elements and labelled text.")] bool interactive_only = true,
         [Description("Include offscreen elements.")] bool include_offscreen = false,
@@ -157,11 +159,13 @@ public sealed class ObserveTools
         [Description("Omit null and default-valued fields (automationId, value, checked, enabled=true, offscreen=false, focused=false, depth) and print rect as \"x,y,w,h\".")] bool compact = false,
         [Description("Keep at most this many nodes (document order); the result then reports omitted_nodes.")] int? max_nodes = null,
         [Description("false: do not read element values (edit field text, combo selection, slider value); value is null everywhere and no field content reaches the log. Use for forms with credentials.")] bool include_values = true) =>
-        ctx.RunStepAsync("get_ui_tree", ToolContext.Args(("window", window), ("scope", scope), ("max_depth", max_depth),
-            ("interactive_only", interactive_only), ("include_offscreen", include_offscreen), ("control_type", control_type), ("name", name),
+        ctx.RunStepAsync("get_ui_tree", ToolContext.Args(("window", window), ("scope", scope), ("scope_type", scope_type), ("scope_name", scope_name),
+            ("max_depth", max_depth), ("interactive_only", interactive_only), ("include_offscreen", include_offscreen), ("control_type", control_type), ("name", name),
             ("compact", compact), ("max_nodes", max_nodes), ("include_values", include_values ? null : false)), async _ =>
         {
             var nameRegex = name is null ? null : new Regex(name, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
+            var scopeNameRegex = scope_name is null ? null : new Regex(scope_name, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
+            var scopeType = string.IsNullOrWhiteSpace(scope_type) ? null : scope_type.Trim();
             var types = UiTreeShaper.ParseControlTypes(control_type);
             if (max_nodes is < 1) throw new ArgumentOutOfRangeException(nameof(max_nodes), "max_nodes must be at least 1.");
 
@@ -187,6 +191,14 @@ public sealed class ObserveTools
                 await Task.Delay(UiaService.EmptyTreeRetryDelay);
                 tree = await Read();
             }
+            object? scoped = null;
+            if (scopeType is not null || scopeNameRegex is not null)
+            {
+                var picked = UiTreeShaper.FindScope(tree, scopeType, scopeNameRegex, out var matches)
+                    ?? throw new InvalidOperationException(ScopeNotFoundMessage(tree, w, scopeType, scope_name, max_depth, interactive_only));
+                scoped = new { @ref = picked.Ref, controlType = picked.ControlType, name = picked.Name, rect = picked.Rect, focused = picked.Focused, matches = matches.Count };
+                tree = UiTreeShaper.Rebase(picked);
+            }
             tree = UiTreeShaper.Filter(tree, types, nameRegex);
             var omitted = 0;
             if (max_nodes is { } max) (tree, omitted) = UiTreeShaper.Truncate(tree, max);
@@ -199,6 +211,7 @@ public sealed class ObserveTools
                 backend = isJava ? "java_access_bridge" : "uia",
                 window = new { @ref = ctx.RegisterWindow(w).Id, title = w.Title, process = w.ProcessName, pid = w.Pid, rect = w.Rect,
                     visible_rect = w.State == WindowState.Minimized ? w.Rect : WindowService.VisibleRectOf(w.Hwnd), state = w.State.ToString().ToLowerInvariant() },
+                scope = scoped,
                 tree = compact ? (object)UiTreeShaper.Compact(tree) : tree,
                 omitted_nodes = omitted > 0 ? omitted : (int?)null,
                 node_limit_reached = javaResult is { } j1 ? j1.NodeLimitReached : (bool?)null,
@@ -209,6 +222,27 @@ public sealed class ObserveTools
                 java_access_bridge_diagnostics = diagnosis is null ? null : DiagnosisJson(diagnosis),
             };
         });
+
+    /// <summary>Why scope_type / scope_name picked nothing, with the elements that were there to choose from.</summary>
+    internal static string ScopeNotFoundMessage(UiNode tree, WindowInfo w, string? scopeType, string? scopeName, int maxDepth, bool interactiveOnly)
+    {
+        var wanted = string.Join(" and ", new[]
+        {
+            scopeType is null ? null : $"scope_type '{scopeType}'",
+            scopeName is null ? null : $"scope_name '{scopeName}'",
+        }.Where(s => s is not null));
+        var sb = new System.Text.StringBuilder($"No element matches {wanted} in window '{w.Title}'.");
+        if (scopeType is not null)
+        {
+            UiTreeShaper.FindScope(tree, scopeType, null, out var sameType);
+            sb.Append(sameType.Count == 0
+                ? $" The tree has no {scopeType} element"
+                : $" {scopeType} elements in the tree: {string.Join(", ", sameType.Take(10).Select(n => $"'{n.Name}'"))}{(sameType.Count > 10 ? ", ..." : "")}");
+            sb.Append('.');
+        }
+        sb.Append($" The tree was walked to max_depth {maxDepth}{(interactiveOnly ? " with interactive_only" : "")}; a deeper or non-interactive element needs a larger max_depth or interactive_only=false.");
+        return sb.ToString();
+    }
 
     /// <summary>The diagnosis as the tool result carries it: facts about the JVM and the connection, no window or element data.</summary>
     internal static object DiagnosisJson(JabWindowDiagnosis d) => new

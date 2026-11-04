@@ -12,11 +12,11 @@ public sealed class InputTools
 {
     private const int WebScrollPixelsPerNotch = 100;
 
-    private const string WindowArg = "Window ref (win{n}) or title regex. When given, the window is activated first and x,y are relative to its rect (the origin a window screenshot reports), so an image pixel of screenshot(window) can be passed as x,y directly; without it x,y are screen coordinates.";
-    private const string InputWindowArg = "Window ref (win{n}) or title regex to activate before sending the input; fails when the window does not exist or cannot take the foreground. Without it the input goes to whichever window has focus.";
+    private const string WindowArg = "Window ref (win{n}) or title regex. When given, the window is activated first and x,y are relative to its rect (the origin a window screenshot reports), so an image pixel of screenshot(window) can be passed as x,y directly; without it x,y are screen coordinates. Pass it whenever the target window may not be in the foreground.";
+    private const string InputWindowArg = "Window ref (win{n}) or title regex to activate before sending the input; fails when the window does not exist or cannot take the foreground. Without it the input goes to whichever window has focus (reported as foreground, with a warning when that is not the last observed window's process). Pass it whenever the target window may not be in the foreground.";
 
     [McpServerTool(Name = "click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Click an element by ref (UIA / Java: centre of its on-screen rectangle plus offset, resolved at click time; DOM: Playwright click) or at coordinates x,y (physical pixels; screen coordinates, or window-relative when window is given). A ref click is refused, with the reason and nothing clicked, when the element has no on-screen part (scrolled out of its viewport, beyond the window edge after a resize) or when the point lies on a window of another process (the target moved or is covered; the result's lands_on names the window under the point). Coordinates are clicked as given.")]
+    [Description("Click an element by ref (UIA / Java: centre of its on-screen rectangle plus offset, resolved at click time, its window brought to the foreground first; DOM: Playwright click) or at coordinates x,y (physical pixels; screen coordinates, or window-relative when window is given). A ref click is refused, with the reason and nothing clicked, when the element has no on-screen part (scrolled out of its viewport, beyond the window edge after a resize) or when the point lies on a window of another process (the target moved or is covered). Coordinates are clicked as given. lands_on names the window under the point; warning says when that is not the last observed window's process (pass window with window-relative x,y to target it) or when the ref's window would not take the foreground.")]
     public static Task<CallToolResult> Click(
         ToolContext ctx,
         [Description("Element ref (u{n}, j{n}, w{n}) or window ref (win{n}). Either ref or x,y is required.")] string? @ref = null,
@@ -41,15 +41,25 @@ public sealed class InputTools
                     await ctx.Web.ClickAsync(r.Id, b, count, offset_x, offset_y);
                     return new { clicked = r.Id, window = target?.Json };
                 }
-                if (target is null) await ctx.ActivateOwnerAsync(r);
+                var warning = target is null ? await ctx.ActivateOwnerAsync(r) : null;
                 var (cx, cy) = await ctx.CenterOfAsync(r);
                 var hit = await ctx.EnsureClickLandsOnOwnerAsync(r, cx + offset_x, cy + offset_y);
                 await ctx.Input.ClickAsync(cx + offset_x, cy + offset_y, b, count);
-                return new { clicked = r.Id, x = cx + offset_x, y = cy + offset_y, window = target?.Json, lands_on = hit };
+                return new { clicked = r.Id, x = cx + offset_x, y = cy + offset_y, window = target?.Json, lands_on = hit, warning };
             }
             var (px, py) = ToScreen(target, RequirePoint(x, y, "ref or x,y"));
+            // Say which window the point is on; a point on a window of another process than the last observed one is almost always a mistake.
+            var under = await ctx.Windows.RootWindowAtAsync(px + offset_x, py + offset_y);
+            var last = target is null ? await ctx.LastWindowInfoAsync() : null;
             await ctx.Input.ClickAsync(px + offset_x, py + offset_y, b, count);
-            return new { x = px + offset_x, y = py + offset_y, window = target?.Json };
+            return new
+            {
+                x = px + offset_x,
+                y = py + offset_y,
+                window = target?.Json,
+                lands_on = under is null ? null : new { title = under.Title, process = under.ProcessName, pid = under.Pid },
+                warning = LandsOnWarning(last, under, px + offset_x, py + offset_y),
+            };
         });
 
     [McpServerTool(Name = "hover", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
@@ -148,7 +158,7 @@ public sealed class InputTools
         });
 
     [McpServerTool(Name = "type_text", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Type text into the focused control as Unicode keystrokes (newlines become Enter). With window, that window is activated first so the keystrokes cannot land elsewhere. With secret=true the text is kept out of the log, the journal and saved scenarios.")]
+    [Description("Type text into the focused control as Unicode keystrokes (newlines become Enter). With window, that window is activated first so the keystrokes cannot land elsewhere; without it the result's foreground names the window that had the focus and warning says when that is not the last observed window's process. With secret=true the text is kept out of the log, the journal and saved scenarios.")]
     public static Task<CallToolResult> TypeText(
         ToolContext ctx,
         [Description("The text to type.")] string text,
@@ -159,12 +169,13 @@ public sealed class InputTools
             ("secret", secret ? true : null)), async _ =>
         {
             var target = await ResolveTargetWindowAsync(ctx, window);
+            var dest = await InputDestinationAsync(ctx, target);
             await ctx.Input.TypeTextAsync(text, per_char_delay_ms);
-            return new { typed = text.Length, window = target?.Json };
+            return new { typed = text.Length, window = target?.Json, foreground = dest.Foreground, warning = dest.Warning("text") };
         });
 
     [McpServerTool(Name = "press_keys", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Press a key chord such as \"ctrl+s\", \"alt+f4\", \"enter\" or \"f5\". Several chords separated by spaces are pressed in order (\"ctrl+a delete\"). With window, that window is activated first so the keys cannot land elsewhere.")]
+    [Description("Press a key chord such as \"ctrl+s\", \"alt+f4\", \"enter\" or \"f5\". Several chords separated by spaces are pressed in order (\"ctrl+a delete\"). With window, that window is activated first so the keys cannot land elsewhere; without it the result's foreground names the window that had the focus and warning says when that is not the last observed window's process.")]
     public static Task<CallToolResult> PressKeys(
         ToolContext ctx,
         [Description("Chord(s): modifiers ctrl/alt/shift/win joined with '+' to one key (letter, digit, enter, tab, esc, space, backspace, delete, home, end, pageup, pagedown, arrows, insert, f1-f24).")] string keys,
@@ -174,14 +185,59 @@ public sealed class InputTools
             var chords = keys.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(KeyChord.Parse).ToList();
             if (chords.Count == 0) throw new ArgumentException("keys is empty.");
             var target = await ResolveTargetWindowAsync(ctx, window);
+            var dest = await InputDestinationAsync(ctx, target);
             foreach (var c in chords) await ctx.Input.PressAsync(c);
-            return new { pressed = chords.Count, window = target?.Json };
+            return new { pressed = chords.Count, window = target?.Json, foreground = dest.Foreground, warning = dest.Warning("keys") };
         });
 
     /// <summary>A window named by a tool's window argument, activated; its rect is the origin of window-relative coordinates.</summary>
     public sealed record TargetWindow(WindowInfo Info, string Ref)
     {
         public object Json => new { @ref = Ref, title = Info.Title, origin = new { x = Info.Rect.X, y = Info.Rect.Y } };
+    }
+
+    /// <summary>
+    /// Where keyboard input sent without a window argument goes: the foreground window at that moment (for the result) and
+    /// the last observed window (to warn when they belong to different processes). Both null when a window was given.
+    /// </summary>
+    public sealed record InputDestination(object? Foreground, WindowInfo? ForegroundInfo, WindowInfo? LastObserved)
+    {
+        public string? Warning(string what) => ForegroundWarning(LastObserved, ForegroundInfo, what);
+    }
+
+    /// <summary>Captures the input destination before the input is sent; nothing when <paramref name="target"/> was activated.</summary>
+    public static async Task<InputDestination> InputDestinationAsync(ToolContext ctx, TargetWindow? target)
+    {
+        if (target is not null) return new InputDestination(null, null, null);
+        var fg = await ctx.Windows.ForegroundAsync();
+        var last = await ctx.LastWindowInfoAsync();
+        return new InputDestination(fg is null ? null : ObserveTools.WindowJson(ctx.RegisterWindow(fg).Id, fg), fg, last);
+    }
+
+    /// <summary>
+    /// A warning when keyboard input went to a window of another process than the last observed one (a dialog of the same
+    /// process is fine: that is where the keys should go). Null when there is nothing to warn about.
+    /// </summary>
+    public static string? ForegroundWarning(WindowInfo? lastObserved, WindowInfo? foreground, string what)
+    {
+        if (lastObserved is null) return null;
+        if (foreground is null)
+            return $"No window had the focus when the {what} were sent; they reached nothing. Pass window to activate '{lastObserved.Title}' first.";
+        if (foreground.Pid == lastObserved.Pid) return null;
+        return $"The {what} went to '{foreground.Title}' ({foreground.ProcessName}, pid {foreground.Pid}), which had the focus, not to the last observed window "
+               + $"'{lastObserved.Title}' ({lastObserved.ProcessName}, pid {lastObserved.Pid}). Pass window to activate the target first, then check the result.";
+    }
+
+    /// <summary>A warning when a coordinate click lands on a window of another process than the last observed one. Null when fine.</summary>
+    public static string? LandsOnWarning(WindowInfo? lastObserved, WindowInfo? under, int x, int y)
+    {
+        if (lastObserved is null) return null;
+        if (under is null)
+            return $"The point ({x},{y}) is on no window (outside every monitor?); the last observed window is '{lastObserved.Title}'. Pass window with window-relative x,y to target it.";
+        if (under.Pid == lastObserved.Pid) return null;
+        return $"The point ({x},{y}) is on '{under.Title}' ({under.ProcessName}, pid {under.Pid}), not on the last observed window "
+               + $"'{lastObserved.Title}' ({lastObserved.ProcessName}, pid {lastObserved.Pid}): it is covered, moved, or x,y were meant to be window-relative. "
+               + "Pass window with window-relative x,y to target it.";
     }
 
     /// <summary>Resolves and activates the window argument (null when none was given); fails when it does not exist or will not take the foreground.</summary>

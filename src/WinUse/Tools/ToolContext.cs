@@ -117,6 +117,13 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
     /// <summary>The window most recently observed or operated on; the default target for observation.</summary>
     public nint? LastWindow { get; set; }
 
+    /// <summary>The last observed window as it is now, or null when none was observed or it is gone.</summary>
+    public async Task<WindowInfo?> LastWindowInfoAsync()
+    {
+        if (LastWindow is not { } h) return null;
+        return (await Windows.ListAsync().ConfigureAwait(false)).FirstOrDefault(w => w.Hwnd == h);
+    }
+
     /// <summary>Pid of the process whose WebView2 the <see cref="Web"/> session is connected to (set by process_run).</summary>
     public int? WebOwnerPid { get; set; }
 
@@ -286,8 +293,12 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
         return loc.ToScreen(w.Rect);
     }
 
-    /// <summary>Brings the window owning a UIA / window / point ref to the foreground (best effort) before coordinate input.</summary>
-    public async Task ActivateOwnerAsync(ElementRef r)
+    /// <summary>
+    /// Brings the window owning a UIA / window / point ref to the foreground before coordinate input. Returns null when it
+    /// took the foreground (or the ref names no window), else a warning saying that it did not, so the caller knows the
+    /// input may have gone to another window or only activated this one.
+    /// </summary>
+    public async Task<string?> ActivateOwnerAsync(ElementRef r)
     {
         var loc = r.Locator switch
         {
@@ -297,11 +308,16 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
             PointLocator pl => pl.Window,
             _ => null,
         };
-        if (loc is null) return;
+        if (loc is null) return null;
         var w = await Windows.FindWithFallbackAsync(loc).ConfigureAwait(false);
-        if (w is null) return;
-        await Windows.ActivateAsync(w.Hwnd).ConfigureAwait(false);
+        if (w is null) return null;
+        var ok = await Windows.ActivateAsync(w.Hwnd).ConfigureAwait(false);
         LastWindow = w.Hwnd;
+        if (ok) return null;
+        var fg = await Windows.ForegroundAsync().ConfigureAwait(false);
+        return $"Window '{w.Title}' ({w.ProcessName}) could not be brought to the foreground"
+               + (fg is null || fg.Hwnd == w.Hwnd ? "" : $"; '{fg.Title}' ({fg.ProcessName}) has it")
+               + ". The input may only have activated the window instead of reaching the element: observe again before relying on it.";
     }
 
     // ---- windows --------------------------------------------------------------------------------

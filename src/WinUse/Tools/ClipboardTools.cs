@@ -15,7 +15,7 @@ public sealed class ClipboardTools
     /// <summary>Wait after ctrl+v before the previous clipboard text is restored, so the target has read the clipboard.</summary>
     public static readonly TimeSpan PasteSettle = TimeSpan.FromMilliseconds(300);
 
-    private const string WindowArg = "Window ref (win{n}) or title regex to activate before pasting; fails when it does not exist or cannot take the foreground.";
+    private const string WindowArg = "Window ref (win{n}) or title regex to activate before pasting; fails when it does not exist or cannot take the foreground. Without it the paste goes to whichever window has focus (reported as foreground, with a warning when that is not the last observed window's process).";
 
     [McpServerTool(Name = "clipboard_get", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Read the clipboard: its text (null when it holds no text) and whether it holds an image. Copy an editor's content with press_keys \"ctrl+a ctrl+c\" first to read what UIA cannot.")]
@@ -57,8 +57,9 @@ public sealed class ClipboardTools
             ("secret", secret ? true : null)), async _ =>
         {
             var target = await InputTools.ResolveTargetWindowAsync(ctx, window);
+            var dest = await InputTools.InputDestinationAsync(ctx, target);
             var restored = await PasteAsync(ctx, () => ctx.Clipboard.SetTextAsync(text), restore);
-            return new { pasted = text.Length, restored, window = target?.Json };
+            return new { pasted = text.Length, restored, window = target?.Json, foreground = dest.Foreground, warning = dest.Warning("paste keys") };
         });
 
     [McpServerTool(Name = "paste_image", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
@@ -72,8 +73,9 @@ public sealed class ClipboardTools
         {
             var bytes = ctx.Files.ReadBytes(path);
             var target = await InputTools.ResolveTargetWindowAsync(ctx, window);
+            var dest = await InputTools.InputDestinationAsync(ctx, target);
             var restored = await PasteAsync(ctx, () => ctx.Clipboard.SetImageAsync(bytes), restore);
-            return new { path, restored, window = target?.Json };
+            return new { path, restored, window = target?.Json, foreground = dest.Foreground, warning = dest.Warning("paste keys") };
         });
 
     /// <summary>Sets the clipboard, presses ctrl+v, and puts the previous text back; returns whether anything was restored.</summary>

@@ -21,10 +21,15 @@ public enum ActKind { Auto, Click, Type, Select, Toggle }
 public sealed record Observation(WindowInfo Window, IReadOnlyList<Candidate> Candidates, IReadOnlyList<string> RecentActions,
     string? NoElementsReason = null);
 
-/// <summary><see cref="Point"/> is set when the target was located on a screenshot (no candidates).</summary>
+/// <summary>
+/// <see cref="Point"/> is set when the target was located on a screenshot (no candidates). When <see cref="Grounded"/> is
+/// false, <see cref="Reason"/> says why no decision model answered and the probabilities are text-match scores
+/// (<see cref="LexicalRanker"/>) instead of model probabilities.
+/// </summary>
 public sealed record FindResult(IReadOnlyList<(Candidate Candidate, double Probability)> Ranked, double Confidence, bool Grounded,
-    (int X, int Y)? Point = null, WindowInfo? Window = null);
+    (int X, int Y)? Point = null, WindowInfo? Window = null, string? Reason = null);
 
+/// <summary><see cref="Detail"/> explains a <see cref="Reason"/> of "model not configured" / "model unavailable".</summary>
 public sealed record ActResult(
     bool Executed,
     Candidate? Target,
@@ -34,9 +39,11 @@ public sealed record ActResult(
     IReadOnlyList<(Candidate, double)> Alternatives,
     string? Reason,
     (int X, int Y)? Point = null,
-    WindowInfo? Window = null);
+    WindowInfo? Window = null,
+    string? Detail = null);
 
-public sealed record CheckResult(double Probability, bool Available);
+/// <summary><see cref="Reason"/> says why the model could not be asked when <see cref="Available"/> is false.</summary>
+public sealed record CheckResult(double Probability, bool Available, string? Reason = null);
 
 public interface IObservationSource
 {

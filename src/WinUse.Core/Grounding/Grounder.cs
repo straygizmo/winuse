@@ -24,13 +24,13 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
     public async Task<FindResult> FindAsync(string intent, string? window, int topK = 5)
     {
         var o = await obs.ObserveAsync(window).ConfigureAwait(false);
-        if (!jev.IsConfigured) return Ungrounded(o, topK);
+        if (!jev.IsConfigured) return Ungrounded(intent, o, topK, JevClient.NotConfiguredMessage);
         try
         {
             if (o.Candidates.Count == 0)
             {
                 var frame = await ScreenshotAsync(o).ConfigureAwait(false);
-                if (frame is null) return Ungrounded(o, topK);
+                if (frame is null) return Ungrounded(intent, o, topK, NoElements(o, cfg.Screenshots == ScreenshotPolicy.Off ? "screenshots off" : "no screenshot"));
                 var p = await LocateAsync(intent, o, frame, cfg.MinConfidence).ConfigureAwait(false);
                 if (p is not { } vp) return new FindResult([], 0, true);
                 return new FindResult([(PointCandidate(vp.X, vp.Y, o), vp.Probability)], vp.Confidence, true, (vp.X, vp.Y), o.Window);
@@ -38,9 +38,9 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
             var g = await GroundAsync(intent, o, false, await ScreenshotAsync(o).ConfigureAwait(false)).ConfigureAwait(false);
             return new FindResult(g.Ranked.Take(topK).ToList(), g.Confidence, true);
         }
-        catch (JevUnavailableException)
+        catch (JevUnavailableException ex)
         {
-            return Ungrounded(o, topK);
+            return Ungrounded(intent, o, topK, ex.Message);
         }
     }
 
@@ -48,7 +48,7 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
     {
         var o = await obs.ObserveAsync(window).ConfigureAwait(false);
         if (!jev.IsConfigured)
-            return Fail(Ungrounded(o, 5).Ranked, "model not configured");
+            return Fail(Ungrounded(intent, o, 5, null).Ranked, "model not configured", JevClient.NotConfiguredMessage);
         if (o.Candidates.Count == 0)
             return await ActVisualAsync(intent, o, kind, text, minConfidence ?? cfg.MinConfidence).ConfigureAwait(false);
 
@@ -57,9 +57,9 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
         {
             g = await GroundAsync(intent, o, kind == ActKind.Auto, await ScreenshotAsync(o).ConfigureAwait(false)).ConfigureAwait(false);
         }
-        catch (JevUnavailableException)
+        catch (JevUnavailableException ex)
         {
-            return Fail(Ungrounded(o, 5).Ranked, "model unavailable");
+            return Fail(Ungrounded(intent, o, 5, null).Ranked, "model unavailable", ex.Message);
         }
 
         var alternatives = g.Ranked.Take(5).ToList();
@@ -93,9 +93,9 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
         {
             located = await LocateAsync(intent, o, frame, minConfidence).ConfigureAwait(false);
         }
-        catch (JevUnavailableException)
+        catch (JevUnavailableException ex)
         {
-            return Fail([], "model unavailable");
+            return Fail([], "model unavailable", ex.Message);
         }
         if (located is not { } p) return Fail([], "low confidence");
 
@@ -127,16 +127,16 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
 
     public async Task<CheckResult> CheckAsync(string question, string? window)
     {
-        if (!jev.IsConfigured) return new CheckResult(0, false);
+        if (!jev.IsConfigured) return new CheckResult(0, false, JevClient.NotConfiguredMessage);
         var o = await obs.ObserveAsync(window).ConfigureAwait(false);
         try
         {
             var frame = await ScreenshotAsync(o).ConfigureAwait(false);
             return new CheckResult(await AskSatisfiedAsync(question, o, null, frame).ConfigureAwait(false), true);
         }
-        catch (JevUnavailableException)
+        catch (JevUnavailableException ex)
         {
-            return new CheckResult(0, false);
+            return new CheckResult(0, false, ex.Message);
         }
     }
 
@@ -212,11 +212,15 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
         return joined.Length == 0 ? "no elements" : $"no elements ({joined})";
     }
 
-    static ActResult Fail(IReadOnlyList<(Candidate, double)> alternatives, string reason) =>
-        new(false, null, 0, 0, null, alternatives, reason);
+    static ActResult Fail(IReadOnlyList<(Candidate, double)> alternatives, string reason, string? detail = null) =>
+        new(false, null, 0, 0, null, alternatives, reason, Detail: detail);
 
-    static FindResult Ungrounded(Observation o, int topK) =>
-        new(o.Candidates.OrderBy(c => c.Label, StringComparer.OrdinalIgnoreCase).Take(topK).Select(c => (c, 0.0)).ToList(), 0, false);
+    /// <summary>
+    /// The candidates ranked by text match with the intent (no model): the caller can still pick the target from labels
+    /// that share words with its intent. <paramref name="reason"/> says why the model was not asked.
+    /// </summary>
+    static FindResult Ungrounded(string intent, Observation o, int topK, string? reason) =>
+        new(LexicalRanker.Rank(intent, o.Candidates, topK), 0, false, Reason: reason);
 
     static ActKind? ParseKind(string? k) => k switch
     {
