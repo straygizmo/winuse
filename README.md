@@ -1,6 +1,6 @@
 # winuse
 
-winuse is an MCP server and CLI that lets an AI observe and operate Windows desktop apps (UI Automation, Java Swing via Java Access Bridge, WebView2/Playwright, input, windows, processes, files). Grounding and verification checks (`act`, `find`, `check`) use a System One decision model: TypeSafe Jev or Cloudflare Clef. Sessions can be saved as JSON scenarios and replayed without AI.
+winuse is an MCP server and CLI that lets an AI observe and operate Windows desktop apps (UI Automation, Java Swing via Java Access Bridge, WebView2/Playwright, input, windows, processes, files). Grounding and verification checks (`act`, `find`, `check`) use a decision model: TypeSafe Jev, Cloudflare Clef or Google Gemini Decision 1. Sessions can be saved as JSON scenarios and replayed without AI.
 
 Requires Windows and the .NET 10 SDK.
 
@@ -17,6 +17,7 @@ The intent tools (`act`, `find`, `check`) and `--heal` need one decision model. 
 
 - **Jev** (TypeSafe): set `JEV_API_KEY`.
 - **Clef** (Cloudflare Workers AI): set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (an API token with Workers AI permission). Use this when you have no Jev key.
+- **Gemini** (Google Gemini Decisions API, model `gemini-decision-1`): set `GEMINI_API_KEY` (a Google AI Studio key; the free tier works). It asks the same questions as Jev and Clef but has no `box` question, so visual grounding uses the grid locator.
 
 Register them once as user environment variables so that both the AI client (which launches `winuse --mcp`) and `winuse run` see them:
 
@@ -25,13 +26,15 @@ Register them once as user environment variables so that both the AI client (whi
 # or
 [Environment]::SetEnvironmentVariable('CLOUDFLARE_ACCOUNT_ID', 'your-account-id', 'User')
 [Environment]::SetEnvironmentVariable('CLOUDFLARE_API_TOKEN', 'your-token', 'User')
+# or
+[Environment]::SetEnvironmentVariable('GEMINI_API_KEY', 'your-key', 'User')
 ```
 
 Restart the terminal / AI client afterwards. As a development fallback, a `.env` file next to `winuse.exe` or in the working directory is also read (`KEY=VALUE` lines, never commit it); environment variables take precedence over `.env`.
 
-The provider is chosen automatically: Jev when `JEV_API_KEY` is set, otherwise Clef when both Cloudflare values are set. `WINUSE_DECISION_PROVIDER=jev|clef` forces one. `winuse doctor` shows which one is in use.
+The provider is chosen automatically: Jev when `JEV_API_KEY` is set, otherwise Clef when both Cloudflare values are set, otherwise Gemini when `GEMINI_API_KEY` is set. `WINUSE_DECISION_PROVIDER=jev|clef|gemini` forces one (for example to use Gemini on a machine that also has a Jev key). `winuse doctor` shows which one is in use.
 
-Optional: `JEV_BASE_URL`, `JEV_MODEL` (default `jev-latest`), `CLEF_MODEL` (`clef`, the default, or the cheaper `clef-flash`), `CLEF_BASE_URL` (default `https://api.cloudflare.com`), `WINUSE_ALLOWED_ROOTS` (`;`-separated), `WINUSE_KILLABLE_PROCESSES` (`;`-separated), `WINUSE_SETTLE_MS` (wait before `act` verifies its result, default 400). A self-hosted Clef server that speaks `/v1/systemone` can be used as the Jev provider by pointing `JEV_BASE_URL` at it.
+Optional: `JEV_BASE_URL`, `JEV_MODEL` (default `jev-latest`), `CLEF_MODEL` (`clef`, the default, or the cheaper `clef-flash`), `CLEF_BASE_URL` (default `https://api.cloudflare.com`), `GEMINI_MODEL` (default `gemini-decision-1`), `GEMINI_BASE_URL` (default `https://generativelanguage.googleapis.com`), `WINUSE_ALLOWED_ROOTS` (`;`-separated), `WINUSE_KILLABLE_PROCESSES` (`;`-separated), `WINUSE_SETTLE_MS` (wait before `act` verifies its result, default 400). A self-hosted Clef server that speaks `/v1/systemone` can be used as the Jev provider by pointing `JEV_BASE_URL` at it.
 
 ### Visual grounding (windows without UI elements)
 
@@ -44,7 +47,7 @@ Some windows expose no UI Automation or DOM elements at all: VirtualBox and othe
 Settings:
 
 - `WINUSE_SCREENSHOTS`: `auto` (default: screenshots are sent only for windows without elements), `always` (also next to the element list, which helps with ambiguous labels but costs tokens), `off` (never; `act` on such a window fails with `no elements (screenshots off)`).
-- `WINUSE_VISUAL_LOCATOR`: `grid` (default, works with Jev and Clef: up to three rounds of "which labelled grid cell holds the target", zooming in each time) or `box` (one Jev 1.14 `box` question; needs `JEV_MODEL=jev-preview` or newer and falls back to `grid` on Clef).
+- `WINUSE_VISUAL_LOCATOR`: `grid` (default, works with every provider: up to three rounds of "which labelled grid cell holds the target", zooming in each time) or `box` (one Jev 1.14 `box` question; needs `JEV_MODEL=jev-preview` or newer and falls back to `grid` on Clef and Gemini).
 
 Screenshots of the window are sent to the configured decision model. Jev requires the `TypeSafe-Danger-Zone-Images` opt-in header, which winuse adds automatically, and documents images and `box` as experimental.
 

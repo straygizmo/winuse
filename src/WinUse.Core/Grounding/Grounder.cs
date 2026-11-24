@@ -260,7 +260,8 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
         };
         if (executed is not null)
             state["executed_action"] = new { kind = executed.Kind, target_label = executed.TargetLabel, text = executed.Text };
-        // Jev resolves the asset reference; Clef sees a plain string next to the implicitly attached image.
+        // Jev resolves the asset reference; Clef sees a plain string next to the implicitly attached image; Gemini sees it
+        // as the label written before the image.
         if (screenshotId is not null) state[ScreenshotId] = screenshotId;
         return state;
     }

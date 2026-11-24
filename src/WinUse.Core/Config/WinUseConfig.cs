@@ -8,6 +8,11 @@ public enum DecisionProvider
     Jev,
     /// <summary>Cloudflare Clef on Workers AI (same request/response body as Jev, wrapped in the Cloudflare envelope).</summary>
     Clef,
+    /// <summary>
+    /// Google Gemini Decision 1: <c>POST {GeminiBaseUrl}/v1beta/decisions</c> with <c>GEMINI_API_KEY</c>
+    /// (same question / answer types as Jev, the state sent as text in <c>input</c>; no <c>box</c> questions).
+    /// </summary>
+    Gemini,
 }
 
 /// <summary>When a window screenshot is attached to decision-model requests.</summary>
@@ -24,9 +29,9 @@ public enum ScreenshotPolicy
 /// <summary>How a target is located on a screenshot when there are no candidates.</summary>
 public enum VisualLocatorKind
 {
-    /// <summary>Staged grid-cell choice questions (works with Jev and Clef).</summary>
+    /// <summary>Staged grid-cell choice questions (works with every provider).</summary>
     Grid,
-    /// <summary>One Jev 1.14 <c>box</c> question (Jev only; falls back to Grid on Clef).</summary>
+    /// <summary>One Jev 1.14 <c>box</c> question (Jev only; falls back to Grid on Clef and Gemini).</summary>
     Box,
 }
 
@@ -58,18 +63,24 @@ public sealed record WinUseConfig(
     ScreenshotPolicy Screenshots = ScreenshotPolicy.Auto,
     VisualLocatorKind VisualLocator = VisualLocatorKind.Grid,
     JabMode Jab = JabMode.Auto,
-    bool JavaAccessibility = true)
+    bool JavaAccessibility = true,
+    string? GeminiApiKey = null,
+    string GeminiModel = WinUseConfig.DefaultGeminiModel,
+    string GeminiBaseUrl = WinUseConfig.DefaultGeminiBaseUrl)
 {
     public const string DefaultClefModel = "clef";
     public const string DefaultClefBaseUrl = "https://api.cloudflare.com";
+    public const string DefaultGeminiModel = "gemini-decision-1";
+    public const string DefaultGeminiBaseUrl = "https://generativelanguage.googleapis.com";
 
     /// <summary>
     /// The decision model in use: <c>WINUSE_DECISION_PROVIDER</c> when set, else Jev when <c>JEV_API_KEY</c> is present,
-    /// else Clef when both Cloudflare values are present, else none.
+    /// else Clef when both Cloudflare values are present, else Gemini when <c>GEMINI_API_KEY</c> is present, else none.
     /// </summary>
     public DecisionProvider Provider => ProviderOverride ?? (
         JevApiKey is not null ? DecisionProvider.Jev
         : CloudflareAccountId is not null && CloudflareApiToken is not null ? DecisionProvider.Clef
+        : GeminiApiKey is not null ? DecisionProvider.Gemini
         : DecisionProvider.None);
 
     /// <summary>Default wait (ms) after an <c>act</c> before re-observing to verify it (<c>WINUSE_SETTLE_MS</c>).</summary>
@@ -112,7 +123,10 @@ public sealed record WinUseConfig(
             Screenshots: ParseEnum<ScreenshotPolicy>("WINUSE_SCREENSHOTS", Get("WINUSE_SCREENSHOTS")) ?? ScreenshotPolicy.Auto,
             VisualLocator: ParseEnum<VisualLocatorKind>("WINUSE_VISUAL_LOCATOR", Get("WINUSE_VISUAL_LOCATOR")) ?? VisualLocatorKind.Grid,
             Jab: ParseEnum<JabMode>("WINUSE_JAB", Get("WINUSE_JAB")) ?? JabMode.Auto,
-            JavaAccessibility: ParseOnOff("WINUSE_JAVA_ACCESSIBILITY", Get("WINUSE_JAVA_ACCESSIBILITY")) ?? true);
+            JavaAccessibility: ParseOnOff("WINUSE_JAVA_ACCESSIBILITY", Get("WINUSE_JAVA_ACCESSIBILITY")) ?? true,
+            GeminiApiKey: Get("GEMINI_API_KEY"),
+            GeminiModel: Get("GEMINI_MODEL") ?? DefaultGeminiModel,
+            GeminiBaseUrl: Get("GEMINI_BASE_URL") ?? DefaultGeminiBaseUrl);
     }
 
     private static T? ParseEnum<T>(string name, string? raw) where T : struct, Enum
@@ -136,7 +150,8 @@ public sealed record WinUseConfig(
         null => null,
         "jev" => DecisionProvider.Jev,
         "clef" => DecisionProvider.Clef,
-        _ => throw new InvalidOperationException($"WINUSE_DECISION_PROVIDER must be 'jev' or 'clef', not '{raw}'."),
+        "gemini" => DecisionProvider.Gemini,
+        _ => throw new InvalidOperationException($"WINUSE_DECISION_PROVIDER must be 'jev', 'clef' or 'gemini', not '{raw}'."),
     };
 
     private static string[] SplitList(string? raw) =>

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Added
+
+- Google Gemini Decision 1 (Gemini Decisions API) as a third decision model next to Jev and Clef. Set `GEMINI_API_KEY` (optional `GEMINI_MODEL`, default `gemini-decision-1`, and `GEMINI_BASE_URL`); it is chosen automatically when neither Jev nor Clef is configured, or with `WINUSE_DECISION_PROVIDER=gemini`. `act`, `find`, `check` and `--heal` ask it the same choice and yes/no questions; the state goes to `input` as JSON text, screenshots as image blocks each labelled with the id the state refers to. Gemini has no `box` question, so `WINUSE_VISUAL_LOCATOR=box` falls back to the grid locator as on Clef. `winuse doctor` reports `GEMINI_API_KEY`, the Gemini model and endpoint, and probes it.
+
 ## 0.2.8 - 2026-11-04
 
 Added

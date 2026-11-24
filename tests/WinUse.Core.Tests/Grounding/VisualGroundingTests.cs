@@ -66,6 +66,17 @@ public class VisualGroundingTests
     }
 
     [Fact]
+    public async Task Act_NoCandidates_Box_OnGemini_FallsBackToGrid()
+    {
+        var jev = new FakeJev(cell: "A1", provider: DecisionProvider.Gemini);
+        var cfg = TestConfig.WithGemini() with { VisualLocator = VisualLocatorKind.Box };
+        var r = await Visual(jev, new FakeExecutor(), cfg).ActAsync("tap OK", null, ActKind.Click, null, null);
+        Assert.True(r.Executed);
+        Assert.IsType<ChoiceQuestion>(jev.Calls[0]["cell"]);
+        Assert.DoesNotContain(jev.Calls, c => c.Values.Any(q => q is BoxQuestion));
+    }
+
+    [Fact]
     public async Task Act_NoCandidates_ScreenshotsOff_FailsWithoutAskingTheModel()
     {
         var jev = new FakeJev(cell: "A1");

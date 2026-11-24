@@ -117,6 +117,33 @@ public class WinUseConfigTests
     }
 
     [Fact]
+    public void Load_GeminiKeyOnly_ProviderIsGeminiWithDefaults()
+    {
+        var cfg = LoadEnv(new Dictionary<string, string?> { ["GEMINI_API_KEY"] = "g" });
+        Assert.Equal(DecisionProvider.Gemini, cfg.Provider);
+        Assert.Equal("g", cfg.GeminiApiKey);
+        Assert.Equal("gemini-decision-1", cfg.GeminiModel);
+        Assert.Equal("https://generativelanguage.googleapis.com", cfg.GeminiBaseUrl);
+    }
+
+    [Fact]
+    public void Load_GeminiKeyWithOthers_JevThenClefWin_OverrideSelectsGemini()
+    {
+        Assert.Equal(DecisionProvider.Jev, LoadEnv(new Dictionary<string, string?> { ["GEMINI_API_KEY"] = "g", ["JEV_API_KEY"] = "k" }).Provider);
+        Assert.Equal(DecisionProvider.Clef, LoadEnv(new Dictionary<string, string?>(Clef) { ["GEMINI_API_KEY"] = "g" }).Provider);
+        var env = new Dictionary<string, string?>(Clef) { ["GEMINI_API_KEY"] = "g", ["JEV_API_KEY"] = "k", ["WINUSE_DECISION_PROVIDER"] = "gemini" };
+        Assert.Equal(DecisionProvider.Gemini, LoadEnv(env).Provider);
+    }
+
+    [Fact]
+    public void Load_GeminiModelAndBaseUrl_FromEnvironment()
+    {
+        var cfg = LoadEnv(new Dictionary<string, string?> { ["GEMINI_API_KEY"] = "g", ["GEMINI_MODEL"] = "gemini-decision-2", ["GEMINI_BASE_URL"] = "https://proxy.example/" });
+        Assert.Equal("gemini-decision-2", cfg.GeminiModel);
+        Assert.Equal("https://proxy.example/", cfg.GeminiBaseUrl);
+    }
+
+    [Fact]
     public void Load_VisualDefaults_AreAutoScreenshotsAndGrid()
     {
         var cfg = LoadEnv(new Dictionary<string, string?>());

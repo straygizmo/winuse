@@ -30,6 +30,17 @@ public class DoctorCommandTests
     }
 
     [Fact]
+    public async Task Doctor_WithGeminiKey_ReportsGeminiProviderModelEndpointAndProbe()
+    {
+        var text = await Run(TestConfig.WithGemini(), new FakeJev(noul: 0.97, provider: DecisionProvider.Gemini));
+        Assert.Contains("Decision model: Gemini (auto)", text);
+        Assert.Contains("GEMINI_API_KEY: set", text);
+        Assert.Contains("Gemini model: gemini-decision-1", text);
+        Assert.Contains("Endpoint: https://generativelanguage.googleapis.com/v1beta/decisions", text);
+        Assert.Contains("Gemini: probe ok, probability 0.970", text);
+    }
+
+    [Fact]
     public async Task Doctor_WithJevKey_ReportsJevProvider()
     {
         var text = await Run(TestConfig.WithJev("k"), new FakeJev(noul: 0.9));

@@ -210,6 +210,101 @@ public class JevClientTests
         Assert.Equal(1, handler.CallCount);
     }
 
+    // Shape of a real gemini-decision-1 response (no model echo, usage.total_input_tokens).
+    const string GeminiResponse = """{"answers":{"done":{"confidence":0.8,"noul":0.2,"type":"noul"},"target":{"confidence":0.9,"choice":"u3","probabilities":{"none":0.1,"u3":0.9},"type":"choice"}},"usage":{"total_tokens":174,"total_input_tokens":174,"input_tokens_by_modality":[{"modality":"text","tokens":174}],"total_output_tokens":0}}""";
+
+    [Fact]
+    public async Task AskAsync_Gemini_SendsDecisionsRequestAndParsesAnswers()
+    {
+        var handler = new FakeHttpHandler(req => {
+            Assert.Equal("https://generativelanguage.googleapis.com/v1beta/decisions", req.RequestUri!.ToString());
+            Assert.Null(req.Headers.Authorization);
+            Assert.Equal("g-key", Assert.Single(req.Headers.GetValues("x-goog-api-key")));
+            Assert.False(req.Headers.Contains("TypeSafe-Danger-Zone-Images"));
+            var body = JsonDocument.Parse(req.Content!.ReadAsStringAsync().Result).RootElement;
+            Assert.Equal("gemini-decision-1", body.GetProperty("model").GetString());
+            Assert.False(body.TryGetProperty("state", out _));
+            var input = body.GetProperty("input");
+            var text = Assert.Single(input.EnumerateArray());
+            Assert.Equal("text", text.GetProperty("type").GetString());
+            Assert.Contains("""{"goal":"x"}""", text.GetProperty("text").GetString());
+            var target = body.GetProperty("questions").GetProperty("target");
+            Assert.Equal("choice", target.GetProperty("type").GetString());
+            Assert.Equal("Save button", target.GetProperty("criteria").GetProperty("u3").GetString());
+            Assert.Equal("", target.GetProperty("criteria").GetProperty("none").GetString()); // null -> ""
+            Assert.Equal("noul", body.GetProperty("questions").GetProperty("done").GetProperty("type").GetString());
+            return Json(200, GeminiResponse);
+        });
+        var client = new JevClient(new HttpClient(handler), TestConfig.WithGemini(), NullLogger<JevClient>.Instance);
+        var r = await client.AskAsync(new { goal = "x" }, new Dictionary<string, JevQuestion> {
+            ["target"] = new ChoiceQuestion("Which element?", new Dictionary<string,string?> { ["u3"] = "Save button", ["none"] = null }),
+            ["done"] = new NoulQuestion("Is it done?") });
+        var c = Assert.IsType<ChoiceAnswer>(r.Answers["target"]);
+        Assert.Equal("u3", c.Choice); Assert.Equal(0.9, c.Confidence); Assert.Equal(0.9, c.Probabilities["u3"]);
+        Assert.Equal(0.2, Assert.IsType<NoulAnswer>(r.Answers["done"]).Probability);
+        Assert.Equal("gemini-decision-1", r.Model);
+        Assert.Equal(174, r.InputTokens);
+    }
+
+    [Fact]
+    public async Task AskAsync_Gemini_WithImage_SendsLabelledImageBlockBeforeState()
+    {
+        var handler = new FakeHttpHandler(req => {
+            var input = JsonDocument.Parse(req.Content!.ReadAsStringAsync().Result).RootElement.GetProperty("input");
+            Assert.Equal(3, input.GetArrayLength());
+            Assert.Contains("`shot`", input[0].GetProperty("text").GetString());
+            Assert.Equal("image", input[1].GetProperty("type").GetString());
+            Assert.Equal("image/png", input[1].GetProperty("mime_type").GetString());
+            Assert.Equal(Convert.ToBase64String(Png), input[1].GetProperty("data").GetString());
+            Assert.Contains("\"screenshot\":\"shot\"", input[2].GetProperty("text").GetString());
+            return Json(200, GeminiResponse);
+        });
+        var client = new JevClient(new HttpClient(handler), TestConfig.WithGemini(), NullLogger<JevClient>.Instance);
+        await client.AskAsync(new { screenshot = "shot" }, OneNoul(), [new ImageAttachment("shot", Png)]);
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task AskAsync_Gemini_UsesConfiguredModelAndBaseUrl()
+    {
+        var handler = new FakeHttpHandler(req => {
+            Assert.Equal("https://proxy.example/v1beta/decisions", req.RequestUri!.ToString());
+            Assert.Equal("gemini-decision-2", JsonDocument.Parse(req.Content!.ReadAsStringAsync().Result).RootElement.GetProperty("model").GetString());
+            return Json(200, GeminiResponse);
+        });
+        var cfg = TestConfig.WithGemini() with { GeminiModel = "gemini-decision-2", GeminiBaseUrl = "https://proxy.example/" };
+        var r = await new JevClient(new HttpClient(handler), cfg, NullLogger<JevClient>.Instance).AskAsync(new { }, OneNoul());
+        Assert.Equal("gemini-decision-2", r.Model);
+    }
+
+    [Fact]
+    public async Task AskAsync_Gemini_BoxQuestion_IsRejectedWithoutARequest()
+    {
+        var handler = new FakeHttpHandler(_ => Json(200, GeminiResponse));
+        var client = new JevClient(new HttpClient(handler), TestConfig.WithGemini(), NullLogger<JevClient>.Instance);
+        await Assert.ThrowsAsync<ArgumentException>(() => client.AskAsync(new { },
+            new Dictionary<string, JevQuestion> { ["where"] = new BoxQuestion("the OK button") }));
+        Assert.Equal(0, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task AskAsync_Gemini_400_ThrowsWithErrorBody()
+    {
+        var handler = new FakeHttpHandler(_ => Json(400, """{"error":{"code":400,"message":"API key not valid.","status":"INVALID_ARGUMENT"}}"""));
+        var client = new JevClient(new HttpClient(handler), TestConfig.WithGemini(), NullLogger<JevClient>.Instance, NoDelay);
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => client.AskAsync(new { }, OneNoul()));
+        Assert.Contains("API key not valid", ex.Message);
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    [Fact]
+    public void IsConfigured_TrueWithGeminiKey_FalseWhenGeminiForcedWithoutKey()
+    {
+        Assert.True(new JevClient(new HttpClient(), TestConfig.WithGemini(), NullLogger<JevClient>.Instance).IsConfigured);
+        var cfg = TestConfig.WithJev("k") with { ProviderOverride = WinUse.Core.Config.DecisionProvider.Gemini };
+        Assert.False(new JevClient(new HttpClient(), cfg, NullLogger<JevClient>.Instance).IsConfigured);
+    }
+
     [Fact]
     public async Task AskAsync_BoxQuestion_IsSentAndParsed()
     {
