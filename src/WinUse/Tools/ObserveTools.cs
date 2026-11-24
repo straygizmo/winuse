@@ -15,13 +15,13 @@ namespace WinUse.Tools;
 public sealed class ObserveTools
 {
     [McpServerTool(Name = "screenshot", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Capture a PNG of a monitor, the whole virtual screen, a window, or a single element. Returns the image plus width/height (image pixels), scale, origin {x, y} (the screen pixel of image pixel (0,0): screen_x = origin.x + pixel_x / scale; null for a DOM element capture), method (\"screen\": copied from the screen, what the user sees including dialogs; \"print\": PrintWindow, used when the window is not in the foreground, which misses owned dialogs and can lag in Chromium apps) and, for screen captures, the monitor layout. To click an image pixel of a window capture, pass it to click with window and the same x,y; for other captures add origin.")]
+    [Description("Capture a PNG of a monitor, the whole virtual screen, a window, or a single element. Returns the image plus width/height (image pixels), scale, origin {x, y} (the screen pixel of image pixel (0,0): screen_x = origin.x + pixel_x / scale; null for a DOM element capture), method (\"screen\": copied from the screen, what the user sees including dialogs; \"print\": PrintWindow, used when the window is not in the foreground, which misses owned dialogs and can lag in Chromium apps) and, for screen captures, the monitor layout. Image pixels are screen pixels times scale: to click image pixel (px, py) of a window capture, pass click window with x = px / scale, y = py / scale (the pixel itself only at scale 1); for other captures screen x = origin.x + px / scale, screen y = origin.y + py / scale. A downscaled result carries to_screen with the same formula.")]
     public static Task<CallToolResult> Screenshot(
         ToolContext ctx,
         [Description("What to capture: \"screen\" (the primary monitor, or monitor), \"virtual\" (all monitors in one image), \"window\" (window, ref or title; default: last observed / foreground window) or \"element\" (ref). Default: \"window\" when window or title is given, else \"screen\".")] string? target = null,
         [Description("Window ref (win{n}) for target=window, or element ref (u{n} / j{n} / w{n}) for target=element.")] string? @ref = null,
         [Description("Window title regex for target=window.")] string? title = null,
-        [Description("Downscale factor between 0.25 and 1.0.")] double scale = 1.0,
+        [Description("Downscale factor between 0.25 and 1.0. The image is then smaller than the screen: divide image pixel coordinates by scale before passing them to click / hover / drag.")] double scale = 1.0,
         [Description("Window ref (win{n}) or title regex to capture, like the window argument of the other tools.")] string? window = null,
         [Description("Monitor index from a previous result's monitors (target=screen). Default: the primary monitor.")] int? monitor = null,
         [Description("Window capture method: \"auto\" (screen copy when the window or its dialog is in the foreground, else print), \"screen\" or \"print\".")] string method = "auto",
@@ -89,6 +89,9 @@ public sealed class ObserveTools
             scale = c.Scale,
             origin = (object?)new { x = c.OriginX, y = c.OriginY },
             method = c.Method,
+            to_screen = c.Scale < 1.0
+                ? $"image pixel (px, py) is screen pixel ({c.OriginX} + px / {c.Scale:0.###}, {c.OriginY} + py / {c.Scale:0.###}); window-relative click x,y = px / {c.Scale:0.###}, py / {c.Scale:0.###}"
+                : null,
             monitors = monitors?.Select(m => new { index = m.Index, rect = m.Rect, work_area = m.WorkArea, primary = m.Primary, device = m.Device }).ToList(),
         };
 
@@ -144,13 +147,14 @@ public sealed class ObserveTools
     };
 
     [McpServerTool(Name = "get_ui_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect); the window object carries the window's rect, visible_rect and state too. Use the refs with the other tools. Narrow the output: scope (a ref) or scope_type / scope_name (a control type and/or name regex, e.g. scope_type=\"Document\" for a browser's page content without the toolbars, favourites and tab strip; the focused match wins, so it is the active tab's page) return only that element's subtree and report it under scope; control_type / name keep only matching nodes (hoisted to their nearest kept ancestor); compact drops null / default fields; max_nodes caps the count; include_values=false leaves every value unread (and out of the log). Java Swing windows are read through Java Access Bridge and return j{n} refs (menu items are listed even while their menu is closed; a table is one Table node, read its cells with get_table or scope the tree to it); node_limit_reached: true means the Java walk stopped at node_limit elements and the tree is incomplete (use scope, control_type or max_depth); depth_limit_reached: true means a Java element at max_depth had children that were not walked; unreadable_nodes counts Java children the bridge could not read (skipped). Any of these means an element that exists may be missing from the tree; a Java tree always carries all three (false / 0 when the walk was complete), and every result carries backend (\"java_access_bridge\" or \"uia\") and server_version. A Java element's rect is the part on screen (clipped to its scroll viewport and the window); an element scrolled out of view or beyond the window edge is offscreen: true (listed only with include_offscreen, with its full rect) and click refuses it. java_access_bridge explains why a Java window could not be read that way and java_access_bridge_diagnostics carries the facts (stage, jvm_pid, bridge_module, connected_jvms, timeout_ms, blocked_by_action_at when an invoke that opened a modal dialog holds the bridge).")]
+    [Description("Get the compressed UI Automation tree of a window (refs u{n}, control type, name, automationId, value, state, rect); the window object carries the window's rect, visible_rect and state too. Use the refs with the other tools. Narrow the output: scope (a ref) or scope_type / scope_name / scope_id (a control type, name regex and/or automationId, e.g. scope_type=\"Document\" for a browser's page content without the toolbars, favourites and tab strip; the focused match wins, so it is the active tab's page) return only that element's subtree and report it under scope; control_type / name keep only matching nodes (hoisted to their nearest kept ancestor); compact drops null / default fields; max_nodes caps the count; include_values=false leaves every value unread (and out of the log). Java Swing windows are read through Java Access Bridge and return j{n} refs (menu items are listed even while their menu is closed; a table is one Table node, read its cells with get_table or scope the tree to it); node_limit_reached: true means the Java walk stopped at node_limit elements and the tree is incomplete (use scope, control_type or max_depth); depth_limit_reached: true means an element at max_depth had children that were not walked (raise max_depth or scope to a deeper element); unreadable_nodes counts Java children the bridge could not read (skipped). Any of these means an element that exists may be missing from the tree; depth_limit_reached is always present (false when nothing was cut), and a Java tree also always carries node_limit_reached and unreadable_nodes (false / 0 when the walk was complete), and every result carries backend (\"java_access_bridge\" or \"uia\") and server_version. A Java element's rect is the part on screen (clipped to its scroll viewport and the window); an element scrolled out of view or beyond the window edge is offscreen: true (listed only with include_offscreen, with its full rect) and click refuses it; click also refuses a UIA element that lies outside the viewport of a scrollable ancestor (a list or page area scrolled away from it) or that UIA reports offscreen. java_access_bridge explains why a Java window could not be read that way and java_access_bridge_diagnostics carries the facts (stage, jvm_pid, bridge_module, connected_jvms, timeout_ms, blocked_by_action_at when an invoke that opened a modal dialog holds the bridge).")]
     public static Task<CallToolResult> GetUiTree(
         ToolContext ctx,
         [Description("Window ref (win{n}) or title regex. Default: last observed window, else the foreground window.")] string? window = null,
         [Description("Optional element ref (u{n} or j{n}) to return only that subtree.")] string? scope = null,
         [Description("Return only the subtree of the element with this control type (case-insensitive), e.g. \"Document\" for the page content of a browser or web view, \"Pane\" with scope_name for a named pane, \"Table\" for a table. When several elements match, the one with the keyboard focus (or containing it) is taken, else the first in document order; combine with scope_name to pick another. The result's scope names the element taken; when nothing matches the call fails and lists the elements of that type. The element must lie within max_depth of the window.")] string? scope_type = null,
         [Description("Regex (case-insensitive) the name of the element to scope to must match; with scope_type, or alone to scope to the first (focused) element of any type with that name.")] string? scope_name = null,
+        [Description("AutomationId of the element to scope to (exact, case-insensitive), as the tree shows it in automationId; combinable with scope_type / scope_name.")] string? scope_id = null,
         [Description("Maximum depth to walk.")] int max_depth = 12,
         [Description("Keep only interactive elements and labelled text.")] bool interactive_only = true,
         [Description("Include offscreen elements.")] bool include_offscreen = false,
@@ -159,13 +163,14 @@ public sealed class ObserveTools
         [Description("Omit null and default-valued fields (automationId, value, checked, enabled=true, offscreen=false, focused=false, depth) and print rect as \"x,y,w,h\".")] bool compact = false,
         [Description("Keep at most this many nodes (document order); the result then reports omitted_nodes.")] int? max_nodes = null,
         [Description("false: do not read element values (edit field text, combo selection, slider value); value is null everywhere and no field content reaches the log. Use for forms with credentials.")] bool include_values = true) =>
-        ctx.RunStepAsync("get_ui_tree", ToolContext.Args(("window", window), ("scope", scope), ("scope_type", scope_type), ("scope_name", scope_name),
+        ctx.RunStepAsync("get_ui_tree", ToolContext.Args(("window", window), ("scope", scope), ("scope_type", scope_type), ("scope_name", scope_name), ("scope_id", scope_id),
             ("max_depth", max_depth), ("interactive_only", interactive_only), ("include_offscreen", include_offscreen), ("control_type", control_type), ("name", name),
             ("compact", compact), ("max_nodes", max_nodes), ("include_values", include_values ? null : false)), async _ =>
         {
             var nameRegex = name is null ? null : new Regex(name, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
             var scopeNameRegex = scope_name is null ? null : new Regex(scope_name, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
             var scopeType = string.IsNullOrWhiteSpace(scope_type) ? null : scope_type.Trim();
+            var scopeId = string.IsNullOrWhiteSpace(scope_id) ? null : scope_id.Trim();
             var types = UiTreeShaper.ParseControlTypes(control_type);
             if (max_nodes is < 1) throw new ArgumentOutOfRangeException(nameof(max_nodes), "max_nodes must be at least 1.");
 
@@ -176,9 +181,15 @@ public sealed class ObserveTools
             var opt = new TreeOptions(scope, max_depth, interactive_only, include_offscreen, include_values);
             var isJava = scope is null ? await ctx.Java.IsJavaWindowAsync(w) : ToolContext.IsJavaRef(scope);
             JavaTreeResult? javaResult = null;
+            var uiaDepthLimitReached = false;
             async Task<UiNode> Read()
             {
-                if (!isJava) return await ctx.Uia.GetTreeAsync(w.Hwnd, opt);
+                if (!isJava)
+                {
+                    var u = await ctx.Uia.GetTreeWithStatusAsync(w.Hwnd, opt);
+                    uiaDepthLimitReached = u.DepthLimitReached;
+                    return u.Root;
+                }
                 javaResult = await ctx.Java.GetTreeWithStatusAsync(w.Hwnd, opt);
                 return javaResult.Root;
             }
@@ -192,11 +203,11 @@ public sealed class ObserveTools
                 tree = await Read();
             }
             object? scoped = null;
-            if (scopeType is not null || scopeNameRegex is not null)
+            if (scopeType is not null || scopeNameRegex is not null || scopeId is not null)
             {
-                var picked = UiTreeShaper.FindScope(tree, scopeType, scopeNameRegex, out var matches)
-                    ?? throw new InvalidOperationException(ScopeNotFoundMessage(tree, w, scopeType, scope_name, max_depth, interactive_only));
-                scoped = new { @ref = picked.Ref, controlType = picked.ControlType, name = picked.Name, rect = picked.Rect, focused = picked.Focused, matches = matches.Count };
+                var picked = UiTreeShaper.FindScope(tree, scopeType, scopeNameRegex, out var matches, scopeId)
+                    ?? throw new InvalidOperationException(ScopeNotFoundMessage(tree, w, scopeType, scope_name, max_depth, interactive_only, scopeId));
+                scoped = new { @ref = picked.Ref, controlType = picked.ControlType, name = picked.Name, automationId = picked.AutomationId, rect = picked.Rect, focused = picked.Focused, matches = matches.Count };
                 tree = UiTreeShaper.Rebase(picked);
             }
             tree = UiTreeShaper.Filter(tree, types, nameRegex);
@@ -216,7 +227,7 @@ public sealed class ObserveTools
                 omitted_nodes = omitted > 0 ? omitted : (int?)null,
                 node_limit_reached = javaResult is { } j1 ? j1.NodeLimitReached : (bool?)null,
                 node_limit = javaResult is { NodeLimitReached: true } j2 ? j2.NodeLimit : (int?)null,
-                depth_limit_reached = javaResult is { } j3 ? j3.DepthLimitReached : (bool?)null,
+                depth_limit_reached = javaResult is { } j3 ? j3.DepthLimitReached : uiaDepthLimitReached,
                 unreadable_nodes = javaResult is { } j4 ? j4.UnreadableNodes : (int?)null,
                 java_access_bridge = !isJava && JavaService.LooksLikeJavaWindow(w) ? ctx.Java.UnavailableReason(w) : null,
                 java_access_bridge_diagnostics = diagnosis is null ? null : DiagnosisJson(diagnosis),
@@ -224,12 +235,13 @@ public sealed class ObserveTools
         });
 
     /// <summary>Why scope_type / scope_name picked nothing, with the elements that were there to choose from.</summary>
-    internal static string ScopeNotFoundMessage(UiNode tree, WindowInfo w, string? scopeType, string? scopeName, int maxDepth, bool interactiveOnly)
+    internal static string ScopeNotFoundMessage(UiNode tree, WindowInfo w, string? scopeType, string? scopeName, int maxDepth, bool interactiveOnly, string? scopeId = null)
     {
         var wanted = string.Join(" and ", new[]
         {
             scopeType is null ? null : $"scope_type '{scopeType}'",
             scopeName is null ? null : $"scope_name '{scopeName}'",
+            scopeId is null ? null : $"scope_id '{scopeId}'",
         }.Where(s => s is not null));
         var sb = new System.Text.StringBuilder($"No element matches {wanted} in window '{w.Title}'.");
         if (scopeType is not null)
@@ -338,10 +350,10 @@ public sealed class ObserveTools
     };
 
     [McpServerTool(Name = "get_table", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Read a UIA table/grid/list view or a Swing table (JTable) as a 2-D array of cell texts (header row first when available), plus row_count (data rows in the table), column_count and omitted_rows when max_rows cut the result. An empty Swing table gives rows: [] (or the header alone) with row_count: 0. max_rows: 0 with include_header: false returns the counts alone without reading any cell. A cell that could not be read is null (an empty cell is \"\") and unreadable_cells says how many.")]
+    [Description("Read a UIA table/grid/list view or a Swing table (JTable) as a 2-D array of cell texts. The ref must be the table itself: a UIA element with the Grid pattern, or a Table / DataGrid / List (read row by row); anything else (a button, the pane around a table) fails and names the tables inside it (header row first when available), plus row_count (data rows in the table), column_count and omitted_rows when max_rows cut the result. An empty Swing table gives rows: [] (or the header alone) with row_count: 0. max_rows: 0 with include_header: false returns the counts alone without reading any cell. A cell that could not be read is null (an empty cell is \"\") and unreadable_cells says how many.")]
     public static Task<CallToolResult> GetTable(
         ToolContext ctx,
-        [Description("Element ref (u{n} or j{n}) of the table.")] string @ref,
+        [Description("Element ref (u{n} or j{n}) of the table (not of the pane or scroll area around it).")] string @ref,
         [Description("Read at most this many data rows (the header row does not count). Default: all.")] int? max_rows = null,
         [Description("false: do not read the column header; rows then hold data rows only and no header text reaches the result or the log.")] bool include_header = true) =>
         ctx.RunStepAsync("get_table", ToolContext.Args(("ref", @ref), ("max_rows", max_rows), ("include_header", include_header ? null : false)), async step =>

@@ -30,13 +30,15 @@ public static class UiTreeShaper
     /// The element the tree should be scoped to: the node whose control type is <paramref name="controlType"/> (when given,
     /// case-insensitive) and whose name matches <paramref name="name"/> (when given). When several match, the one that has
     /// the keyboard focus or contains it wins (a browser's active tab page over its side panes), else the first in
-    /// document order. Null when nothing matches; <paramref name="matches"/> then lists what was considered, for the error.
+    /// document order. <paramref name="automationId"/> (when given) must equal the node's automationId, ignoring case.
+    /// Null when nothing matches; <paramref name="matches"/> then lists what was considered, for the error.
     /// </summary>
-    public static UiNode? FindScope(UiNode root, string? controlType, Regex? name, out IReadOnlyList<UiNode> matches)
+    public static UiNode? FindScope(UiNode root, string? controlType, Regex? name, out IReadOnlyList<UiNode> matches, string? automationId = null)
     {
         bool Matches(UiNode n) =>
             (controlType is null || string.Equals(n.ControlType, controlType, StringComparison.OrdinalIgnoreCase))
-            && (name is null || (n.Name is not null && name.IsMatch(n.Name)));
+            && (name is null || (n.Name is not null && name.IsMatch(n.Name)))
+            && (automationId is null || string.Equals(n.AutomationId, automationId, StringComparison.OrdinalIgnoreCase));
         var all = new List<UiNode>();
         void Collect(UiNode n)
         {

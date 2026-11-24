@@ -109,15 +109,21 @@ public sealed class IntentTools
         });
 
     [McpServerTool(Name = "find", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Rank the elements that best match a natural-language intent without acting. Returns refs with labels and probabilities. grounded=true: the decision model (Jev or Clef) ranked them. grounded=false: the model could not be asked (reason says why: no keys configured, HTTP error, timeout) and the candidates are ranked by text match between the intent and each element's label / value / role instead (probability is that score, 1 = exact label; ranking explains it), so the list is still usable to pick a target. On a window without elements the target is located on a screenshot and returned as a pt{n} ref with point {x, y}.")]
+    [Description("Rank the elements that best match a natural-language intent without acting. Returns refs with labels and probabilities. The candidates are the window's controls plus its labelled texts (a control without a name is labelled by the text inside it), walked to max_depth; scope limits them to one element's subtree. grounded=true: the decision model (Jev or Clef) ranked them. grounded=false: the model could not be asked (reason says why: no keys configured, HTTP error, timeout) and the candidates are ranked by text match between the intent and each element's label / value / role instead (probability is that score, 1 = exact label; ranking explains it); elements sharing no text with the intent are left out, so candidates: [] means nothing matched (note says so). considered is the number of elements examined; depth_limit_reached: true means elements below max_depth were not examined. On a window without elements the target is located on a screenshot and returned as a pt{n} ref with point {x, y}.")]
     public static Task<CallToolResult> Find(
         ToolContext ctx,
         [Description("The element you are looking for, e.g. \"the search box\".")] string intent,
-        [Description("Window ref (win{n}) or title regex. Default: last observed window, else the foreground window.")] string? window = null,
-        [Description("Number of candidates to return.")] int top_k = 5) =>
-        ctx.RunStepAsync("find", ToolContext.Args(("intent", intent), ("window", window), ("top_k", top_k)), async _ =>
+        [Description("Window ref (win{n}) or title regex. Default: last observed window, else the foreground window (or the window of scope).")] string? window = null,
+        [Description("Number of candidates to return.")] int top_k = 5,
+        [Description("Element ref (u{n} or j{n}, e.g. from get_ui_tree) whose subtree is searched instead of the whole window: a pane, a dialog, a web page's Document.")] string? scope = null,
+        [Description("Maximum depth of the element tree to search (default 12). Raise it when get_ui_tree needed a larger max_depth to show the element, or when depth_limit_reached is true.")] int? max_depth = null) =>
+        ctx.RunStepAsync("find", ToolContext.Args(("intent", intent), ("window", window), ("top_k", top_k), ("scope", scope), ("max_depth", max_depth)), async _ =>
         {
-            var r = await ctx.Grounder.FindAsync(intent, window, top_k);
+            if (max_depth is < 1) throw new ArgumentOutOfRangeException(nameof(max_depth), "max_depth must be at least 1.");
+            if (scope is not null && !ToolContext.IsUiaRef(scope) && !ToolContext.IsJavaRef(scope))
+                throw new ArgumentException($"scope must be a UIA or Java element ref (u{{n}} / j{{n}}), not '{scope}'.");
+            var observeScope = scope is null && max_depth is null ? null : new ObserveScope(scope, max_depth);
+            var r = await ctx.Grounder.FindAsync(intent, window, top_k, observeScope);
             var ranked = r.Ranked;
             if (r.Point is { } pt && r.Window is { } w)
             {
@@ -132,8 +138,25 @@ public sealed class IntentTools
                 ranking = r.Grounded ? "model" : (ranked.Count > 0 ? LexicalRankingNote : null),
                 point = r.Point is { } p ? new { x = p.X, y = p.Y } : null,
                 candidates = ranked.Select(c => CandidateJson(c.Candidate, c.Probability)).ToList(),
+                considered = r.Considered,
+                depth_limit_reached = r.DepthLimitReached,
+                note = ranked.Count == 0 && r.Point is null ? NoMatchNote(r, observeScope?.Depth ?? ObserveScope.DefaultMaxDepth) : null,
             };
         });
+
+    /// <summary>Why find returned no candidate, and what to try next.</summary>
+    public static string NoMatchNote(FindResult r, int maxDepth)
+    {
+        var what = r.Considered == 0
+            ? "The window (or scope) has no candidate elements."
+            : r.Grounded
+                ? $"The decision model chose none of the {r.Considered} elements examined."
+                : $"None of the {r.Considered} elements examined shares text with the intent.";
+        var depth = r.DepthLimitReached
+            ? $" The tree was cut at max_depth {maxDepth} above elements that have children: raise max_depth or pass scope."
+            : "";
+        return $"No match. {what}{depth} Check get_ui_tree (name=<regex>, interactive_only=false) for the element's actual name and type.";
+    }
 
     [McpServerTool(Name = "check", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Ask the decision model (Jev or Clef) a yes/no question about the current state of the window. Returns the probability of \"yes\"; available=false with reason when no decision model is configured or reachable (use get_ui_tree / get_text / assert_* to check the state yourself then). On a window without elements (or with WINUSE_SCREENSHOTS=always) a screenshot is attached.")]

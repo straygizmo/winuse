@@ -12,7 +12,7 @@ public sealed class InputTools
 {
     private const int WebScrollPixelsPerNotch = 100;
 
-    private const string WindowArg = "Window ref (win{n}) or title regex. When given, the window is activated first and x,y are relative to its rect (the origin a window screenshot reports), so an image pixel of screenshot(window) can be passed as x,y directly; without it x,y are screen coordinates. Pass it whenever the target window may not be in the foreground.";
+    private const string WindowArg = "Window ref (win{n}) or title regex. When given, the window is activated first and x,y are relative to its rect (the origin a window screenshot reports), so an image pixel of screenshot(window) can be passed as x,y directly at scale 1 (divide it by scale for a downscaled screenshot); without it x,y are screen coordinates. Pass it whenever the target window may not be in the foreground.";
     private const string InputWindowArg = "Window ref (win{n}) or title regex to activate before sending the input; fails when the window does not exist or cannot take the foreground. Without it the input goes to whichever window has focus (reported as foreground, with a warning when that is not the last observed window's process). Pass it whenever the target window may not be in the foreground.";
 
     [McpServerTool(Name = "click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]

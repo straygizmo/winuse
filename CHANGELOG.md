@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+Added
+
+- `process_run` takes `wait_exit: true`: the program is run to its end with its stdin closed and no console window, and the result carries `exit_code`, `stdout`, `stderr`, `elapsed_ms` and `timed_out`. `timeout_ms` (default 60 s, at most 10 min) kills the process tree when it runs longer; `max_output_chars` (default 20000) keeps the end of each stream, with `stdout_truncated` / `stderr_truncated` and the full lengths in `stdout_chars` / `stderr_chars`; `output_encoding` decodes the output (`auto`: UTF-8 when the bytes are valid UTF-8, else the OEM code page that console programs such as cmd print in; or `utf-8`, `oem`, a code page number or an encoding name).
+- `find` takes `scope` (an element ref: search one pane, dialog or page instead of the whole window) and `max_depth` (default 12). It reports `considered` (how many elements were examined) and `depth_limit_reached`. Without a decision model, elements that share no text with the intent are no longer listed with probability 0: an empty `candidates` means nothing matched, and `note` says so, how many elements were examined, whether the tree was cut at `max_depth`, and what to try next.
+- `find` and `act` consider labelled texts as candidates, and a button, list item, tab or similar control without a name of its own is labelled by the text inside it, so an element that `get_ui_tree` shows as a `Text` (a clickable label, a web page's text, an unnamed icon button with a caption) can be found.
+- `get_ui_tree` takes `scope_id`: scope the tree to the element with this automationId (exact, case-insensitive), alone or with `scope_type` / `scope_name`. The result's `scope` carries the element's `automationId`.
+- `get_ui_tree` reports `depth_limit_reached` for UI Automation trees too (it was Java only, and `null` otherwise): `true` when an element at `max_depth` had children that were not walked, so an element may be missing. The field is now always present.
+- A downscaled `screenshot` (`scale` below 1) carries `to_screen`, the formula from image pixels to screen and window-relative click coordinates. The `screenshot` and `click` descriptions now say that image pixels must be divided by `scale` before they are clicked (they said the pixel could be passed as is, which is only true at scale 1).
+
+Fixed
+
+- A UIA ref `click` (and `hover`, `drag`, `scroll`, `invoke` when it falls back to the mouse) on an element scrolled out of a list's or a web page's scroll area clicked whatever was shown at the element's old position: UI Automation keeps the element's full bounding rectangle, and Chromium does not mark it offscreen until it is well out of view. The element is now clipped to the viewport of every scrollable ancestor (found in the raw view, where Chromium keeps its scrolling `div`s) and clicked at the centre of the part that shows; when nothing (or only a strip of a few pixels) shows, or UI Automation reports it offscreen, the click is refused with the scroll container named and nothing is clicked.
+- `get_table` on a UIA element that is not a table returned a made-up result: an empty table for a button, the scroll bar buttons for the pane around a table. It now fails unless the element has the Grid pattern or is a Table, DataGrid or List, and when the element contains tables the error names them and how to get their ref. Scroll bars are no longer read as rows of a list.
+
 ## 0.2.8 - 2026-11-04
 
 Added

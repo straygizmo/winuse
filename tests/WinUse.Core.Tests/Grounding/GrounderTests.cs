@@ -88,9 +88,10 @@ public class GrounderTests
     public async Task FindAsync_WithoutJev_ReturnsUngroundedCandidates()
     {
         var g = new Grounder(new FakeJev(configured: false), new FakeObservation(Cand("u1", "Cancel")), new FakeExecutor(), TestConfig.Default);
-        var r = await g.FindAsync("anything", null);
+        var r = await g.FindAsync("cancel", null);
         Assert.False(r.Grounded); Assert.Single(r.Ranked);
         Assert.Equal(JevClient.NotConfiguredMessage, r.Reason);
+        Assert.Equal(1, r.Considered);
     }
 
     [Fact]
@@ -101,7 +102,30 @@ public class GrounderTests
         Assert.False(r.Grounded);
         Assert.Equal("u2", r.Ranked[0].Candidate.Id);
         Assert.True(r.Ranked[0].Probability > 0.9);
-        Assert.Equal(0, r.Ranked[1].Probability);
+        Assert.Single(r.Ranked); // Cancel and Help share nothing with the intent
+        Assert.Equal(3, r.Considered);
+    }
+
+    [Fact]
+    public async Task FindAsync_WithoutJev_NoTextInCommon_ReturnsNoCandidates()
+    {
+        var obs = new FakeObservation(Cand("u1", "Cancel"), Cand("u2", "Save")) { DepthLimitReached = true };
+        var g = new Grounder(new FakeJev(configured: false), obs, new FakeExecutor(), TestConfig.Default);
+        var r = await g.FindAsync("保存", null);
+        Assert.Empty(r.Ranked);
+        Assert.Equal(2, r.Considered);
+        Assert.True(r.DepthLimitReached);
+    }
+
+    [Fact]
+    public async Task FindAsync_PassesTheScopeToTheObservation()
+    {
+        var obs = new FakeObservation(Cand("u1", "Send"));
+        var g = new Grounder(new FakeJev(configured: false), obs, new FakeExecutor(), TestConfig.Default);
+        await g.FindAsync("send", null, 5, new ObserveScope("u7", 30));
+        Assert.Equal(new ObserveScope("u7", 30), obs.LastScope);
+        Assert.Equal(30, obs.LastScope!.Depth);
+        Assert.Equal(ObserveScope.DefaultMaxDepth, new ObserveScope().Depth);
     }
 
     [Fact]

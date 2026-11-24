@@ -54,6 +54,26 @@ public class UiaServiceTests
     }
 
     [Fact]
+    public async Task Notepad_DepthLimit_IsReported_AndGetTableRefusesAButton()
+    {
+        using var d = new AutomationDispatcher();
+        var refs = new RefRegistry();
+        var windows = new WindowService(d);
+        using var uia = new UiaService(d, refs, windows);
+        using var np = await NotepadFixture.LaunchAsync(windows);
+
+        var shallow = await uia.GetTreeWithStatusAsync(np.Window.Hwnd, new TreeOptions(MaxDepth: 1));
+        Assert.True(shallow.DepthLimitReached);
+        var full = await uia.GetTreeWithStatusAsync(np.Window.Hwnd, new TreeOptions(MaxDepth: 40));
+        Assert.False(full.DepthLimitReached);
+
+        var button = Find(full.Root, n => n.ControlType == "Button");
+        Assert.NotNull(button);
+        var ex = await Assert.ThrowsAsync<NotSupportedException>(() => uia.GetTableAsync(button!.Ref, null));
+        Assert.Contains("is not a table", ex.Message);
+    }
+
+    [Fact]
     public async Task Calculator_InvokeButtons_ComputesSum()
     {
         using var d = new AutomationDispatcher();

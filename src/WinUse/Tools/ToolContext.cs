@@ -224,8 +224,9 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
     public ElementRef RegisterWindow(WindowInfo w) => Refs.Register(RefKind.Window, LocatorOf(w), w.Hwnd);
 
     /// <summary>
-    /// Centre (screen pixels) of the on-screen part of a UIA / Java element ref, or of a window ref. A Java element that is
-    /// scrolled out of its viewport or lies beyond the window's edge has no on-screen part: the error says where it is.
+    /// Centre (screen pixels) of the on-screen part of a UIA / Java element ref, or of a window ref. An element that is
+    /// scrolled out of its viewport (UIA: any scrollable ancestor; Java: also beyond the window's edge) or that UIA reports
+    /// offscreen has no on-screen part: the error says where it is.
     /// </summary>
     public async Task<(int X, int Y)> CenterOfAsync(ElementRef r)
     {
@@ -234,8 +235,14 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
         switch (r.Kind)
         {
             case RefKind.Uia:
-                rect = await Uia.GetRectAsync(r.Id).ConfigureAwait(false);
+            {
+                // Clipped to the scroll viewports around it: an element scrolled out of a list keeps its bounding
+                // rectangle, whose centre is then on another element.
+                var v = await Uia.GetVisibilityAsync(r.Id).ConfigureAwait(false);
+                if (v.NotClickableReason(r.Id) is { } reason) throw new InvalidOperationException(reason);
+                rect = v.VisibleRect;
                 break;
+            }
             case RefKind.Java:
             {
                 var v = await Java.GetVisibilityAsync(r.Id).ConfigureAwait(false);
@@ -369,12 +376,31 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
 
     // ---- IObservationSource ---------------------------------------------------------------------
 
-    public async Task<Observation> ObserveAsync(string? window)
+    public async Task<Observation> ObserveAsync(string? window, ObserveScope? scope = null)
     {
-        var w = await ResolveWindowAsync(null, window, fallback: true).ConfigureAwait(false);
+        var scopeRef = scope?.ScopeRef;
+        var w = scopeRef is not null && window is null
+            ? await ResolveWindowAsync(scopeRef, null, false).ConfigureAwait(false)
+            : await ResolveWindowAsync(null, window, fallback: true).ConfigureAwait(false);
         LastWindow = w.Hwnd;
-        var tree = await UiaService.RetryIfChildlessAsync(() => GetTreeAsync(w, new TreeOptions()), UiaService.EmptyTreeRetryDelay)
-            .ConfigureAwait(false);
+        var opt = new TreeOptions(scopeRef, scope?.Depth ?? ObserveScope.DefaultMaxDepth);
+        var depthLimitReached = false;
+        async Task<UiNode> Read()
+        {
+            var isJava = scopeRef is null ? await Java.IsJavaWindowAsync(w).ConfigureAwait(false) : IsJavaRef(scopeRef);
+            if (isJava)
+            {
+                var j = await Java.GetTreeWithStatusAsync(w.Hwnd, opt).ConfigureAwait(false);
+                depthLimitReached = j.DepthLimitReached;
+                return j.Root;
+            }
+            var u = await Uia.GetTreeWithStatusAsync(w.Hwnd, opt).ConfigureAwait(false);
+            depthLimitReached = u.DepthLimitReached;
+            return u.Root;
+        }
+        var tree = scopeRef is null
+            ? await UiaService.RetryIfChildlessAsync(Read, UiaService.EmptyTreeRetryDelay).ConfigureAwait(false)
+            : await Read().ConfigureAwait(false);
         IReadOnlyList<DomNode> dom = [];
         Rect? webViewRect = null;
         if (Web.IsConnected)
@@ -402,7 +428,7 @@ public sealed class ToolContext : IObservationSource, IActionExecutor, IWindowCa
             .Select(e => Truncate($"{e.Tool} {Summary(e.Args)}", 200))
             .ToList();
         // A Java window that yielded nothing explains itself (bridge missing, not responding), so act / find can say why.
-        return new Observation(w, candidates, recent, candidates.Count == 0 ? Java.UnavailableReason(w) : null);
+        return new Observation(w, candidates, recent, candidates.Count == 0 ? Java.UnavailableReason(w) : null, depthLimitReached);
     }
 
     /// <summary>The element tree of a window: through Java Access Bridge for a Swing window the bridge can read, else UIA.</summary>

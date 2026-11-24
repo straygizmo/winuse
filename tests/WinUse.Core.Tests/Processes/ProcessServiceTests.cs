@@ -118,4 +118,64 @@ public class ProcessServiceTests
         var sw = Stopwatch.StartNew();
         while (sw.Elapsed < TimeSpan.FromSeconds(10) && (!File.Exists(file) || new FileInfo(file).Length == 0)) Thread.Sleep(50);
     }
+
+    [Fact]
+    public async Task RunToExit_ReturnsExitCodeStdoutAndStderr()
+    {
+        var svc = new ProcessService(TestConfig.Default);
+        var o = await svc.RunToExitAsync(new RunSpec("cmd.exe", "/c echo out-line& echo err-line 1>&2& exit /b 3", null, null, false, false),
+            TimeSpan.FromSeconds(30), 1000, OutputEncoding.Auto);
+        Assert.Equal(3, o.ExitCode);
+        Assert.False(o.TimedOut);
+        Assert.Equal("out-line", o.Stdout.Trim());
+        Assert.Equal("err-line", o.Stderr.Trim());
+        Assert.False(o.StdoutTruncated);
+        Assert.Contains(o.Pid, svc.Started);
+    }
+
+    [Fact]
+    public async Task RunToExit_KeepsTheEndOfLongOutput()
+    {
+        var svc = new ProcessService(TestConfig.Default);
+        var o = await svc.RunToExitAsync(new RunSpec("cmd.exe", "/c for /l %i in (1,1,3000) do @echo line %i", null, null, false, false),
+            TimeSpan.FromSeconds(60), 100, OutputEncoding.Auto);
+        Assert.Equal(0, o.ExitCode);
+        Assert.True(o.StdoutTruncated);
+        Assert.Equal(100, o.Stdout.Length);
+        Assert.True(o.StdoutChars > 30_000);
+        Assert.Contains("line 3000", o.Stdout);
+    }
+
+    [Fact]
+    public async Task RunToExit_TimeoutKillsTheProcess()
+    {
+        var svc = new ProcessService(TestConfig.Default);
+        var o = await svc.RunToExitAsync(new RunSpec("cmd.exe", "/c ping -n 30 127.0.0.1 >nul", null, null, false, false),
+            TimeSpan.FromSeconds(1), 1000, OutputEncoding.Auto);
+        Assert.True(o.TimedOut);
+        Assert.Null(o.ExitCode);
+        Assert.False(svc.IsAlive(o.Pid));
+    }
+
+    [Fact]
+    public void Decode_AutoTakesUtf8WhenValid_ElseTheOemCodePage()
+    {
+        Assert.Equal("保存", ProcessService.Decode(System.Text.Encoding.UTF8.GetBytes("保存"), OutputEncoding.Auto));
+        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+        var sjis = System.Text.Encoding.GetEncoding(932).GetBytes("保存");
+        Assert.Equal("保存", ProcessService.Decode(sjis, OutputEncoding.Parse("932")));
+        Assert.Equal("保存", ProcessService.Decode(sjis, OutputEncoding.Parse("shift_jis")));
+        Assert.Equal("", ProcessService.Decode([], OutputEncoding.Auto));
+    }
+
+    [Theory]
+    [InlineData(null, OutputEncodingKind.Auto)]
+    [InlineData("auto", OutputEncodingKind.Auto)]
+    [InlineData("UTF-8", OutputEncodingKind.Utf8)]
+    [InlineData("oem", OutputEncodingKind.Oem)]
+    [InlineData("65001", OutputEncodingKind.CodePage)]
+    public void OutputEncoding_Parses(string? input, OutputEncodingKind expected) => Assert.Equal(expected, OutputEncoding.Parse(input).Kind);
+
+    [Fact]
+    public void OutputEncoding_RejectsUnknownNames() => Assert.Throws<ArgumentException>(() => OutputEncoding.Parse("klingon"));
 }
