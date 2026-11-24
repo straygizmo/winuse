@@ -21,9 +21,15 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
         double ChoiceProbability,
         string? Kind);
 
-    public async Task<FindResult> FindAsync(string intent, string? window, int topK = 5)
+    public async Task<FindResult> FindAsync(string intent, string? window, int topK = 5, ObserveScope? scope = null)
     {
-        var o = await obs.ObserveAsync(window).ConfigureAwait(false);
+        var o = await obs.ObserveAsync(window, scope).ConfigureAwait(false);
+        var r = await FindInAsync(intent, o, topK).ConfigureAwait(false);
+        return r with { Considered = o.Candidates.Count, DepthLimitReached = o.DepthLimitReached };
+    }
+
+    async Task<FindResult> FindInAsync(string intent, Observation o, int topK)
+    {
         if (!jev.IsConfigured) return Ungrounded(intent, o, topK, JevClient.NotConfiguredMessage);
         try
         {
@@ -217,10 +223,11 @@ public sealed class Grounder(IJevClient jev, IObservationSource obs, IActionExec
 
     /// <summary>
     /// The candidates ranked by text match with the intent (no model): the caller can still pick the target from labels
-    /// that share words with its intent. <paramref name="reason"/> says why the model was not asked.
+    /// that share words with its intent. <paramref name="reason"/> says why the model was not asked. Candidates that share
+    /// nothing with the intent (score 0) are left out, so an empty list means no element matched.
     /// </summary>
     static FindResult Ungrounded(string intent, Observation o, int topK, string? reason) =>
-        new(LexicalRanker.Rank(intent, o.Candidates, topK), 0, false, Reason: reason);
+        new(LexicalRanker.Rank(intent, o.Candidates, topK).Where(x => x.Probability > 0).ToList(), 0, false, Reason: reason);
 
     static ActKind? ParseKind(string? k) => k switch
     {

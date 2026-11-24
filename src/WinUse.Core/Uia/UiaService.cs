@@ -48,7 +48,14 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
         return false;
     }
 
-    public async Task<UiNode> GetTreeAsync(nint hwnd, TreeOptions opt)
+    public async Task<UiNode> GetTreeAsync(nint hwnd, TreeOptions opt) =>
+        (await GetTreeWithStatusAsync(hwnd, opt).ConfigureAwait(false)).Root;
+
+    /// <summary>
+    /// The tree plus <see cref="UiaTreeResult.DepthLimitReached"/>: true when an element at <see cref="TreeOptions.MaxDepth"/>
+    /// had children that were not walked, so an element that exists may be missing.
+    /// </summary>
+    public async Task<UiaTreeResult> GetTreeWithStatusAsync(nint hwnd, TreeOptions opt)
     {
         opt ??= new TreeOptions();
         refs.BeginSnapshot();
@@ -74,12 +81,17 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
         return await d.RunAsync(() =>
         {
             var start = scopeEl ?? Auto.FromHandle(hwnd);
-            return new TreeBuilder(refs, wloc, opt).BuildRoot(start, basePath);
+            var builder = new TreeBuilder(refs, wloc, opt);
+            var root = builder.BuildRoot(start, basePath);
+            return new UiaTreeResult(root, builder.DepthLimitReached);
         }).ConfigureAwait(false);
     }
 
     private sealed class TreeBuilder(RefRegistry refs, WindowLocator wloc, TreeOptions opt)
     {
+        /// <summary>An element at the depth limit had children that were not walked.</summary>
+        public bool DepthLimitReached { get; private set; }
+
         public UiNode BuildRoot(AutomationElement el, IReadOnlyList<UiaPathSegment> path)
         {
             var r = refs.Register(RefKind.Uia, new UiaLocator(wloc, path), el);
@@ -90,7 +102,11 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
         private List<UiNode> Children(AutomationElement parent, IReadOnlyList<UiaPathSegment> parentPath, int realDepth, int outDepth)
         {
             var result = new List<UiNode>();
-            if (realDepth >= opt.MaxDepth) return result;
+            if (realDepth >= opt.MaxDepth)
+            {
+                if (!DepthLimitReached && Safe(() => parent.FindFirstChild() is not null, false)) DepthLimitReached = true;
+                return result;
+            }
             AutomationElement[] kids;
             try { kids = parent.FindAllChildren(); } catch { return result; }
 
@@ -245,6 +261,34 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
         WithAsync(refId, el => MakeNode(refId, el, 0, [], withValue: true));
 
     public Task<Rect> GetRectAsync(string refId) => WithAsync(refId, RectOf);
+
+    /// <summary>
+    /// The element's rectangle clipped to the viewport of every scrollable ancestor (an element scrolled out of a list or
+    /// a web page's scroll area keeps its full bounding rectangle, whose centre then lies on whatever is shown there).
+    /// </summary>
+    public Task<UiaVisibility> GetVisibilityAsync(string refId) => WithAsync(refId, VisibilityOf);
+
+    private UiaVisibility VisibilityOf(AutomationElement el) =>
+        UiaVisibility.Compute(RectOf(el), Safe(() => el.Properties.IsOffscreen.ValueOrDefault, false), ScrollAncestors(el));
+
+    /// <summary>
+    /// The ancestors (innermost first) that scroll their content: Scroll pattern with a scrollable direction. Walked in
+    /// the raw view: Chromium leaves a scrolling <c>div</c> out of the control view (its items appear as children of the
+    /// Document), so the control view would miss the very viewport that hides them.
+    /// </summary>
+    private IEnumerable<UiaClip> ScrollAncestors(AutomationElement el)
+    {
+        var walker = Auto.TreeWalkerFactory.GetRawViewWalker();
+        var p = Safe(() => walker.GetParent(el), null);
+        for (var guard = 0; p is not null && guard < 128; guard++)
+        {
+            var sp = Safe(() => p.Patterns.Scroll.PatternOrDefault, null);
+            if (sp is not null && Safe(() => sp.VerticallyScrollable.ValueOrDefault || sp.HorizontallyScrollable.ValueOrDefault, false))
+                yield return new UiaClip(UiaLocatorResolver.TypeOf(p), UiaLocatorResolver.NameOf(p), RectOf(p));
+            var current = p;
+            p = Safe(() => walker.GetParent(current), null);
+        }
+    }
 
     public Task<string> GetTextAsync(string refId) => WithAsync(refId, el =>
     {
@@ -544,16 +588,17 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
         var (rect, action) = await d.RunAsync(() =>
         {
             if (!IsAlive(el)) throw new InvalidOperationException($"Element for ref '{refId}' is gone.");
-            if (method == InvokeMethod.Mouse) return (RectOf(el), (string?)null);
-            if (el.Patterns.Invoke.PatternOrDefault is { } inv) { inv.Invoke(); return ((Rect?)null, (string?)"Invoke"); }
+            if (method == InvokeMethod.Mouse) return (VisibilityOf(el), (string?)null);
+            if (el.Patterns.Invoke.PatternOrDefault is { } inv) { inv.Invoke(); return ((UiaVisibility?)null, (string?)"Invoke"); }
             if (el.Patterns.Toggle.PatternOrDefault is { } tg) { tg.Toggle(); return (null, "Toggle"); }
             if (el.Patterns.SelectionItem.PatternOrDefault is { } si) { si.Select(); return (null, "SelectionItem"); }
             if (method == InvokeMethod.Action) throw new NotSupportedException($"Ref '{refId}' supports no Invoke, Toggle or SelectionItem pattern.");
-            return (RectOf(el), null);
+            return (VisibilityOf(el), null);
         }).ConfigureAwait(false);
-        if (rect is not { } r) return InvokeResult.Did("action", action);
-        if (r.Width <= 0 || r.Height <= 0)
-            throw new InvalidOperationException($"Ref '{refId}' cannot be invoked and has no clickable area.");
+        if (rect is not { } v) return InvokeResult.Did("action", action);
+        if (v.NotClickableReason(refId) is { } reason)
+            throw new InvalidOperationException($"{reason} (invoke found no Invoke, Toggle or SelectionItem pattern and would have clicked it.)");
+        var r = v.VisibleRect;
         await _input.ClickAsync(r.X + r.Width / 2, r.Y + r.Height / 2).ConfigureAwait(false);
         return InvokeResult.Did("mouse");
     }
@@ -599,8 +644,12 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
             }
             return new TableReadResult(rows.ToArray(), rc, cc, rc - limit, unreadable);
         }
-        // No Grid pattern: treat each child row's children as cells; the column count is the width of the first row.
-        var children = el.FindAllChildren();
+        // No Grid pattern: only a table / data grid / list is read row by row (each child row's children as cells, the
+        // column count is the width of the first row). Anything else is refused: a pane's children are its scroll bars and
+        // panels, a button's are its text, which would come back as a made-up table.
+        var type = UiaLocatorResolver.TypeOf(el);
+        if (!RowWiseTableTypes.Contains(type)) throw new NotSupportedException(NotATableMessage(refId, el, type));
+        var children = el.FindAllChildren().Where(c => UiaLocatorResolver.TypeOf(c) is not ("ScrollBar" or "Thumb")).ToArray();
         var take = maxRows is { } max ? Math.Min(Math.Max(max, 0), children.Length) : children.Length;
         var columns = 0;
         foreach (var (row, i) in children.Select((r, i) => (r, i)))
@@ -612,6 +661,29 @@ public sealed class UiaService(AutomationDispatcher d, RefRegistry refs, WindowS
         }
         return new TableReadResult(rows.ToArray(), children.Length, columns, children.Length - take, 0);
     });
+
+    /// <summary>Control types read row by row when they lack the Grid pattern.</summary>
+    private static readonly HashSet<string> RowWiseTableTypes = new(StringComparer.Ordinal) { "Table", "DataGrid", "List" };
+
+    /// <summary>Why get_table refuses the element, naming the tables inside it when it is their container.</summary>
+    private static string NotATableMessage(string refId, AutomationElement el, string type)
+    {
+        var name = UiaLocatorResolver.NameOf(el);
+        var inner = Safe(() => el.FindAllDescendants(cf => cf.ByControlType(ControlType.Table).Or(cf.ByControlType(ControlType.DataGrid))), Array.Empty<AutomationElement>());
+        var sb = new System.Text.StringBuilder(
+            $"Ref '{refId}' ({type}{(string.IsNullOrEmpty(name) ? "" : $" '{name}'")}) is not a table: it has no Grid pattern and is not a Table, DataGrid or List. Nothing was read.");
+        if (inner.Length > 0)
+        {
+            var names = inner.Take(5).Select(i => $"{UiaLocatorResolver.TypeOf(i)} '{UiaLocatorResolver.NameOf(i) ?? ""}'");
+            sb.Append($" It contains {inner.Length} table{(inner.Length == 1 ? "" : "s")} ({string.Join(", ", names)}{(inner.Length > 5 ? ", ..." : "")}): "
+                      + $"get its ref with get_ui_tree scope=\"{refId}\" control_type=\"Table,DataGrid,List\" and pass that.");
+        }
+        else
+        {
+            sb.Append(" Pass the ref of the Table / DataGrid / List element (get_ui_tree control_type=\"Table,DataGrid,List\").");
+        }
+        return sb.ToString();
+    }
 
     private static string CellText(AutomationElement c)
     {

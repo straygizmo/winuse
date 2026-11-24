@@ -29,21 +29,48 @@ public static class CandidateBuilder
         return result;
     }
 
-    static void Walk(UiNode node, string? container, Rect win, Rect? web, List<Candidate> output)
+    /// <summary>
+    /// Controls whose text children are their own caption: an unnamed one takes its label from them, and those texts are
+    /// not candidates of their own. Containers (Document, List, Tab, Menu ...) are not among them, so the texts of a web
+    /// page or a list stay candidates.
+    /// </summary>
+    static readonly HashSet<string> CaptionedControls = new(StringComparer.Ordinal)
+    {
+        "Button", "SplitButton", "MenuItem", "TabItem", "ListItem", "TreeItem", "Hyperlink", "CheckBox", "RadioButton",
+        "ComboBox", "Edit",
+    };
+
+    static void Walk(UiNode node, string? container, Rect win, Rect? web, List<Candidate> output, bool insideCaptioned = false)
     {
         var isContainer = node.ControlType is "Window" or "Pane";
         if (!isContainer && InteractiveFilter.IsInteractive(node.ControlType) && !InsideWeb(node.Rect, web))
         {
-            var label = First(node.Name, node.Value, node.AutomationId) ?? node.ControlType;
+            var label = First(node.Name, node.Value, CaptionOf(node), node.AutomationId) ?? node.ControlType;
             var editable = node.ControlType is "Edit" or "Document"
                 || (node.ControlType == "ComboBox" && !string.IsNullOrEmpty(node.Value));
             output.Add(new Candidate(node.Ref, node.ControlType, label, node.Value, node.Enabled,
                 node.Focused, editable, node.Checked, RegionOf(node.Rect, win), container));
         }
+        else if (node.ControlType == "Text" && !insideCaptioned && !string.IsNullOrWhiteSpace(node.Name) && !InsideWeb(node.Rect, web)
+                 && !node.Rect.IsEmpty)
+        {
+            // A labelled text that is no control's caption: a clickable label, a chat or list entry drawn as text.
+            output.Add(new Candidate(node.Ref, "Text", node.Name!, null, node.Enabled, node.Focused, false, null,
+                RegionOf(node.Rect, win), container));
+        }
         // An open menu (or a Swing menu read through Java Access Bridge, whose items are listed while closed) names its items' container.
         var isMenuContainer = node.ControlType is "MenuItem" or "Menu" or "MenuBar" && node.Children.Count > 0;
         var childContainer = (isContainer || isMenuContainer) && !string.IsNullOrEmpty(node.Name) ? node.Name : container;
-        foreach (var c in node.Children) Walk(c, childContainer, win, web, output);
+        var captioned = insideCaptioned || CaptionedControls.Contains(node.ControlType);
+        foreach (var c in node.Children) Walk(c, childContainer, win, web, output, captioned);
+    }
+
+    /// <summary>The texts directly under a control (its caption), joined; null when it has none.</summary>
+    static string? CaptionOf(UiNode node)
+    {
+        if (!CaptionedControls.Contains(node.ControlType)) return null;
+        var texts = node.Children.Where(c => c.ControlType == "Text" && !string.IsNullOrWhiteSpace(c.Name)).Select(c => c.Name!.Trim()).ToList();
+        return texts.Count == 0 ? null : string.Join(" ", texts);
     }
 
     static bool InsideWeb(Rect r, Rect? web)
