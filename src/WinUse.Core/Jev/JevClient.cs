@@ -9,13 +9,14 @@ using WinUse.Core.Config;
 namespace WinUse.Core.Jev;
 
 /// <summary>
-/// HTTP client for the System One question API, served by TypeSafe Jev and by Cloudflare Clef (Workers AI).
+/// HTTP client for the System One question API, served by TypeSafe Jev and by Cloudflare Clef (Workers AI), and for
+/// Google's Gemini Decisions API, which asks the same choice / yes-no questions with a different envelope.
 /// Which one is called follows <see cref="WinUseConfig.Provider"/>.
 /// </summary>
 public sealed class JevClient : IJevClient
 {
     public const string NotConfiguredMessage =
-        "No decision model is configured: set JEV_API_KEY, or CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN for Clef.";
+        "No decision model is configured: set JEV_API_KEY, CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN for Clef, or GEMINI_API_KEY for Gemini.";
 
     const int MaxChoices = 255;
     static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(10);
@@ -40,6 +41,7 @@ public sealed class JevClient : IJevClient
     {
         DecisionProvider.Jev => _cfg.JevApiKey is not null,
         DecisionProvider.Clef => _cfg.CloudflareAccountId is not null && _cfg.CloudflareApiToken is not null,
+        DecisionProvider.Gemini => _cfg.GeminiApiKey is not null,
         _ => false,
     };
 
@@ -52,12 +54,26 @@ public sealed class JevClient : IJevClient
         DecisionProvider.Jev => $"{cfg.JevBaseUrl.TrimEnd('/')}/v1/systemone",
         DecisionProvider.Clef when cfg.CloudflareAccountId is not null =>
             $"{cfg.ClefBaseUrl.TrimEnd('/')}/client/v4/accounts/{cfg.CloudflareAccountId}/ai/run/@cf/cloudflare/{cfg.ClefModel}",
+        DecisionProvider.Gemini => $"{cfg.GeminiBaseUrl.TrimEnd('/')}/v1beta/decisions",
         _ => null,
     };
 
-    string Model => _cfg.Provider == DecisionProvider.Clef ? _cfg.ClefModel : _cfg.JevModel;
+    string Model => _cfg.Provider switch
+    {
+        DecisionProvider.Clef => _cfg.ClefModel,
+        DecisionProvider.Gemini => _cfg.GeminiModel,
+        _ => _cfg.JevModel,
+    };
 
-    string? Token => _cfg.Provider == DecisionProvider.Clef ? _cfg.CloudflareApiToken : _cfg.JevApiKey;
+    string? Token => _cfg.Provider switch
+    {
+        DecisionProvider.Clef => _cfg.CloudflareApiToken,
+        DecisionProvider.Gemini => _cfg.GeminiApiKey,
+        _ => _cfg.JevApiKey,
+    };
+
+    /// <summary>Gemini takes the API key in this header instead of a bearer token.</summary>
+    public const string GeminiKeyHeader = "x-goog-api-key";
 
     /// <summary>Jev requires this opt-in header on every request that carries an image or a box question.</summary>
     public const string JevImagesHeader = "TypeSafe-Danger-Zone-Images";
@@ -68,9 +84,12 @@ public sealed class JevClient : IJevClient
         if (!IsConfigured || Endpoint is not { } url || Token is not { } token)
             throw new InvalidOperationException(NotConfiguredMessage);
 
+        if (Provider == DecisionProvider.Gemini && questions.Values.FirstOrDefault(q => q is BoxQuestion) is not null)
+            throw new ArgumentException("Gemini does not answer box questions; use the grid locator.", nameof(questions));
+
         var hasImages = images is { Count: > 0 };
         var body = BuildBody(state, questions, images);
-        _log.LogDebug("{Provider} request to {Url} (Authorization: Bearer ***), {Images} image(s): {Body}",
+        _log.LogDebug("{Provider} request to {Url} (credentials ***), {Images} image(s): {Body}",
             Provider, url, images?.Count ?? 0, hasImages ? "(body with images omitted)" : body);
 
         Exception? last = null;
@@ -90,7 +109,8 @@ public sealed class JevClient : IJevClient
                 {
                     Content = new StringContent(body, Encoding.UTF8, "application/json"),
                 };
-                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                if (Provider == DecisionProvider.Gemini) req.Headers.Add(GeminiKeyHeader, token);
+                else req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
                 var needsOptIn = hasImages || questions.Values.Any(q => q is BoxQuestion);
                 if (Provider == DecisionProvider.Jev && needsOptIn) req.Headers.Add(JevImagesHeader, "true");
 
@@ -137,7 +157,9 @@ public sealed class JevClient : IJevClient
                     if (c.Criteria.Count > MaxChoices)
                         throw new ArgumentException($"Choice question '{id}' has {c.Criteria.Count} options; the maximum is {MaxChoices}", nameof(questions));
                     var criteria = new JsonObject();
-                    foreach (var (k, v) in c.Criteria) criteria[k] = v is null ? null : JsonValue.Create(v);
+                    // Gemini documents "" (not null) for an option without a description.
+                    foreach (var (k, v) in c.Criteria)
+                        criteria[k] = v is null ? (Provider == DecisionProvider.Gemini ? JsonValue.Create("") : null) : JsonValue.Create(v);
                     qs[id] = new JsonObject { ["type"] = "choice", ["instructions"] = c.Instructions, ["criteria"] = criteria };
                     break;
                 case NoulQuestion n:
@@ -150,6 +172,9 @@ public sealed class JevClient : IJevClient
                     throw new ArgumentException($"Unsupported question type {q.GetType().Name}", nameof(questions));
             }
         }
+        if (Provider == DecisionProvider.Gemini)
+            return new JsonObject { ["model"] = Model, ["input"] = GeminiInput(state, images), ["questions"] = qs }.ToJsonString();
+
         var root = new JsonObject
         {
             ["model"] = Model,
@@ -177,6 +202,22 @@ public sealed class JevClient : IJevClient
         return root.ToJsonString();
     }
 
+    /// <summary>
+    /// Gemini's shared <c>input</c>: each image after a text block naming it (the state refers to images by id, as with
+    /// Jev's assets), then the state as JSON text. Text blocks are concatenated without a separator, so each ends in a newline.
+    /// </summary>
+    static JsonArray GeminiInput(object state, IReadOnlyList<ImageAttachment>? images)
+    {
+        var input = new JsonArray();
+        foreach (var img in images ?? [])
+        {
+            input.Add(new JsonObject { ["type"] = "text", ["text"] = $"Image `{img.Id}`:\n" });
+            input.Add(new JsonObject { ["type"] = "image", ["mime_type"] = "image/png", ["data"] = Convert.ToBase64String(img.Png) });
+        }
+        input.Add(new JsonObject { ["type"] = "text", ["text"] = "\nState:\n" + JsonSerializer.Serialize(state) + "\n" });
+        return input;
+    }
+
     JevResponse Parse(string text)
     {
         JsonElement root;
@@ -184,7 +225,8 @@ public sealed class JevClient : IJevClient
         catch (JsonException ex) { throw new InvalidOperationException($"{Provider} returned invalid JSON: {text}", ex); }
         root = Unwrap(root, text);
 
-        var model = root.TryGetProperty("model", out var m) ? m.GetString() ?? "" : "";
+        // Gemini's response does not echo the model.
+        var model = root.TryGetProperty("model", out var m) ? m.GetString() ?? "" : Provider == DecisionProvider.Gemini ? Model : "";
         var answers = new Dictionary<string, object>();
         if (root.TryGetProperty("answers", out var ans))
         {
@@ -217,7 +259,10 @@ public sealed class JevClient : IJevClient
                 }
             }
         }
-        var tokens = root.TryGetProperty("usage", out var u) && u.TryGetProperty("input_tokens", out var it) ? it.GetInt32() : 0;
+        var tokens = !root.TryGetProperty("usage", out var u) ? 0
+            : u.TryGetProperty("input_tokens", out var it) ? it.GetInt32()
+            : u.TryGetProperty("total_input_tokens", out var gt) ? gt.GetInt32() // Gemini
+            : 0;
         return new JevResponse(model, answers, tokens);
     }
 

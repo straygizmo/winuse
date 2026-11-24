@@ -9,7 +9,7 @@ public sealed record NoulQuestion(string Instructions) : JevQuestion(Instruction
 /// <summary>Jev 1.14 only: locate one target on an image named in the instructions (e.g. "the OK button in `screenshot`").</summary>
 public sealed record BoxQuestion(string Instructions) : JevQuestion(Instructions);
 
-/// <summary>A PNG sent with a request. <see cref="Id"/> is how Jev's <c>state</c> / instructions refer to it (Clef ignores it).</summary>
+/// <summary>A PNG sent with a request. <see cref="Id"/> is how Jev's <c>state</c> / instructions refer to it (Clef ignores it; Gemini gets it as a text label before the image).</summary>
 public sealed record ImageAttachment(string Id, byte[] Png);
 
 public sealed record ChoiceAnswer(string Choice, IReadOnlyDictionary<string, double> Probabilities, double Confidence);

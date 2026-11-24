@@ -21,13 +21,15 @@ public static class DoctorCommand
         var cfg = ctx.Config;
         var provider = cfg.Provider;
         var chosenBy = cfg.ProviderOverride is not null ? " (WINUSE_DECISION_PROVIDER)"
-            : provider == DecisionProvider.None ? " (set JEV_API_KEY, or CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN for Clef)"
+            : provider == DecisionProvider.None ? " (set JEV_API_KEY, CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN for Clef, or GEMINI_API_KEY for Gemini)"
             : " (auto)";
         output.WriteLine($"Decision model: {(provider == DecisionProvider.None ? "none" : provider.ToString())}{chosenBy}");
         output.WriteLine($"JEV_API_KEY: {Source(cfg.JevApiKey, "JEV_API_KEY")}");
         output.WriteLine($"CLOUDFLARE_ACCOUNT_ID: {Source(cfg.CloudflareAccountId, "CLOUDFLARE_ACCOUNT_ID")}");
         output.WriteLine($"CLOUDFLARE_API_TOKEN: {Source(cfg.CloudflareApiToken, "CLOUDFLARE_API_TOKEN")}");
+        output.WriteLine($"GEMINI_API_KEY: {Source(cfg.GeminiApiKey, "GEMINI_API_KEY")}");
         if (provider == DecisionProvider.Clef) output.WriteLine($"Clef model: {cfg.ClefModel}");
+        if (provider == DecisionProvider.Gemini) output.WriteLine($"Gemini model: {cfg.GeminiModel}");
         if (JevClient.EndpointOf(cfg) is { } endpoint) output.WriteLine($"Endpoint: {endpoint}");
 
         if (provider != DecisionProvider.None)

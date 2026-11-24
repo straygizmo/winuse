@@ -10,6 +10,7 @@ Added
 - `get_ui_tree` takes `scope_id`: scope the tree to the element with this automationId (exact, case-insensitive), alone or with `scope_type` / `scope_name`. The result's `scope` carries the element's `automationId`.
 - `get_ui_tree` reports `depth_limit_reached` for UI Automation trees too (it was Java only, and `null` otherwise): `true` when an element at `max_depth` had children that were not walked, so an element may be missing. The field is now always present.
 - A downscaled `screenshot` (`scale` below 1) carries `to_screen`, the formula from image pixels to screen and window-relative click coordinates. The `screenshot` and `click` descriptions now say that image pixels must be divided by `scale` before they are clicked (they said the pixel could be passed as is, which is only true at scale 1).
+- Google Gemini Decision 1 (Gemini Decisions API) as a third decision model next to Jev and Clef. Set `GEMINI_API_KEY` (optional `GEMINI_MODEL`, default `gemini-decision-1`, and `GEMINI_BASE_URL`); it is chosen automatically when neither Jev nor Clef is configured, or with `WINUSE_DECISION_PROVIDER=gemini`. `act`, `find`, `check` and `--heal` ask it the same choice and yes/no questions; the state goes to `input` as JSON text, screenshots as image blocks each labelled with the id the state refers to. Gemini has no `box` question, so `WINUSE_VISUAL_LOCATOR=box` falls back to the grid locator as on Clef. `winuse doctor` reports `GEMINI_API_KEY`, the Gemini model and endpoint, and probes it.
 
 Fixed
 

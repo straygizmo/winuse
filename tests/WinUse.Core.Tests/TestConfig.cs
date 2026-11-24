@@ -17,4 +17,6 @@ static class TestConfig
 
     public static WinUseConfig WithClef(string accountId = "acct", string token = "cf-token") =>
         Default with { CloudflareAccountId = accountId, CloudflareApiToken = token };
+
+    public static WinUseConfig WithGemini(string apiKey = "g-key") => Default with { GeminiApiKey = apiKey };
 }

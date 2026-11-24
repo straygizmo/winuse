@@ -49,7 +49,7 @@ public sealed class ScenarioTools
         });
 
     [McpServerTool(Name = "scenario_run", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Replay a scenario file. Steps with a recorded locator are resolved deterministically; heal=true re-grounds failed act steps with the decision model (Jev or Clef) and writes <name>.healed.json. Returns per-step status and exit_code (0 pass, 1 fail, 2 error).")]
+    [Description("Replay a scenario file. Steps with a recorded locator are resolved deterministically; heal=true re-grounds failed act steps with the decision model (Jev, Clef or Gemini) and writes <name>.healed.json. Returns per-step status and exit_code (0 pass, 1 fail, 2 error).")]
     public static Task<CallToolResult> ScenarioRun(
         ToolContext ctx,
         [Description("Scenario file path (under the allowed roots).")] string path,
