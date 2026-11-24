@@ -70,10 +70,16 @@ sealed class FakeJev(
 
 sealed class FakeObservation(params Candidate[] cands) : IObservationSource
 {
-    public Task<Observation> ObserveAsync(string? window) =>
-        Task.FromResult(new Observation(
+    public ObserveScope? LastScope { get; private set; }
+    public bool DepthLimitReached { get; init; }
+
+    public Task<Observation> ObserveAsync(string? window, ObserveScope? scope = null)
+    {
+        LastScope = scope;
+        return Task.FromResult(new Observation(
             new WindowInfo(0, "T", "C", "p", 1, new Rect(0, 0, 900, 900), WindowState.Normal),
-            cands, ["did something"]));
+            cands, ["did something"], DepthLimitReached: DepthLimitReached));
+    }
 }
 
 sealed class FakeExecutor : IActionExecutor

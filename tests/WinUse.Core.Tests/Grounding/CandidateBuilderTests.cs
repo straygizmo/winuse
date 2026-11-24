@@ -22,11 +22,35 @@ public class CandidateBuilderTests
     }
 
     [Fact]
-    public void Build_SkipsTextAndContainers()
+    public void Build_SkipsContainersAndUnlabelledText_KeepsLabelledText()
     {
-        var uia = Tree(Node("Text", "Hello", new Rect(0, 0, 10, 10)), Button("OK", new Rect(0, 0, 10, 10)));
+        var r = new Rect(0, 0, 10, 10);
+        var uia = Tree(Node("Text", "Hello", r), Node("Text", " ", r), Node("Pane", "Side", r), Button("OK", r));
         var c = CandidateBuilder.Build(uia, [], Win, null);
-        Assert.Equal("OK", Assert.Single(c).Label);
+        Assert.Equal(["Hello", "OK"], c.Select(x => x.Label));
+        Assert.Equal("Text", c[0].Role);
+        Assert.False(c[0].Editable);
+    }
+
+    [Fact]
+    public void Build_UnnamedControlTakesItsTextAsLabel_AndTheTextIsNoCandidate()
+    {
+        var r = new Rect(0, 0, 10, 10);
+        var uia = Tree(
+            Node("Button", null, r, "saveBtn", null, Node("Text", "保存", r)),
+            Node("ListItem", "Named", r, null, null, Node("Text", "inner", r)));
+        var c = CandidateBuilder.Build(uia, [], Win, null);
+        Assert.Equal(["保存", "Named"], c.Select(x => x.Label));
+    }
+
+    [Fact]
+    public void Build_TextInsideAContainerControl_StaysACandidate()
+    {
+        var r = new Rect(0, 0, 10, 10);
+        var uia = Tree(Node("Document", "Page", r, null, null, Node("Text", "検索結果", r)),
+            Node("List", "Rooms", r, null, null, Node("Text", "General", r)));
+        var c = CandidateBuilder.Build(uia, [], Win, null);
+        Assert.Equal(["Page", "検索結果", "Rooms", "General"], c.Select(x => x.Label));
     }
 
     [Fact]

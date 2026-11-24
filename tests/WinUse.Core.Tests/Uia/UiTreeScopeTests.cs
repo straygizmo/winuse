@@ -59,6 +59,18 @@ public class UiTreeScopeTests
     }
 
     [Fact]
+    public void FindScope_ByAutomationId_IgnoresCase_AndCombinesWithType()
+    {
+        var tree = Node("u1", "Window", "W", false,
+            new UiNode("u2", "Pane", "Left", "navPane", null, true, false, null, false, new Rect(0, 0, 10, 10), 1, []),
+            new UiNode("u3", "Pane", "Right", "chatPane", null, true, false, null, false, new Rect(0, 0, 10, 10), 1, []));
+        Assert.Equal("u3", UiTreeShaper.FindScope(tree, null, null, out _, "CHATPANE")?.Ref);
+        Assert.Equal("u3", UiTreeShaper.FindScope(tree, "Pane", null, out _, "chatPane")?.Ref);
+        Assert.Null(UiTreeShaper.FindScope(tree, "Button", null, out _, "chatPane"));
+        Assert.Null(UiTreeShaper.FindScope(tree, null, null, out _, "chat"));
+    }
+
+    [Fact]
     public void FindScope_NothingMatches_ReturnsNullAndNoMatches()
     {
         Assert.Null(UiTreeShaper.FindScope(Browser(), "Table", null, out var matches));

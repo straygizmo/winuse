@@ -48,6 +48,27 @@ public class ToolHelpersTests
         Assert.Equal(50, json["origin"]!["y"]!.GetValue<int>());
         Assert.Equal("screen", json["method"]!.GetValue<string>());
         Assert.Null(json["monitors"]);
+        // A downscaled image says how its pixels map back to the screen.
+        Assert.Contains("px / 0.5", json["to_screen"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void ScreenshotPayload_FullScale_HasNoConversionNote()
+    {
+        var json = System.Text.Json.Nodes.JsonNode.Parse(ToolResult.Ok(
+            ObserveTools.ScreenshotPayload(new WinUse.Core.Screen.Capture([1], 1920, 1080, 1.0, 0, 0)), "s1"))!;
+        Assert.Null(json["to_screen"]);
+    }
+
+    [Fact]
+    public void FindNoMatchNote_SaysWhatWasExamined_AndTheDepthCut()
+    {
+        var lexical = new WinUse.Core.Grounding.FindResult([], 0, false, Considered: 42, DepthLimitReached: true);
+        var note = IntentTools.NoMatchNote(lexical, 12);
+        Assert.Contains("42 elements", note);
+        Assert.Contains("max_depth 12", note);
+        Assert.DoesNotContain("max_depth", IntentTools.NoMatchNote(lexical with { DepthLimitReached = false }, 12));
+        Assert.Contains("decision model", IntentTools.NoMatchNote(lexical with { Grounded = true }, 12));
     }
 
     [Fact]

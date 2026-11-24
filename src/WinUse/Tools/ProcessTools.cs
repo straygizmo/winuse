@@ -17,7 +17,7 @@ public sealed class ProcessTools
     private static readonly TimeSpan WaitWindowPoll = TimeSpan.FromMilliseconds(200);
 
     [McpServerTool(Name = "process_run", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Start a program. With webview_debug=true a free CDP port is passed to WebView2 and get_dom/w{n} refs become available once connected. With wait_window, waits (30 s) for a window of the started process (same pid or process name) whose title matches; if none appears, falls back to any window with a matching title and reports window.matched_by=\"title-only\". Java processes are started with accessibility enabled (JAVA_TOOL_OPTIONS) so their Swing windows can be read, unless WINUSE_JAVA_ACCESSIBILITY=off.")]
+    [Description("Start a program. With webview_debug=true a free CDP port is passed to WebView2 and get_dom/w{n} refs become available once connected. With wait_window, waits (30 s) for a window of the started process (same pid or process name) whose title matches; if none appears, falls back to any window with a matching title and reports window.matched_by=\"title-only\". Java processes are started with accessibility enabled (JAVA_TOOL_OPTIONS) so their Swing windows can be read, unless WINUSE_JAVA_ACCESSIBILITY=off. With wait_exit=true the program is run to its end instead (a command-line tool, a script): the result carries exit_code, stdout, stderr (the last max_output_chars characters of each; *_truncated when cut, *_chars the full length), elapsed_ms and timed_out (after timeout_ms the process tree is killed and exit_code is null). Its stdin is closed and no console window is shown.")]
     public static Task<CallToolResult> ProcessRun(
         ToolContext ctx,
         [Description("Executable path.")] string path,
@@ -26,10 +26,39 @@ public sealed class ProcessTools
         [Description("Extra environment variables (JSON object of name to value).")] Dictionary<string, string>? env = null,
         [Description("Enable the WebView2 DevTools port and connect to it.")] bool webview_debug = false,
         [Description("Title regex of a window to wait for after start.")] string? wait_window = null,
-        [Description("Refuse to start when a process with the same name is already running (needed for Office).")] bool require_fresh = false) =>
+        [Description("Refuse to start when a process with the same name is already running (needed for Office).")] bool require_fresh = false,
+        [Description("Wait for the program to exit and return exit_code, stdout and stderr. Not combinable with wait_window or webview_debug.")] bool wait_exit = false,
+        [Description("wait_exit: milliseconds to wait before the process tree is killed (1000 to 600000).")] int timeout_ms = 60_000,
+        [Description("wait_exit: characters of stdout and of stderr to return at most (the end of the output is kept).")] int max_output_chars = 20_000,
+        [Description("wait_exit: how the output is decoded: \"auto\" (UTF-8 when the bytes are valid UTF-8, else the OEM code page that console programs such as cmd print in), \"utf-8\", \"oem\", or a code page number / encoding name such as \"932\" or \"shift_jis\".")] string output_encoding = "auto") =>
         ctx.RunStepAsync("process_run", ToolContext.Args(("path", path), ("args", args), ("cwd", cwd), ("env", env),
-            ("webview_debug", webview_debug), ("wait_window", wait_window), ("require_fresh", require_fresh)), async _ =>
+            ("webview_debug", webview_debug), ("wait_window", wait_window), ("require_fresh", require_fresh),
+            ("wait_exit", wait_exit ? true : null), ("timeout_ms", wait_exit ? timeout_ms : null),
+            ("max_output_chars", wait_exit ? max_output_chars : null), ("output_encoding", wait_exit && output_encoding != "auto" ? output_encoding : null)), async _ =>
         {
+            if (wait_exit)
+            {
+                if (webview_debug || !string.IsNullOrEmpty(wait_window))
+                    throw new ArgumentException("wait_exit cannot be combined with wait_window or webview_debug: it runs the program to its end.");
+                if (timeout_ms is < 1000 or > 600_000) throw new ArgumentOutOfRangeException(nameof(timeout_ms), "timeout_ms must be between 1000 and 600000.");
+                if (max_output_chars < 0) throw new ArgumentOutOfRangeException(nameof(max_output_chars), "max_output_chars must be 0 or more.");
+                var o = await ctx.Processes.RunToExitAsync(new RunSpec(path, args, cwd, env, false, require_fresh),
+                    TimeSpan.FromMilliseconds(timeout_ms), max_output_chars, OutputEncoding.Parse(output_encoding));
+                return (object)new
+                {
+                    pid = o.Pid,
+                    process_name = o.ProcessName,
+                    exit_code = o.ExitCode,
+                    timed_out = o.TimedOut,
+                    elapsed_ms = o.ElapsedMs,
+                    stdout = o.Stdout,
+                    stderr = o.Stderr,
+                    stdout_chars = o.StdoutChars,
+                    stderr_chars = o.StderrChars,
+                    stdout_truncated = o.StdoutTruncated ? true : (bool?)null,
+                    stderr_truncated = o.StderrTruncated ? true : (bool?)null,
+                };
+            }
             var run = ctx.Processes.Run(new RunSpec(path, args, cwd, env, webview_debug, require_fresh, DetachStdio: true));
             object? window = null;
             if (!string.IsNullOrEmpty(wait_window))

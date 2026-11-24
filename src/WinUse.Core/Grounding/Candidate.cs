@@ -17,17 +17,31 @@ public sealed record Candidate(
 
 public enum ActKind { Auto, Click, Type, Select, Toggle }
 
-/// <summary><see cref="NoElementsReason"/> says why a window that should have elements (a Java window) has none.</summary>
+/// <summary>
+/// <see cref="NoElementsReason"/> says why a window that should have elements (a Java window) has none;
+/// <see cref="DepthLimitReached"/> that the walk stopped at the depth limit above elements that have children.
+/// </summary>
 public sealed record Observation(WindowInfo Window, IReadOnlyList<Candidate> Candidates, IReadOnlyList<string> RecentActions,
-    string? NoElementsReason = null);
+    string? NoElementsReason = null, bool DepthLimitReached = false);
+
+/// <summary>
+/// What part of the window an observation reads: the subtree of <see cref="ScopeRef"/> (an element ref) instead of the
+/// whole window, walked to <see cref="MaxDepth"/> levels (null: <see cref="DefaultMaxDepth"/>).
+/// </summary>
+public sealed record ObserveScope(string? ScopeRef = null, int? MaxDepth = null)
+{
+    public const int DefaultMaxDepth = 12;
+    public int Depth => MaxDepth ?? DefaultMaxDepth;
+}
 
 /// <summary>
 /// <see cref="Point"/> is set when the target was located on a screenshot (no candidates). When <see cref="Grounded"/> is
 /// false, <see cref="Reason"/> says why no decision model answered and the probabilities are text-match scores
-/// (<see cref="LexicalRanker"/>) instead of model probabilities.
+/// (<see cref="LexicalRanker"/>) instead of model probabilities; candidates sharing no text with the intent are left out.
+/// <see cref="Considered"/> is the number of elements examined.
 /// </summary>
 public sealed record FindResult(IReadOnlyList<(Candidate Candidate, double Probability)> Ranked, double Confidence, bool Grounded,
-    (int X, int Y)? Point = null, WindowInfo? Window = null, string? Reason = null);
+    (int X, int Y)? Point = null, WindowInfo? Window = null, string? Reason = null, int Considered = 0, bool DepthLimitReached = false);
 
 /// <summary><see cref="Detail"/> explains a <see cref="Reason"/> of "model not configured" / "model unavailable".</summary>
 public sealed record ActResult(
@@ -47,7 +61,7 @@ public sealed record CheckResult(double Probability, bool Available, string? Rea
 
 public interface IObservationSource
 {
-    Task<Observation> ObserveAsync(string? window);
+    Task<Observation> ObserveAsync(string? window, ObserveScope? scope = null);
 }
 
 public interface IActionExecutor
